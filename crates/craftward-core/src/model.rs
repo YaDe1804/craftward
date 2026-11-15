@@ -18,6 +18,14 @@ pub struct Project {
     pub name: String,
     /// Where the project is in its lifecycle.
     pub status: ProjectStatus,
+    /// Directory that holds the project's source code.
+    ///
+    /// A relative path is resolved from the project file. An absolute path is
+    /// used as given. `..` is allowed, because the project file may live
+    /// outside the repository. When this is absent, the directory that
+    /// contains the project file is the source directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_dir: Option<String>,
     /// Longer description of the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -113,9 +121,11 @@ pub struct Link {
 pub struct Stack {
     /// Named pieces of the stack, such as a language or a hosted service.
     pub components: Vec<Component>,
-    /// Lockfiles or other dependency manifests, as paths relative to the project file.
+    /// Lockfiles or other dependency manifests, relative to `source_dir`.
     ///
-    /// Paths are relative. Absolute paths and `..` segments are rejected.
+    /// When `source_dir` is absent, they are relative to the project file's
+    /// directory. Each path must be relative. Absolute paths and `..`
+    /// segments are rejected.
     pub lockfiles: Vec<String>,
 }
 

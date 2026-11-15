@@ -7,6 +7,14 @@ Thank you for contributing. Craftward is pre-alpha.
 Code, documentation, command-line output, and commit messages are written in
 English.
 
+## Line endings
+
+Text files use LF on every operating system. `.gitattributes` sets
+`text=auto eol=lf`, so a checkout does not turn them into CRLF on Windows.
+Generated output is compared with the checked-in files byte for byte, and a
+converted line ending would fail that comparison. Images, fonts, and other
+binary formats are marked `binary` and are left unchanged.
+
 ## Setup
 
 Install Rust with [rustup](https://rustup.rs/). Opening this repository selects

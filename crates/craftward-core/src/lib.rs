@@ -6,14 +6,19 @@
 
 mod date;
 mod error;
+mod i18n;
 mod load;
 mod location;
 mod model;
+mod paths;
+mod roadmap;
 #[cfg(feature = "schema")]
 mod schema;
 mod workspace;
 
+pub use date::utc_date;
 pub use error::{LoadError, ValidationError};
+pub use i18n::{LABELS, Label, Language, fill, text};
 pub use load::{load_from_path, load_from_str};
 pub use location::{
     Host, LocateError, OsFamily, ProcessHost, WorkspaceLocation, WorkspaceOrigin, locate_workspace,
@@ -22,12 +27,20 @@ pub use model::{
     Component, ComponentKind, Issue, IssueSeverity, IssueStatus, Link, Phase, Plan, Project,
     ProjectStatus, Stack, Task, TaskStatus, WatchItem, WatchKind,
 };
+pub use paths::{
+    MissingPath, MissingPathKind, ProjectPaths, is_portable_absolute, missing_paths,
+    resolve_project_paths,
+};
+pub use roadmap::{
+    PhaseState, RoadmapError, TaskProgress, escape_html, next_roadmap_version, phase_state,
+    render_roadmap, task_progress, write_roadmap,
+};
 #[cfg(feature = "schema")]
 pub use schema::project_schema_json;
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,
-    init_project, list_projects, load_or_empty, load_workspace, remove_project, resolve_entry_path,
-    save_workspace, snapshot,
+    init_project, list_projects, load_or_empty, load_workspace, project_file, project_file_by_id,
+    remove_project, resolve_entry_path, save_workspace, snapshot,
 };
 
 /// Returns the version of the Craftward core library.

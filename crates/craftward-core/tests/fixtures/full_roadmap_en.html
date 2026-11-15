@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harbor Light – Roadmap v1</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#161b22; --card2:#1c232c; --line:#2a323d;
+    --text:#e6edf3; --muted:#8b98a7;
+    --done:#3fb950; --run:#d29922; --open:#6e7b8b; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  html{overflow-wrap:anywhere}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
+  header{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+  h1{margin:0;font-size:30px;letter-spacing:.2px}
+  .sub{color:var(--muted);margin-top:4px}
+  .meta{color:var(--muted);font-size:13px;text-align:right}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;min-width:0}
+  .overall{margin-bottom:22px}
+  .overall .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+  .overall b{font-size:22px}
+  .bar{height:10px;background:#232b35;border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--done),#56d364);border-radius:99px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font-size:13px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:16px}
+  .phase h2{margin:0;font-size:17px}
+  .phase .top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:4px}
+  .phase .goal{color:var(--muted);font-size:13.5px;margin:2px 0 12px}
+  .tag{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;border:1px solid}
+  .tag.run{color:var(--run);border-color:#5c4613;background:#2a2109}
+  .tag.done{color:var(--done);border-color:#1f5c2c;background:#0f2a16}
+  .tag.open{color:var(--muted);border-color:var(--line);background:var(--card2)}
+  .num{color:var(--accent);font-weight:700;margin-right:6px}
+  ul{list-style:none;margin:12px 0 0;padding:0}
+  li{display:flex;gap:10px;padding:6px 0;border-top:1px solid #212933;font-size:14px}
+  li:first-child{border-top:0}
+  .st{flex:0 0 16px;height:16px;margin-top:3px;border-radius:4px;border:2px solid var(--open)}
+  .st.done{background:var(--done);border-color:var(--done);position:relative}
+  .st.done::after{content:"";position:absolute;left:3px;top:0;width:4px;height:8px;border:solid #0e1116;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .st.run{border-color:var(--run);background:repeating-linear-gradient(45deg,#3a2e0c,#3a2e0c 3px,transparent 3px,transparent 6px)}
+  .st.dropped{border-color:var(--open);opacity:.55}
+  li.done span.t{color:var(--muted)}
+  li.dropped span.t{color:var(--muted);text-decoration:line-through}
+  .pct{font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;margin-bottom:5px}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:30px 0 12px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{text-align:left;padding:8px 10px;border-top:1px solid #212933;vertical-align:top}
+  th{color:var(--muted);font-weight:600;border-top:0;font-size:12.5px}
+  td:first-child{font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <h1>Harbor Light</h1>
+    <div class="sub">A local-first notebook for planning small software releases.</div>
+  </div>
+  <div class="meta">Roadmap v1 · as of 2026-11-15<br>
+Status: in development<br>
+Version: 0.4.0</div>
+</header>
+<div class="card overall">
+  <div class="row"><span>Overall progress</span><b>1 / 3 tasks · 33 %</b></div>
+  <div class="bar"><i style="width:33%"></i></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--done)"></span>done</span>
+    <span><span class="dot" style="background:var(--run)"></span>in progress</span>
+    <span><span class="dot" style="background:var(--open)"></span>open</span>
+  </div>
+</div>
+<div class="grid">
+<section class="card phase">
+  <div class="top"><h2><span class="num">1</span>Foundation</h2><span class="tag run">in progress</span></div>
+  <div class="goal">Ship a file format the tools can trust.</div>
+  <div class="pct"><span>1 of 2</span><span>50 %</span></div>
+  <div class="bar"><i style="width:50%"></i></div>
+  <ul>
+    <li class="done"><span class="st done"></span><span class="t">Write the project file schema 2026-11-14</span></li>
+    <li><span class="st run"></span><span class="t">Check files from the command line</span></li>
+  </ul>
+</section>
+<section class="card phase">
+  <div class="top"><h2><span class="num">2</span>First release</h2><span class="tag open">open</span></div>
+  <div class="pct"><span>0 of 1</span><span>0 %</span></div>
+  <div class="bar"><i style="width:0%"></i></div>
+  <ul>
+    <li><span class="st"></span><span class="t">Tag the release 2027-03-31</span></li>
+  </ul>
+</section>
+</div>
+<h3>Open issues</h3>
+<div class="card">
+<table>
+<tr><th>Severity</th><th>Title</th><th>Status</th></tr>
+<tr><td>medium</td><td><a href="https://example.com/harbor-light/issues/12" rel="noopener noreferrer">Status colors fail on a light background</a></td><td>open</td></tr>
+</table>
+</div>
+<h3>Watch items</h3>
+<div class="card">
+<table>
+<tr><th>Kind</th><th>Title</th><th>Due</th><th>Note</th></tr>
+<tr><td>review</td><td>Review open issues</td><td>2027-01-15</td><td>Drop anything that has been paused for two quarters.</td></tr>
+<tr><td>expiry</td><td>Renew the example domain</td><td>2027-06-30</td><td></td></tr>
+</table>
+</div>
+<h3>Stack</h3>
+<div class="card">
+<table>
+<tr><th>Kind</th><th>Name</th><th>Version</th><th>Note</th></tr>
+<tr><td>language</td><td>Rust</td><td>1.100.0</td><td></td></tr>
+<tr><td>framework</td><td>egui</td><td>0.29.0</td><td>Custom theme planned.</td></tr>
+<tr><td>service</td><td>Example CI</td><td></td><td></td></tr>
+</table>
+</div>
+<h3>Links</h3>
+<div class="card">
+<table>
+<tr><th>Label</th><th>URL</th></tr>
+<tr><td>Repository</td><td><a href="https://example.com/harbor-light" rel="noopener noreferrer">https://example.com/harbor-light</a></td></tr>
+<tr><td>Issues</td><td><a href="http://example.com/harbor-light/issues" rel="noopener noreferrer">http://example.com/harbor-light/issues</a></td></tr>
+</table>
+</div>
+</div>
+</body>
+</html>

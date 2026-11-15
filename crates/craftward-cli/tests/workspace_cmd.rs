@@ -259,9 +259,177 @@ fn workspace_path_reports_the_selected_source() {
 }
 
 #[test]
+fn validate_warns_about_a_missing_source_directory_and_exits_0() {
+    let root = scratch("warn");
+    let project = root.join("craftward.json");
+    fs::write(
+        &project,
+        "{\n  \"schema_version\": 1,\n  \"id\": \"harbor-light\",\n  \"name\": \"Harbor\",\n  \"status\": \"idea\",\n  \"source_dir\": \"missing-src\",\n  \"stack\": { \"components\": [], \"lockfiles\": [\"nope.lock\"] }\n}\n",
+    )
+    .unwrap();
+    let output = run(&root, &["validate", project.to_str().unwrap()]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains(": ok"), "{stdout}");
+    assert!(stderr.contains("warning:"), "{stderr}");
+    assert!(stderr.contains("missing-src"), "{stderr}");
+    assert!(stderr.contains("nope.lock"), "{stderr}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn roadmap_writes_the_next_file_in_a_temporary_directory() {
+    let root = scratch("roadmap");
+    let project = root.join("craftward.json");
+    fs::write(
+        &project,
+        "{\n  \"schema_version\": 1,\n  \"id\": \"harbor-light\",\n  \"name\": \"Harbor\",\n  \"status\": \"idea\"\n}\n",
+    )
+    .unwrap();
+    let directory = root.join("pages");
+    let first = run(
+        &root,
+        &[
+            "roadmap",
+            project.to_str().unwrap(),
+            "--dir",
+            directory.to_str().unwrap(),
+            "--lang",
+            "de",
+        ],
+    );
+    let stdout = String::from_utf8(first.stdout).unwrap();
+    assert!(
+        first.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(stdout.contains("harbor-light_roadmap_v1.html"), "{stdout}");
+    let saved = fs::read_to_string(directory.join("harbor-light_roadmap_v1.html")).unwrap();
+    assert!(saved.contains("Gesamtfortschritt"), "{saved}");
+    let second = run(
+        &root,
+        &[
+            "roadmap",
+            project.to_str().unwrap(),
+            "--dir",
+            directory.to_str().unwrap(),
+        ],
+    );
+    assert!(second.status.success());
+    assert!(
+        String::from_utf8(second.stdout)
+            .unwrap()
+            .contains("harbor-light_roadmap_v2.html")
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("harbor-light_roadmap_v1.html")).unwrap(),
+        saved
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn roadmap_rejects_an_id_that_is_also_an_existing_path() {
+    let root = scratch("ambiguous");
+    let workspace = workspace_arg(&root);
+    let registered = root.join("registered");
+    let init = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "init",
+            registered.to_str().unwrap(),
+            "--id",
+            "trulog",
+            "--name",
+            "Registered",
+        ],
+    );
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let add = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "add",
+            registered.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let folder = root.join("trulog");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("craftward.json"),
+        "{\n  \"schema_version\": 1,\n  \"id\": \"local-copy\",\n  \"name\": \"Local\",\n  \"status\": \"idea\"\n}\n",
+    )
+    .unwrap();
+    let pages = root.join("pages");
+    let ambiguous = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "roadmap",
+            "trulog",
+            "--dir",
+            pages.to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8(ambiguous.stderr).unwrap();
+    assert_eq!(ambiguous.status.code(), Some(2), "{stderr}");
+    assert!(stderr.starts_with("error:"), "{stderr}");
+    let hint = format!(".{sep}trulog", sep = std::path::MAIN_SEPARATOR);
+    assert!(stderr.contains(&hint), "{stderr}");
+    assert!(stderr.contains("project file"), "{stderr}");
+    assert!(!pages.join("trulog_roadmap_v1.html").exists());
+    assert!(!pages.join("local-copy_roadmap_v1.html").exists());
+
+    let explicit = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "roadmap",
+            &hint,
+            "--dir",
+            pages.to_str().unwrap(),
+        ],
+    );
+    let stdout = String::from_utf8(explicit.stdout).unwrap();
+    assert!(
+        explicit.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    assert!(stdout.contains("local-copy_roadmap_v1.html"), "{stdout}");
+    assert!(!pages.join("trulog_roadmap_v1.html").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn each_command_has_help() {
     let root = scratch("help");
-    for command in ["init", "add", "remove", "list", "validate", "workspace"] {
+    for command in [
+        "init",
+        "add",
+        "remove",
+        "list",
+        "validate",
+        "workspace",
+        "roadmap",
+    ] {
         let output = run(&root, &[command, "--help"]);
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(output.status.success(), "{command}: {stdout}");

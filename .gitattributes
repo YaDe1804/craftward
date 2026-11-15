@@ -1,12 +1,36 @@
-*.rs text eol=lf
-*.toml text eol=lf
-*.md text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.json text eol=lf
-*.txt text eol=lf
-.editorconfig text eol=lf
-.gitattributes text eol=lf
-.gitignore text eol=lf
-NOTICE text eol=lf
-deny.toml text eol=lf
+# Check out every text file with LF on every operating system.
+# `text=auto` lets Git decide whether a path is text or binary.
+# `eol=lf` keeps the working tree identical to the LF index and overrides
+# core.autocrlf and the Windows default of CRLF.
+# https://git-scm.com/docs/gitattributes
+* text=auto eol=lf
+
+# The built-in `binary` macro is `-text -diff -merge`. These formats are
+# never rewritten, including types that are not in the tree yet.
+*.avif binary
+*.bmp binary
+*.gif binary
+*.heic binary
+*.ico binary
+*.icns binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.tif binary
+*.tiff binary
+*.webp binary
+*.eot binary
+*.otf binary
+*.ttc binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.7z binary
+*.bz2 binary
+*.gz binary
+*.pdf binary
+*.rar binary
+*.tar binary
+*.wasm binary
+*.xz binary
+*.zip binary

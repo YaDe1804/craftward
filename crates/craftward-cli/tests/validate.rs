@@ -54,7 +54,10 @@ fn validate_accepts_the_example_files() {
         "expected exit 0, got {:?}\n{stdout}{stderr}",
         output.status.code()
     );
-    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    assert!(
+        stderr.is_empty(),
+        "expected no warnings and no errors, got {stderr}"
+    );
     assert!(stdout.contains(&format!("{}: ok", printed(&minimal))));
     assert!(stdout.contains(&format!("{}: ok", printed(&full))));
 }

@@ -250,6 +250,7 @@ pub fn init_project(
         id: id.to_owned(),
         name: name.to_owned(),
         status,
+        source_dir: None,
         description: None,
         current_version: None,
         tags: None,
@@ -275,7 +276,7 @@ pub fn init_project(
 /// Returns an error when the file is missing or invalid, or when its path or
 /// project id is already listed. The workspace file is not created in those cases.
 pub fn add_project(workspace_file: &Path, input: &Path) -> Result<String, WorkspaceError> {
-    let project_file = project_file_from_input(input)?;
+    let project_file = project_file(input)?;
     let project =
         load_from_path(&project_file).map_err(|source| WorkspaceError::InvalidProject {
             path: project_file.clone(),
@@ -304,6 +305,31 @@ pub fn add_project(workspace_file: &Path, input: &Path) -> Result<String, Worksp
     workspace.projects.push(WorkspaceEntry { path: stored });
     save_workspace(workspace_file, &workspace)?;
     Ok(id)
+}
+
+/// Returns the project file whose id is `id`.
+///
+/// Entries that cannot be read are skipped, because their id is unknown.
+///
+/// # Errors
+///
+/// Returns [`WorkspaceError::UnknownId`] when no readable entry has that id,
+/// including when the workspace file does not exist.
+pub fn project_file_by_id(workspace_file: &Path, id: &str) -> Result<PathBuf, WorkspaceError> {
+    let workspace = match load_workspace(workspace_file) {
+        Ok(workspace) => workspace,
+        Err(WorkspaceError::Read(error)) if error.kind() == ErrorKind::NotFound => {
+            return Err(WorkspaceError::UnknownId(id.to_owned()));
+        }
+        Err(error) => return Err(error),
+    };
+    for entry in &workspace.projects {
+        let path = resolve_entry_path(workspace_file, &entry.path);
+        if load_from_path(&path).is_ok_and(|project| project.id == id) {
+            return Ok(path);
+        }
+    }
+    Err(WorkspaceError::UnknownId(id.to_owned()))
 }
 
 /// Removes the workspace entry whose project id is `id`.
@@ -398,12 +424,12 @@ pub fn snapshot(project: &Project) -> ProjectSnapshot {
 /// `app/craftward.json` would be shown as `C:\workspace\app/craftward.json`.
 #[must_use]
 pub fn resolve_entry_path(workspace_file: &Path, stored: &str) -> PathBuf {
-    let path = platform_path(Path::new(stored));
+    let path = crate::paths::platform_path(Path::new(stored));
     if path.is_absolute() {
         path
     } else {
         let parent = workspace_file.parent().unwrap_or_else(|| Path::new(""));
-        platform_path(&parent.join(path))
+        crate::paths::platform_path(&parent.join(path))
     }
 }
 
@@ -424,7 +450,13 @@ fn is_open_issue(status: IssueStatus) -> bool {
     matches!(status, IssueStatus::Open | IssueStatus::InProgress)
 }
 
-fn project_file_from_input(input: &Path) -> Result<PathBuf, WorkspaceError> {
+/// Resolves a project file or a directory that contains `craftward.json`.
+///
+/// # Errors
+///
+/// Returns [`WorkspaceError::MissingProject`] when the file is not there, and
+/// [`WorkspaceError::Read`] when the path cannot be inspected.
+pub fn project_file(input: &Path) -> Result<PathBuf, WorkspaceError> {
     let metadata = fs::metadata(input).map_err(|error| {
         if error.kind() == ErrorKind::NotFound {
             WorkspaceError::MissingProject(input.to_path_buf())
@@ -477,10 +509,6 @@ fn workspace_directory(workspace_file: &Path) -> PathBuf {
 fn normal_absolute(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     without_verbatim(&absolute)
-}
-
-fn platform_path(path: &Path) -> PathBuf {
-    path.components().collect()
 }
 
 fn without_verbatim(path: &Path) -> PathBuf {

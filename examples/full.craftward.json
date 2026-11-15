@@ -4,6 +4,7 @@
   "name": "Harbor Light",
   "status": "in_development",
   "description": "A local-first notebook for planning small software releases.",
+  "source_dir": "..",
   "current_version": "0.4.0",
   "tags": ["desktop", "rust"],
   "updated": "2026-11-14",
@@ -35,7 +36,7 @@
         "name": "Example CI"
       }
     ],
-    "lockfiles": ["Cargo.lock", "npm/package-lock.json"]
+    "lockfiles": ["Cargo.lock"]
   },
   "plan": {
     "phases": [
