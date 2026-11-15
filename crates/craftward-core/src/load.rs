@@ -55,7 +55,16 @@ const ISSUE_STATUSES: &[&str] = &["open", "in_progress", "resolved", "wont_fix"]
 const WATCH_KINDS: &[&str] = &["deadline", "expiry", "review", "other"];
 
 const LINK_FIELDS: &[&str] = &["label", "url"];
-const STACK_FIELDS: &[&str] = &["components", "lockfiles"];
+const STACK_FIELDS: &[&str] = &["components", "lockfiles", "android"];
+const ANDROID_FIELDS: &[&str] = &[
+    "target_sdk",
+    "min_sdk",
+    "form_factor",
+    "store",
+    "detect_from",
+];
+const FORM_FACTORS: &[&str] = &["phone", "automotive", "wear", "tv", "xr"];
+const ANDROID_STORES: &[&str] = &["google_play", "none"];
 const COMPONENT_FIELDS: &[&str] = &["kind", "name", "version", "note", "eol_product"];
 const PLAN_FIELDS: &[&str] = &["phases"];
 const PHASE_FIELDS: &[&str] = &["id", "title", "goal", "tasks"];
@@ -217,6 +226,9 @@ fn optional_stack(object: &Map<String, Value>, errors: &mut Vec<ValidationError>
         None => {}
         Some(value) => validate_lockfiles(value, errors),
     }
+    if let Some(value) = optional(stack, "android") {
+        validate_android(value, errors);
+    }
 }
 
 fn validate_components(value: &Value, errors: &mut Vec<ValidationError>) {
@@ -234,6 +246,69 @@ fn validate_components(value: &Value, errors: &mut Vec<ValidationError>) {
         optional_string(component, "version", &path, errors);
         optional_string(component, "note", &path, errors);
         optional_text(component, "eol_product", &path, errors);
+    }
+}
+
+fn validate_android(value: &Value, errors: &mut Vec<ValidationError>) {
+    let Some(android) = expect_object(value, "stack.android", errors) else {
+        return;
+    };
+    reject_unknown(android, "stack.android", ANDROID_FIELDS, errors);
+    optional_api_level(android, "target_sdk", errors);
+    optional_api_level(android, "min_sdk", errors);
+    optional_choice(android, "form_factor", FORM_FACTORS, errors);
+    optional_choice(android, "store", ANDROID_STORES, errors);
+    if let Some(paths) = optional(android, "detect_from") {
+        validate_detect_from(paths, errors);
+    }
+}
+
+fn optional_api_level(object: &Map<String, Value>, key: &str, errors: &mut Vec<ValidationError>) {
+    let Some(value) = optional(object, key) else {
+        return;
+    };
+    let path = format!("stack.android.{key}");
+    let Some(number) = value.as_u64() else {
+        push(errors, path, "must be a positive integer");
+        return;
+    };
+    if number == 0 || number > u64::from(u32::MAX) {
+        push(errors, path, "must be a positive integer");
+    }
+}
+
+fn optional_choice(
+    object: &Map<String, Value>,
+    key: &str,
+    allowed: &[&str],
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(value) = optional(object, key) else {
+        return;
+    };
+    let path = format!("stack.android.{key}");
+    let Some(text) = expect_string(value, &path, errors) else {
+        return;
+    };
+    if !allowed.contains(&text) {
+        push(
+            errors,
+            path,
+            format!("must be one of: {}", allowed.join(", ")),
+        );
+    }
+}
+
+fn validate_detect_from(value: &Value, errors: &mut Vec<ValidationError>) {
+    let Some(items) = expect_array(value, "stack.android.detect_from", errors) else {
+        return;
+    };
+    for (index, item) in items.iter().enumerate() {
+        let path = format!("stack.android.detect_from[{index}]");
+        let Some(text) = expect_string(item, &path, errors) else {
+            continue;
+        };
+        validate_relative_path(text, &path, errors);
     }
 }
 

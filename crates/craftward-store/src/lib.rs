@@ -83,6 +83,85 @@ ALTER TABLE finding_events_next RENAME TO finding_events;
 CREATE INDEX finding_events_finding ON finding_events(finding_id);
 ";
 
+const MIGRATION_V4: &str = "
+CREATE TABLE findings_next (
+    id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    vulnerability_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    aliases TEXT NOT NULL,
+    fixed_versions TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('open', 'ignored', 'resolved')),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'vulnerability', 'malicious', 'unmaintained', 'unsound', 'notice',
+        'eol', 'eol_soon', 'platform_deadline', 'platform_deadline_soon'
+    )),
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    resolved_at TEXT,
+    ignore_reason TEXT,
+    ignore_until TEXT,
+    UNIQUE (project_id, ecosystem, package_name, vulnerability_id)
+);
+INSERT INTO findings_next (
+    id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
+    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+    resolved_at, ignore_reason, ignore_until
+)
+SELECT
+    id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
+    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+    resolved_at, ignore_reason, ignore_until
+FROM findings;
+CREATE TABLE finding_events_keep (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+INSERT INTO finding_events_keep (id, finding_id, kind, at, reason)
+    SELECT id, finding_id, kind, at, reason FROM finding_events;
+DROP TABLE finding_events;
+DROP TABLE findings;
+ALTER TABLE findings_next RENAME TO findings;
+CREATE TABLE finding_events (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL REFERENCES findings(id),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'discovered', 'ignored', 'reopened', 'resolved', 'reappeared', 'withdrawn'
+    )),
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+INSERT INTO finding_events (id, finding_id, kind, at, reason)
+    SELECT id, finding_id, kind, at, reason FROM finding_events_keep;
+DROP TABLE finding_events_keep;
+CREATE INDEX finding_events_finding ON finding_events(finding_id);
+";
+
+const MIGRATION_V5: &str = "
+CREATE TABLE finding_events_next (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL REFERENCES findings(id),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'discovered', 'ignored', 'reopened', 'resolved', 'reappeared', 'withdrawn',
+        'deadline_passed'
+    )),
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+INSERT INTO finding_events_next (id, finding_id, kind, at, reason)
+    SELECT id, finding_id, kind, at, reason FROM finding_events;
+DROP TABLE finding_events;
+ALTER TABLE finding_events_next RENAME TO finding_events;
+CREATE INDEX finding_events_finding ON finding_events(finding_id);
+";
+
 const FINDING_COLUMNS: &str = "
 id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
 summary, aliases, fixed_versions, state, kind, first_seen, last_seen, resolved_at,
@@ -448,6 +527,12 @@ fn migrate(connection: &mut Connection, from: i64) -> Result<(), StoreError> {
     }
     if from < 3 {
         apply_migration(connection, MIGRATION_V3, 3)?;
+    }
+    if from < 4 {
+        apply_migration(connection, MIGRATION_V4, 4)?;
+    }
+    if from < 5 {
+        apply_migration(connection, MIGRATION_V5, 5)?;
     }
     Ok(())
 }

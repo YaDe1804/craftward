@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use serde::Serialize;
 
 use crate::date::{format_iso8601, utc_day};
+use crate::deadlines::page_url;
 use crate::osv::severity_rank;
 use crate::radar::{Finding, LockfileReport, ProjectReport};
 use crate::store::{
@@ -14,6 +15,7 @@ use crate::store::{
 };
 
 /// One project after its findings have been stored.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectLedger {
     /// Project id.
@@ -40,6 +42,10 @@ pub struct ProjectLedger {
     pub lockfiles_checked: bool,
     /// Whether a component version was compared with endoflife.date.
     pub eol_checked: bool,
+    /// Whether a Play deadline was compared with a known targetSdk.
+    pub deadlines_checked: bool,
+    /// `targetSdk N (source)` when a level was found.
+    pub target_sdk_note: Option<String>,
 }
 
 /// One finding in a ledger, with its database id.
@@ -225,7 +231,7 @@ fn apply_one(
         })?;
         return Ok(empty_ledger(report));
     }
-    if !report.lockfiles_checked && !report.eol_checked {
+    if !report.lockfiles_checked && !report.eol_checked && !report.deadlines_checked {
         return record_unevaluated(session, report, started, finished, offline);
     }
     let mut rows = session.findings_for_project(&report.id)?;
@@ -256,6 +262,7 @@ fn apply_one(
             finished,
             report.lockfiles_checked,
             report.eol_checked,
+            report.deadlines_checked,
         )?;
     let open_count = rows
         .iter()
@@ -283,6 +290,7 @@ fn touch_known(
     finished: &str,
     today: &str,
 ) -> Result<(), StoreError> {
+    let passed = row.kind == "platform_deadline_soon" && finding.kind == "platform_deadline";
     row.version.clone_from(&finding.version);
     row.severity.clone_from(&finding.severity);
     row.summary.clone_from(&finding.summary);
@@ -296,6 +304,7 @@ fn touch_known(
         row.ignore_reason = None;
         row.ignore_until = None;
         session.update_finding(row)?;
+        note_passed(session, row.id, passed, finished)?;
         return session.insert_event(row.id, "reappeared", finished, "");
     }
     if let Some(until) = row.ignore_until.clone()
@@ -306,6 +315,7 @@ fn touch_known(
         row.ignore_reason = None;
         row.ignore_until = None;
         session.update_finding(row)?;
+        note_passed(session, row.id, passed, finished)?;
         return session.insert_event(
             row.id,
             "reopened",
@@ -313,7 +323,20 @@ fn touch_known(
             &format!("ignore expired on {until}"),
         );
     }
-    session.update_finding(row)
+    session.update_finding(row)?;
+    note_passed(session, row.id, passed, finished)
+}
+
+fn note_passed(
+    session: &mut dyn StoreSession,
+    id: i64,
+    passed: bool,
+    finished: &str,
+) -> Result<(), StoreError> {
+    if passed {
+        session.insert_event(id, "deadline_passed", finished, "")?;
+    }
+    Ok(())
 }
 
 fn insert_new(
@@ -347,7 +370,10 @@ fn withdraw_advisories(
 ) -> Result<u32, StoreError> {
     let mut withdrawn = 0_u32;
     for row in rows.iter_mut() {
-        if row.ecosystem == "endoflife" || row.state == FindingState::Resolved {
+        if row.ecosystem == "endoflife"
+            || row.ecosystem == "platform"
+            || row.state == FindingState::Resolved
+        {
             continue;
         }
         if !report
@@ -373,13 +399,14 @@ fn resolve_missing(
     finished: &str,
     lockfiles_checked: bool,
     eol_checked: bool,
+    deadlines_checked: bool,
 ) -> Result<u32, StoreError> {
     let mut resolved = 0_u32;
     for row in rows {
-        let in_scope = if row.ecosystem == "endoflife" {
-            eol_checked
-        } else {
-            lockfiles_checked
+        let in_scope = match row.ecosystem.as_str() {
+            "endoflife" => eol_checked,
+            "platform" => deadlines_checked,
+            _ => lockfiles_checked,
         };
         if !in_scope || seen.contains(&stored_key(row)) || row.state == FindingState::Resolved {
             continue;
@@ -406,7 +433,7 @@ fn ledger_from(
         if !seen.contains(&stored_key(row)) {
             continue;
         }
-        let listed = listed(row, new_ids.contains(&row.id));
+        let listed = listed(row, new_ids.contains(&row.id), report_url(report, row));
         match row.state {
             FindingState::Open => open.push(listed),
             FindingState::Ignored => ignored.push(listed),
@@ -428,6 +455,8 @@ fn ledger_from(
         evaluated: true,
         lockfiles_checked: report.lockfiles_checked,
         eol_checked: report.eol_checked,
+        deadlines_checked: report.deadlines_checked,
+        target_sdk_note: report.target_sdk_note.clone(),
     }
 }
 
@@ -458,7 +487,11 @@ fn record_unevaluated(
     let mut open = Vec::new();
     let mut ignored = Vec::new();
     for row in &rows {
-        let listed = listed(row, false);
+        let listed = listed(
+            row,
+            false,
+            page_url(&row.ecosystem, &row.package, &row.vulnerability_id),
+        );
         match row.state {
             FindingState::Open => open.push(listed),
             FindingState::Ignored => ignored.push(listed),
@@ -480,10 +513,27 @@ fn record_unevaluated(
         evaluated: false,
         lockfiles_checked: false,
         eol_checked: false,
+        deadlines_checked: false,
+        target_sdk_note: report.target_sdk_note.clone(),
     })
 }
 
-fn listed(row: &StoredFinding, new: bool) -> LedgerFinding {
+fn report_url(report: &ProjectReport, row: &StoredFinding) -> String {
+    report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.ecosystem == row.ecosystem
+                && finding.package == row.package
+                && finding.id == row.vulnerability_id
+        })
+        .map_or_else(
+            || page_url(&row.ecosystem, &row.package, &row.vulnerability_id),
+            |finding| finding.url.clone(),
+        )
+}
+
+fn listed(row: &StoredFinding, new: bool, url: String) -> LedgerFinding {
     LedgerFinding {
         record_id: row.id,
         new,
@@ -496,11 +546,7 @@ fn listed(row: &StoredFinding, new: bool) -> LedgerFinding {
         severity: row.severity.clone(),
         summary: row.summary.clone(),
         fixed_versions: row.fixed_versions.clone(),
-        url: if row.ecosystem == "endoflife" {
-            format!("https://endoflife.date/{}", row.package)
-        } else {
-            format!("https://osv.dev/vulnerability/{}", row.vulnerability_id)
-        },
+        url,
         kind: row.kind.clone(),
     }
 }
@@ -529,6 +575,8 @@ fn empty_ledger(report: &ProjectReport) -> ProjectLedger {
         evaluated: false,
         lockfiles_checked: false,
         eol_checked: false,
+        deadlines_checked: false,
+        target_sdk_note: None,
     }
 }
 
@@ -600,8 +648,15 @@ pub fn render_ledger_text(projects: &[ProjectLedger], show_ignored: bool) -> Str
 }
 
 fn write_project(out: &mut String, project: &ProjectLedger, show_ignored: bool) {
-    if project.lockfiles.is_empty() && project.error.is_none() && project.warnings.is_empty() {
+    if project.lockfiles.is_empty()
+        && project.error.is_none()
+        && project.warnings.is_empty()
+        && !project.deadlines_checked
+    {
         out.push_str("  no lockfiles configured\n");
+    }
+    if let Some(note) = &project.target_sdk_note {
+        let _ = writeln!(out, "  {note}");
     }
     for lockfile in &project.lockfiles {
         let _ = writeln!(
@@ -662,7 +717,12 @@ fn keeps_lockfile_findings(project: &ProjectLedger) -> bool {
     if project.lockfiles_checked {
         return false;
     }
-    let kept = |finding: &LedgerFinding| finding.kind != "eol" && finding.kind != "eol_soon";
+    let kept = |finding: &LedgerFinding| {
+        finding.kind != "eol"
+            && finding.kind != "eol_soon"
+            && finding.kind != "platform_deadline"
+            && finding.kind != "platform_deadline_soon"
+    };
     project.open.iter().any(kept) || project.ignored.iter().any(kept)
 }
 
@@ -747,13 +807,16 @@ pub fn render_finding_show(finding: &StoredFinding, events: &[StoredEvent]) -> S
     let _ = writeln!(out, "  severity: {}", finding.severity);
     let _ = writeln!(out, "  state: {}", finding.state.as_str());
     let _ = writeln!(out, "  kind: {}", finding.kind);
-    let _ = writeln!(out, "  kind: {}", finding.kind);
     let _ = writeln!(out, "  summary: {}", finding.summary);
     let _ = writeln!(out, "  fixed in: {}", finding.fixed_versions.join(", "));
     let _ = writeln!(
         out,
-        "  url: https://osv.dev/vulnerability/{}",
-        finding.vulnerability_id
+        "  url: {}",
+        page_url(
+            &finding.ecosystem,
+            &finding.package,
+            &finding.vulnerability_id
+        )
     );
     let _ = writeln!(out, "  first seen: {}", finding.first_seen);
     let _ = writeln!(out, "  last seen: {}", finding.last_seen);
@@ -872,11 +935,11 @@ fn finding_json(finding: &StoredFinding) -> FindingJson<'_> {
         resolved_at: finding.resolved_at.as_deref(),
         ignore_reason: finding.ignore_reason.as_deref(),
         ignore_until: finding.ignore_until.as_deref(),
-        url: if finding.ecosystem == "endoflife" {
-            format!("https://endoflife.date/{}", finding.package)
-        } else {
-            format!("https://osv.dev/vulnerability/{}", finding.vulnerability_id)
-        },
+        url: page_url(
+            &finding.ecosystem,
+            &finding.package,
+            &finding.vulnerability_id,
+        ),
     }
 }
 

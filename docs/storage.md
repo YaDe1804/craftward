@@ -32,7 +32,7 @@ The file database does not.
 
 ## Schema
 
-The schema version is `PRAGMA user_version`. This build writes version 3.
+The schema version is `PRAGMA user_version`. This build writes version 5.
 Migrations only move forward, one version at a time, each in a transaction.
 If the file's version is newer, Craftward stops and says that a newer
 Craftward version created the database.
@@ -50,8 +50,15 @@ to 0: nothing failed, and nothing was compared. Version 2 adds
 `evaluated`. A version 1 row whose `error` is null is marked evaluated.
 A version 1 row with `error` set stays unevaluated. Version 3 adds `kind`
 on `findings`. Existing rows become `vulnerability`. The event table is
-rebuilt in the same migration so `withdrawn` is allowed. The copy is still
-named for the version the file had before the migration started.
+rebuilt in the same migration so `withdrawn` is allowed. Version 4 rebuilds
+`findings` so `kind` may also be `platform_deadline` or
+`platform_deadline_soon`. Existing rows keep their kind. The event table is
+rebuilt again with the same event kinds, because a child table cannot stay
+in place while its parent is replaced. Version 5 rebuilds only the event
+table, so `kind` may also be `deadline_passed`. That event is recorded
+when a Play finding changes from `platform_deadline_soon` to
+`platform_deadline`. The copy is still named for the version the file had
+before the migration started.
 
 ### runs
 
@@ -63,7 +70,7 @@ named for the version the file had before the migration started.
 | `offline` | `1` when the check was not allowed to use the network. |
 | `packages_checked` | Packages sent to OSV. Zero when the check failed. |
 | `open_count`, `new_count`, `resolved_count` | Counts after a check that compared lockfiles. On a failed check every counter is zero. When nothing was evaluated, `open_count` is the number of findings already open and the other two counters are zero. |
-| `evaluated` | `1` when lockfile results or end-of-life data were compared with stored findings. `0` when neither was. |
+| `evaluated` | `1` when lockfile results, end-of-life data, or Play deadlines were compared with stored findings. `0` when none of them was. |
 | `error` | Why the check failed, or null. Null together with `evaluated` 0 means nothing was compared. |
 
 ### findings
@@ -73,7 +80,8 @@ id. The version is the last version that was still affected. It is not part
 of the identity, so a new affected version updates the same row.
 
 `state` is `open`, `ignored`, or `resolved`. `kind` is `vulnerability`,
-`malicious`, `unmaintained`, `unsound`, `notice`, `eol`, or `eol_soon`.
+`malicious`, `unmaintained`, `unsound`, `notice`, `eol`, `eol_soon`,
+`platform_deadline`, or `platform_deadline_soon`.
 `aliases` and `fixed_versions`
 are JSON arrays of strings. `ignore_until` is `YYYY-MM-DD` or null. The
 other times use the same UTC timestamp as `runs`.
@@ -81,5 +89,6 @@ other times use the same UTC timestamp as `runs`.
 ### finding_events
 
 One row per change: `discovered`, `ignored`, `reopened`, `resolved`,
-`reappeared`, or `withdrawn`. `reason` is the ignore text, `ignore expired on YYYY-MM-DD`
-when an ignore lapses, or an empty string.
+`reappeared`, `withdrawn`, or `deadline_passed`. `reason` is the ignore
+text, `ignore expired on YYYY-MM-DD` when an ignore lapses, or an empty
+string. `deadline_passed` has an empty reason.

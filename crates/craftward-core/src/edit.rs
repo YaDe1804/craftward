@@ -11,8 +11,9 @@ use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
 use crate::load::{load_from_path, load_from_str};
 use crate::model::{
-    Component, ComponentKind, Issue, IssueSeverity, IssueStatus, Phase, Plan, Project,
-    ProjectStatus, Stack, Task, TaskStatus, WatchItem, WatchKind,
+    AndroidConfig, AndroidStore, Component, ComponentKind, FormFactor, Issue, IssueSeverity,
+    IssueStatus, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
+    WatchKind,
 };
 use crate::workspace::{format_project, write_atomic};
 
@@ -30,6 +31,8 @@ const SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
 const WATCH_KINDS: &[&str] = &["deadline", "expiry", "review", "other"];
 const DATE_FORMS: &[&str] = &["YYYY-MM-DD"];
 const URL_FORMS: &[&str] = &["http://", "https://"];
+const FORM_FACTORS: &[&str] = &["phone", "automotive", "wear", "tv", "xr"];
+const ANDROID_STORES: &[&str] = &["google_play", "none"];
 const COMPONENT_KINDS: &[&str] = &[
     "platform",
     "language",
@@ -138,6 +141,23 @@ pub struct NewComponent<'a> {
     pub note: Option<&'a str>,
     /// endoflife.date product id, when one was given.
     pub eol_product: Option<&'a str>,
+}
+
+/// Fields of `stack.android` that one command may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AndroidChanges<'a> {
+    /// `target_sdk`. [`ProjectUpdate::Clear`] removes it.
+    pub target_sdk: ProjectUpdate<'a>,
+    /// `min_sdk`. [`ProjectUpdate::Clear`] removes it.
+    pub min_sdk: ProjectUpdate<'a>,
+    /// New form factor, when the flag was present.
+    pub form_factor: Option<&'a str>,
+    /// New store, when the flag was present.
+    pub store: Option<&'a str>,
+    /// Paths to append after [`Self::clear_detect_from`] is applied.
+    pub detect_from: &'a [String],
+    /// Replace the current path list with an empty one before appending.
+    pub clear_detect_from: bool,
 }
 
 /// Optional fields of one component.
@@ -754,6 +774,7 @@ pub fn add_component(
     let stack = next.stack.get_or_insert_with(|| Stack {
         components: Vec::new(),
         lockfiles: Vec::new(),
+        android: None,
     });
     if stack
         .components
@@ -828,6 +849,7 @@ pub fn add_lockfile(
     let stack = next.stack.get_or_insert_with(|| Stack {
         components: Vec::new(),
         lockfiles: Vec::new(),
+        android: None,
     });
     if stack.lockfiles.iter().any(|existing| existing == path) {
         return Err(EditError::Duplicate {
@@ -858,6 +880,102 @@ pub fn remove_lockfile(
     };
     stack.lockfiles.remove(index);
     commit(next, updated_on, None)
+}
+
+/// Creates or changes `stack.android`.
+///
+/// # Errors
+///
+/// Returns [`EditError::Invalid`] for a bad API level, form factor, or store,
+/// [`EditError::Duplicate`] when a detect path is already listed, and
+/// [`EditError::InvalidFile`] when a path is not relative. The file is not
+/// written in those cases.
+pub fn set_android(
+    project: &Project,
+    changes: AndroidChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let stack = next.stack.get_or_insert_with(|| Stack {
+        components: Vec::new(),
+        lockfiles: Vec::new(),
+        android: None,
+    });
+    let android = stack.android.get_or_insert_with(AndroidConfig::default);
+    apply_sdk(&mut android.target_sdk, "target_sdk", changes.target_sdk)?;
+    apply_sdk(&mut android.min_sdk, "min_sdk", changes.min_sdk)?;
+    if let Some(text) = changes.form_factor {
+        android.form_factor = parse_form_factor(text)?;
+    }
+    if let Some(text) = changes.store {
+        android.store = parse_store(text)?;
+    }
+    apply_detect_from(android, &changes)?;
+    commit(next, updated_on, None)
+}
+
+fn apply_sdk(
+    slot: &mut Option<u32>,
+    field: &'static str,
+    update: ProjectUpdate<'_>,
+) -> Result<(), EditError> {
+    match update {
+        ProjectUpdate::Keep => Ok(()),
+        ProjectUpdate::Clear => {
+            *slot = None;
+            Ok(())
+        }
+        ProjectUpdate::Set(text) => {
+            *slot = Some(parse_sdk(field, text)?);
+            Ok(())
+        }
+    }
+}
+
+fn parse_sdk(field: &'static str, text: &str) -> Result<u32, EditError> {
+    let Some(value) = text.parse::<u32>().ok().filter(|value| *value >= 1) else {
+        return Err(EditError::Invalid {
+            field,
+            value: text.to_owned(),
+            allowed: &["a positive integer"],
+        });
+    };
+    Ok(value)
+}
+
+fn parse_form_factor(text: &str) -> Result<FormFactor, EditError> {
+    FormFactor::parse(text).ok_or_else(|| EditError::Invalid {
+        field: "form_factor",
+        value: text.to_owned(),
+        allowed: FORM_FACTORS,
+    })
+}
+
+fn parse_store(text: &str) -> Result<AndroidStore, EditError> {
+    AndroidStore::parse(text).ok_or_else(|| EditError::Invalid {
+        field: "store",
+        value: text.to_owned(),
+        allowed: ANDROID_STORES,
+    })
+}
+
+fn apply_detect_from(
+    android: &mut AndroidConfig,
+    changes: &AndroidChanges<'_>,
+) -> Result<(), EditError> {
+    if changes.clear_detect_from {
+        android.detect_from.clear();
+    }
+    for path in changes.detect_from {
+        if android.detect_from.iter().any(|existing| existing == path) {
+            return Err(EditError::Duplicate {
+                kind: "detect_from",
+                value: path.clone(),
+            });
+        }
+        android.detect_from.push(path.clone());
+    }
+    Ok(())
 }
 
 fn require_component<'a>(

@@ -1,5 +1,6 @@
 //! Command-line interface for Craftward.
 
+mod deadlines;
 mod editing;
 mod findings;
 mod radar;
@@ -100,6 +101,7 @@ enum Command {
     Radar(radar::Request),
     Findings(findings::Request),
     Stack(stack::Request),
+    Deadlines(deadlines::Request),
     HelpText(&'static str),
     Usage(Topic),
 }
@@ -181,6 +183,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Command::Radar(request) => radar::run(&request, invocation.workspace.as_deref()),
         Command::Findings(request) => findings::run(&request, invocation.workspace.as_deref()),
         Command::Stack(request) => stack::run(&request, invocation.workspace.as_deref()),
+        Command::Deadlines(request) => deadlines::run(&request),
         Command::HelpText(text) => {
             println!("{text}");
             Ok(ExitCode::SUCCESS)
@@ -609,6 +612,12 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
                 stack::Parsed::Run(request) => Ok(Command::Stack(request)),
             };
         }
+        "deadlines" => {
+            return match deadlines::parse(args)? {
+                deadlines::Parsed::Help(text) => Ok(Command::HelpText(text)),
+                deadlines::Parsed::Run(request) => Ok(Command::Deadlines(request)),
+            };
+        }
         "show" | "project" | "phase" | "task" | "issue" | "watch" => {
             return match editing::parse(name, args)? {
                 editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
@@ -862,12 +871,16 @@ Commands:
   issue add|status|remove
   watch add|remove
   radar [PROJECT...] [--refresh] [--offline] [--json] [--all] [--strict]
-      [--eol-warning-days N] [--cache-dir DIR] [--data-dir DIR]
-      Look up known vulnerabilities, support ends, and store them.
+      [--eol-warning-days N] [--deadline-warning-days N]
+      [--cache-dir DIR] [--data-dir DIR]
+      Look up known vulnerabilities, support ends, Play target-API deadlines,
+      and store them.
   findings [PROJECT...] [--state ..] [--kind ..] [--json] [--data-dir DIR]
       List, show, ignore, or reopen stored findings.
-  stack add|set|remove | stack lockfile add|remove
-      Change stack components and lockfile paths.
+  stack add|set|remove | stack lockfile add|remove | stack android
+      Change stack components, lockfile paths, and Android targetSdk settings.
+  deadlines [--data-dir DIR]
+      Show the Google Play target-API deadlines in use.
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.
@@ -879,7 +892,8 @@ Exit status:
   0  success, or radar found nothing
   1  a file or request failed
   2  the command line is wrong
-  3  radar has an open finding"
+  3  radar has an open vulnerability, malicious package, past support end,
+     or past Play deadline. Notices count only with --strict"
     );
 }
 

@@ -154,6 +154,7 @@ fn options(refresh: bool, offline: bool, now: i64) -> RadarOptions {
         offline,
         now,
         eol_warning_days: 90,
+        deadline_warning_days: 180,
     }
 }
 
@@ -168,7 +169,13 @@ fn findings_use_batch_details_and_map_severity() {
         huge: false,
         pages: false,
     };
-    let reports = scan(&[file], &client, &cache, &options(false, false, NOW));
+    let reports = scan(
+        &[file],
+        &client,
+        &cache,
+        Path::new("."),
+        &options(false, false, NOW),
+    );
     let report = &reports[0];
     assert!(report.error.is_none(), "{:?}", report.error);
     assert!(
@@ -212,6 +219,7 @@ fn large_batches_are_split_and_pages_are_followed() {
         &[file],
         &client,
         &root.join("cache"),
+        Path::new("."),
         &options(false, false, NOW),
     );
     assert!(reports[0].error.is_none(), "{:?}", reports[0].error);
@@ -233,6 +241,7 @@ fn pagination_unknown_severity_and_the_size_limit() {
         std::slice::from_ref(&file),
         &client,
         &root.join("cache-page"),
+        Path::new("."),
         &options(false, false, NOW),
     );
     let ids: Vec<_> = reports[0]
@@ -257,6 +266,7 @@ source = \"registry+https://github.com/rust-lang/crates.io-index\"
         &[unrated_file],
         &client,
         &root.join("cache-unrated"),
+        Path::new("."),
         &options(false, false, NOW),
     );
     assert_eq!(reports[0].findings[0].severity, "unknown");
@@ -270,6 +280,7 @@ source = \"registry+https://github.com/rust-lang/crates.io-index\"
         &[file],
         &huge,
         &root.join("cache-huge"),
+        Path::new("."),
         &options(true, false, NOW),
     );
     assert!(
@@ -299,6 +310,7 @@ fn cache_expires_after_one_day_and_seven_days() {
         std::slice::from_ref(&file),
         &client,
         &cache,
+        Path::new("."),
         &options(false, false, NOW),
     );
     assert_eq!(client.batches.borrow().len(), 1);
@@ -306,6 +318,7 @@ fn cache_expires_after_one_day_and_seven_days() {
         std::slice::from_ref(&file),
         &client,
         &cache,
+        Path::new("."),
         &options(false, false, NOW + 86_400 - 1),
     );
     assert_eq!(
@@ -317,6 +330,7 @@ fn cache_expires_after_one_day_and_seven_days() {
         std::slice::from_ref(&file),
         &client,
         &cache,
+        Path::new("."),
         &options(false, false, NOW + 86_400),
     );
     assert_eq!(
@@ -338,6 +352,7 @@ fn cache_expires_after_one_day_and_seven_days() {
         std::slice::from_ref(&file),
         &later,
         &cache,
+        Path::new("."),
         &options(false, false, NOW),
     );
     assert_eq!(later.batches.borrow().len(), 0, "the query is still fresh");
@@ -364,12 +379,14 @@ fn refresh_offline_and_a_network_error_use_the_cache_as_specified() {
         std::slice::from_ref(&file),
         &client,
         &cache,
+        Path::new("."),
         &options(false, false, NOW),
     );
     let _ = scan(
         std::slice::from_ref(&file),
         &client,
         &cache,
+        Path::new("."),
         &options(true, false, NOW),
     );
     assert_eq!(client.batches.borrow().len(), 2, "--refresh contacts OSV");
@@ -383,6 +400,7 @@ fn refresh_offline_and_a_network_error_use_the_cache_as_specified() {
         std::slice::from_ref(&file),
         &offline,
         &cache,
+        Path::new("."),
         &options(false, true, NOW),
     );
     assert!(reports[0].error.is_none(), "{:?}", reports[0].error);
@@ -392,6 +410,7 @@ fn refresh_offline_and_a_network_error_use_the_cache_as_specified() {
         std::slice::from_ref(&file),
         &offline,
         &cache,
+        Path::new("."),
         &options(false, true, NOW + 86_400),
     );
     assert!(expired[0].error.is_none(), "{:?}", expired[0].error);
@@ -409,7 +428,13 @@ fn refresh_offline_and_a_network_error_use_the_cache_as_specified() {
         huge: false,
         pages: false,
     };
-    let fallback = scan(&[file], &broken, &cache, &options(true, false, NOW));
+    let fallback = scan(
+        &[file],
+        &broken,
+        &cache,
+        Path::new("."),
+        &options(true, false, NOW),
+    );
     assert!(fallback[0].error.is_none(), "{:?}", fallback[0].error);
     assert!(fallback[0].stale_cache_from.is_some());
     let text = craftward_core::render_text(&fallback);
@@ -422,7 +447,13 @@ fn refresh_offline_and_a_network_error_use_the_cache_as_specified() {
         "{\n  \"schema_version\": 1,\n  \"id\": \"empty\",\n  \"name\": \"Empty\",\n  \"status\": \"idea\"\n}\n",
     )
     .unwrap();
-    let quiet = scan(&[empty_file], &broken, &cache, &options(false, true, NOW));
+    let quiet = scan(
+        &[empty_file],
+        &broken,
+        &cache,
+        Path::new("."),
+        &options(false, true, NOW),
+    );
     let text = craftward_core::render_text(&quiet);
     assert!(text.contains("no lockfiles configured"), "{text}");
     let _ = fs::remove_dir_all(root);

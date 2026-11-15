@@ -6,8 +6,9 @@ version.
 
 Exit status is `0` for success, `1` when a file or request fails, and `2` when
 the command line is wrong. `radar` also exits `3` when an actionable
-finding is open. Notices and a support end that is only approaching count
-with `--strict`. An error still exits `1`. Ignored findings do not change
+finding is open. Notices, a support end that is only approaching, and a
+Play deadline that is only approaching count with `--strict`. An error
+still exits `1`. Ignored findings do not change
 that status.
 `--help` after a command prints that command's help and exits `0`.
 
@@ -263,6 +264,14 @@ component names.
 The path is compared exactly. An absolute path or a `..` segment is
 rejected and the file is not written.
 
+`stack android` creates or changes `stack.android`. `--target-sdk` and
+`--min-sdk` take a positive integer. An empty value removes that field.
+`--form-factor` is `phone`, `automotive`, `wear`, `tv`, or `xr`.
+`--store` is `google_play` or `none`. `--detect-from` may be repeated and
+appends a relative path. `--clear-detect-from` drops the current list
+first. A bad form factor, store, or API level exits 2. An absolute path
+or a `..` segment exits 1 and the file is not written.
+
 Exit status is `0` on success, `1` when the name, path, or file is wrong,
 and `2` when the command line is wrong. An unknown kind exits 2.
 
@@ -272,6 +281,7 @@ craftward stack set harbor-light Node.js --version ""
 craftward stack remove harbor-light Node.js
 craftward stack lockfile add harbor-light package-lock.json
 craftward stack lockfile remove harbor-light package-lock.json
+craftward stack android harbor-light --target-sdk 35 --detect-from app/build.gradle.kts
 ```
 
 ## radar
@@ -283,9 +293,12 @@ rule as `roadmap`.
 
 `--refresh` ignores cached answers and asks again. `--offline` never
 contacts OSV or endoflife.date. The two options cannot be combined.
-`--strict` makes notices and `eol_soon` count toward exit status 3.
-`--eol-warning-days` is how many days ahead a support end still counts as
-`eol_soon`. The default is 90. `--cache-dir` selects the
+`--strict` makes notices, `eol_soon`, and `platform_deadline_soon` count
+toward exit status 3. `--eol-warning-days` is how many days ahead a
+support end still counts as `eol_soon`. The default is 90.
+`--deadline-warning-days` is how many days ahead a Play deadline still
+counts as `platform_deadline_soon`. The default is 180. Play deadlines
+do not use the network. `--cache-dir` selects the
 cache directory; otherwise `CRAFTWARD_CACHE_DIR` is used, then the default
 described in [radar.md](radar.md). `--data-dir` selects the database
 directory; otherwise `CRAFTWARD_DATA_DIR` is used, then the default
@@ -293,9 +306,10 @@ described in [storage.md](storage.md). `--json` prints the same report as
 JSON. `--all` includes ignored findings in the list. They are always counted.
 
 Exit status is `0` when no actionable finding is open, `3` when a
-vulnerability, a malicious package, or a past support end is open, `1`
-when a project could not be checked, and `2` when the command line is
-wrong. Notices and `eol_soon` count toward status 3 only with `--strict`.
+vulnerability, a malicious package, a past support end, or a past Play
+deadline is open, `1` when a project could not be checked, and `2` when
+the command line is wrong. Notices, `eol_soon`, and
+`platform_deadline_soon` count toward status 3 only with `--strict`.
 An error takes priority over an open finding. The text
 report, the JSON fields, the lifecycle, and what is sent to OSV are
 described in [radar.md](radar.md).
@@ -305,6 +319,24 @@ craftward radar
 craftward radar harbor-light --json
 craftward radar --offline --cache-dir ./cache --data-dir ./data
 craftward radar --strict --eol-warning-days 30
+craftward radar --deadline-warning-days 90
+```
+
+## deadlines
+
+Prints the Play target-API deadlines that `radar` will use, their
+`data_version`, and the source URL of each row. `--data-dir` selects the
+directory that may hold a newer `platform-deadlines.json`. The built-in
+file is used when that file is missing, older, or invalid. An older file
+is named. An invalid file is a warning. The layout and the update steps
+are in [platform-deadlines.md](platform-deadlines.md).
+
+Exit status is `0` on success, `1` when the built-in file or the data
+directory cannot be used, and `2` when the command line is wrong.
+
+```console
+craftward deadlines
+craftward deadlines --data-dir ./data
 ```
 
 ## findings
@@ -314,8 +346,9 @@ project, every stored finding is listed. A project argument is an id or a
 path, with the same ambiguity rule as `roadmap`. `--state` is `open`,
 `ignored`, `resolved`, or `all`. The default is `open`. `--kind` limits
 the list to one kind: `vulnerability`, `malicious`, `unmaintained`,
-`unsound`, `notice`, `eol`, or `eol_soon`. The list and `show` print the
-kind.
+`unsound`, `notice`, `eol`, `eol_soon`, `platform_deadline`, or
+`platform_deadline_soon`. The list and `show` print the kind. A Play
+finding links to the help page recorded for that deadline.
 
 `show` prints one finding and its history. `ignore` requires `--reason`.
 The reason must not be empty or only whitespace. `--until` is the last UTC

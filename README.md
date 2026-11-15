@@ -41,15 +41,18 @@ every file is valid, 1 when a file is invalid or cannot be read, and 2 when
 the command line is wrong. A missing source directory or lockfile is a
 warning and does not change that status. `init`, `add`, `remove`, `list`,
 `roadmap`, `workspace path`, `show`, the `project`, `phase`, `task`,
-`issue`, and `watch` edits, `stack`, `radar`, and `findings` are described in
+`issue`, and `watch` edits, `stack`, `radar`, `deadlines`, and `findings` are described in
 [docs/cli.md](docs/cli.md). An edit is written only when the project file
 is still valid. `radar` asks [OSV](https://osv.dev/) about the packages in
 the project's lockfiles and [endoflife.date](https://endoflife.date) about
 components that have a version. It stores the findings in a local database.
-It exits 3 when a vulnerability, a malicious package, or a past support end
-is open. Notices count with `--strict`. See [docs/radar.md](docs/radar.md)
+It exits 3 when a vulnerability, a malicious package, a past support end,
+or a past Google Play target-API deadline is open. Notices count with
+`--strict`. `deadlines` prints the Play deadlines in use. See
+[docs/radar.md](docs/radar.md), [docs/platform-deadlines.md](docs/platform-deadlines.md),
 and [docs/storage.md](docs/storage.md). The endoflife.date data is under
-the MIT License.
+the MIT License. Play deadlines are copied from the Play Console Help
+page into a file in this repository.
 
 ```console
 cargo run -p craftward-cli -- validate examples/minimal.craftward.json examples/full.craftward.json
@@ -85,5 +88,6 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Workspace file](docs/workspace-format.md)
 - [Command-line interface](docs/cli.md)
 - [Vulnerability radar](docs/radar.md)
+- [Play target-API deadlines](docs/platform-deadlines.md)
 - [Local database](docs/storage.md)
 - [Roadmap](docs/roadmap/)
