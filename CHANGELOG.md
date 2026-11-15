@@ -27,3 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not overwrite an existing file. When hard links are unavailable, the file
   is created exclusively instead. Fixed labels are English or German. A
   value that is both a project id and an existing path is rejected.
+- `show`, `project set`, `phase`, `task`, `issue`, and `watch`, which edit a
+  project file through `craftward-core`. The file is replaced only when it
+  is still valid, in one canonical form. Omitted ids are formed from titles,
+  and `updated` is set to the UTC date.

@@ -671,7 +671,7 @@ fn format_workspace(workspace: &Workspace) -> String {
     )
 }
 
-fn format_project(project: &Project) -> String {
+pub(crate) fn format_project(project: &Project) -> String {
     let mut text = serde_json::to_string_pretty(project).unwrap_or_else(|_| "{}".to_owned());
     text.push('\n');
     text
@@ -687,7 +687,7 @@ fn validation_from_load(error: LoadError) -> WorkspaceError {
     }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
