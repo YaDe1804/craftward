@@ -101,6 +101,10 @@ pub enum LocateError {
     NoAppData,
     /// Linux or macOS has no home directory, and Linux has no `XDG_CONFIG_HOME`.
     NoHome,
+    /// Windows has no `LOCALAPPDATA` value.
+    NoLocalAppData,
+    /// Linux or macOS has no home directory, and Linux has no `XDG_CACHE_HOME`.
+    NoCacheHome,
 }
 
 impl std::fmt::Display for LocateError {
@@ -112,6 +116,11 @@ impl std::fmt::Display for LocateError {
             Self::NoHome => formatter.write_str(
                 "the home directory is not known, so there is no default workspace location",
             ),
+            Self::NoLocalAppData => formatter
+                .write_str("LOCALAPPDATA is not set, so there is no default cache location"),
+            Self::NoCacheHome => formatter.write_str(
+                "the home directory is not known, so there is no default cache location",
+            ),
         }
     }
 }
@@ -120,6 +129,7 @@ impl std::error::Error for LocateError {}
 
 const WORKSPACE_FILE: &str = "workspace.json";
 const ENV_WORKSPACE: &str = "CRAFTWARD_WORKSPACE";
+const ENV_CACHE: &str = "CRAFTWARD_CACHE_DIR";
 
 /// Chooses the workspace file.
 ///
@@ -176,6 +186,51 @@ fn default_workspace_file(host: &impl Host) -> Result<PathBuf, LocateError> {
             .join("Craftward"),
     };
     Ok(directory.join(WORKSPACE_FILE))
+}
+
+/// Chooses the directory that stores cached OSV responses.
+///
+/// The order is the explicit path, then `CRAFTWARD_CACHE_DIR`, then the
+/// suggested directory. An empty environment variable is treated as unset.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when no explicit path and no environment variable
+/// are set and the suggested directory cannot be built.
+pub fn locate_cache(host: &impl Host, explicit: Option<&Path>) -> Result<PathBuf, LocateError> {
+    if let Some(path) = explicit {
+        return Ok(path.to_path_buf());
+    }
+    if let Some(path) = non_empty(host.var(ENV_CACHE)) {
+        return Ok(PathBuf::from(path));
+    }
+    default_cache_dir(host)
+}
+
+fn default_cache_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
+    let directory = match host.os() {
+        OsFamily::Windows => {
+            let local = non_empty(host.var("LOCALAPPDATA")).ok_or(LocateError::NoLocalAppData)?;
+            PathBuf::from(local).join("Craftward").join("cache")
+        }
+        OsFamily::Linux => {
+            if let Some(cache_home) = non_empty(host.var("XDG_CACHE_HOME")) {
+                PathBuf::from(cache_home).join("craftward")
+            } else {
+                host.home_dir()
+                    .ok_or(LocateError::NoCacheHome)?
+                    .join(".cache")
+                    .join("craftward")
+            }
+        }
+        OsFamily::MacOs => host
+            .home_dir()
+            .ok_or(LocateError::NoCacheHome)?
+            .join("Library")
+            .join("Caches")
+            .join("Craftward"),
+    };
+    Ok(directory)
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

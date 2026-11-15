@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
     Host, LocateError, OsFamily, ProjectStatus, Workspace, WorkspaceEntry, WorkspaceError,
-    WorkspaceOrigin, add_project, init_project, list_projects, load_workspace, locate_workspace,
-    remove_project, save_workspace, snapshot,
+    WorkspaceOrigin, add_project, init_project, list_projects, load_workspace, locate_cache,
+    locate_workspace, remove_project, save_workspace, snapshot,
 };
 
 struct FakeHost {
@@ -439,4 +439,49 @@ fn workspace_file_rejects_unknown_fields_and_a_duplicate_path() {
         "file was written by a newer Craftward version"
     );
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn cache_directory_follows_the_option_then_the_environment_then_the_default() {
+    let windows = FakeHost {
+        os: OsFamily::Windows,
+        vars: vec![
+            ("CRAFTWARD_CACHE_DIR", ""),
+            ("LOCALAPPDATA", "C:/Users/me/AppData/Local"),
+        ],
+        home: None,
+    };
+    let chosen = PathBuf::from("D:/explicit");
+    assert_eq!(locate_cache(&windows, Some(&chosen)).unwrap(), chosen);
+    assert_eq!(
+        locate_cache(&windows, None).unwrap(),
+        PathBuf::from("C:/Users/me/AppData/Local/Craftward/cache")
+    );
+    let linux = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_CACHE_HOME", "/var/cache")],
+        home: Some(PathBuf::from("/home/me")),
+    };
+    assert_eq!(
+        locate_cache(&linux, None).unwrap(),
+        PathBuf::from("/var/cache/craftward")
+    );
+    let home_only = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![],
+        home: Some(PathBuf::from("/home/me")),
+    };
+    assert_eq!(
+        locate_cache(&home_only, None).unwrap(),
+        PathBuf::from("/home/me/.cache/craftward")
+    );
+    let mac = FakeHost {
+        os: OsFamily::MacOs,
+        vars: vec![("CRAFTWARD_CACHE_DIR", "/tmp/craftward-cache")],
+        home: Some(PathBuf::from("/Users/me")),
+    };
+    assert_eq!(
+        locate_cache(&mac, None).unwrap(),
+        PathBuf::from("/tmp/craftward-cache")
+    );
 }

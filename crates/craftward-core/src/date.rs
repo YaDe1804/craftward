@@ -56,6 +56,33 @@ fn is_leap_year(year: u32) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
+/// POSIX seconds for the current UTC time.
+///
+/// Returns 0 when the clock is before 1970-01-01 UTC.
+#[must_use]
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
+/// Formats a POSIX timestamp as `YYYY-MM-DD HH:MM:SS UTC`.
+///
+/// Returns [`None`] when `seconds` is negative or the year does not fit in
+/// four digits.
+#[must_use]
+pub fn format_unix_timestamp(seconds: i64) -> Option<String> {
+    let seconds = u64::try_from(seconds).ok()?;
+    let day = format_unix_days(seconds / 86_400)?;
+    let clock = seconds % 86_400;
+    let hour = clock / 3600;
+    let minute = (clock % 3600) / 60;
+    let second = clock % 60;
+    Some(format!("{day} {hour:02}:{minute:02}:{second:02} UTC"))
+}
+
 /// Formats the UTC calendar day of `time` as `YYYY-MM-DD`.
 ///
 /// `SystemTime::duration_since(UNIX_EPOCH)` is the POSIX second count and does
