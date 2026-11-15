@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fs_atomic::write_atomic;
 use crate::lockfile::PackageQuery;
 use crate::osv::Advisory;
-use crate::workspace::write_atomic;
 
 /// A stored package query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

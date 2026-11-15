@@ -11,7 +11,7 @@ use craftward_core::{
     FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore, StoreError,
     StoreSession, StoredEvent, StoredFinding,
 };
-use rusqlite::{Connection, OpenFlags, Transaction};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
 const BUSY_TIMEOUT_MS: u64 = 5000;
 
@@ -228,7 +228,10 @@ impl StateStore for SqliteStore {
         &mut self,
         body: impl FnOnce(&mut dyn StoreSession) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        let transaction = self.conn.transaction().map_err(|error| failed(&error))?;
+        let transaction = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| failed(&error))?;
         let value = {
             let mut session = Session {
                 transaction: &transaction,
@@ -503,8 +506,43 @@ fn copy_backup(path: &Path, version: i64) -> Result<(), StoreError> {
     if backup.exists() {
         return Err(StoreError::BackupExists(backup));
     }
-    fs::copy(path, &backup).map_err(|error| StoreError::Failed(error.to_string()))?;
+    let source = Connection::open(path).map_err(|error| failed(&error))?;
+    let copied = source.backup(
+        rusqlite::MAIN_DB,
+        &backup,
+        None::<fn(rusqlite::backup::Progress)>,
+    );
+    drop(source);
+    if let Err(error) = copied {
+        let _ = fs::remove_file(&backup);
+        return Err(failed(&error));
+    }
+    if let Err(error) = backup_is_intact(&backup) {
+        let _ = fs::remove_file(&backup);
+        return Err(error);
+    }
     Ok(())
+}
+
+fn backup_is_intact(path: &Path) -> Result<(), StoreError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| failed(&error))?;
+    let mut statement = connection
+        .prepare("PRAGMA integrity_check")
+        .map_err(|error| failed(&error))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| failed(&error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| failed(&error))?;
+    if rows.len() == 1 && rows[0] == "ok" {
+        Ok(())
+    } else {
+        Err(StoreError::Failed(format!(
+            "backup failed integrity_check: {}",
+            rows.join(", ")
+        )))
+    }
 }
 
 fn backup_path(path: &Path, version: i64) -> Result<PathBuf, StoreError> {
@@ -538,7 +576,9 @@ fn migrate(connection: &mut Connection, from: i64) -> Result<(), StoreError> {
 }
 
 fn apply_migration(connection: &mut Connection, sql: &str, version: i64) -> Result<(), StoreError> {
-    let transaction = connection.transaction().map_err(|error| failed(&error))?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| failed(&error))?;
     transaction
         .execute_batch(sql)
         .map_err(|error| failed(&error))?;

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- SeQu check F1 (SQ-01, SQ-02, SQ-03): file replacement now creates the
+  temporary file exclusively, syncs it before publishing, and syncs the
+  parent directory on Unix. A migration backup uses SQLite's online backup
+  API, including committed WAL frames, and must pass `integrity_check`.
+  Writing transactions start with `BEGIN IMMEDIATE`, so a second writer
+  waits.
+
 ### Added
 
 - Repository skeleton with a Cargo workspace, command-line and desktop

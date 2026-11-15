@@ -10,6 +10,7 @@ mod deadlines;
 mod edit;
 mod eol;
 mod error;
+mod fs_atomic;
 mod http;
 mod i18n;
 mod lifecycle;
