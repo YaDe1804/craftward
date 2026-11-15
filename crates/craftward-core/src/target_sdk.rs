@@ -24,7 +24,10 @@ pub struct Detection {
 /// Finds `targetSdk` for one project.
 ///
 /// A configured `target_sdk` wins and the files are not read. Otherwise the
-/// highest value wins. When the files disagree, `warnings` names every place.
+/// lowest value wins, so a higher value in a test or lint block cannot hide a
+/// lower production level. When the files disagree, `warnings` names every
+/// place. Assignments inside `testOptions`, `lint`, and `managedDevices`, and
+/// text inside strings, are ignored.
 #[must_use]
 pub fn detect(project_id: &str, source_dir: &Path, config: &AndroidConfig) -> Detection {
     if let Some(value) = config.target_sdk {
@@ -70,7 +73,7 @@ pub fn detect(project_id: &str, source_dir: &Path, config: &AndroidConfig) -> De
     };
     let mut best = first;
     for hit in &hits[1..] {
-        if hit.value > best.value {
+        if hit.value < best.value {
             best = hit;
         }
     }
@@ -113,7 +116,42 @@ fn scan_gradle(
     unresolved: &mut Vec<String>,
 ) {
     let stripped = strip_gradle(&file.text);
+    let mut depth = 0_i32;
+    let mut ignore_depth: Option<i32> = None;
+    let mut pending_ignore = false;
     for (index, line) in stripped.lines().enumerate() {
+        if ignore_depth.is_none() {
+            if let Some(after) = ignored_block_suffix(line) {
+                pending_ignore =
+                    after.is_empty() || after.starts_with('{') || after.starts_with('.');
+            } else if pending_ignore && !line.trim().is_empty() && !line.trim().starts_with('{') {
+                pending_ignore = false;
+            }
+        }
+        let mut ignored_this_line = ignore_depth.is_some();
+        for char in line.chars() {
+            if char == '{' {
+                if pending_ignore && ignore_depth.is_none() {
+                    ignore_depth = Some(depth);
+                    pending_ignore = false;
+                }
+                depth += 1;
+                if ignore_depth.is_some() {
+                    ignored_this_line = true;
+                }
+            } else if char == '}' {
+                depth -= 1;
+                if ignore_depth == Some(depth) {
+                    ignore_depth = None;
+                }
+                if depth < 0 {
+                    depth = 0;
+                }
+            }
+        }
+        if ignored_this_line {
+            continue;
+        }
         let Some(found) = assignment(line) else {
             continue;
         };
@@ -133,6 +171,27 @@ fn scan_gradle(
             Assignment::Unresolved => unresolved.push(place),
         }
     }
+}
+
+fn ignored_block_suffix(line: &str) -> Option<&str> {
+    for name in ["testOptions", "managedDevices", "lint"] {
+        if let Some(index) = find_word(line, name) {
+            return Some(line[index + name.len()..].trim_start());
+        }
+    }
+    None
+}
+
+fn find_word(line: &str, word: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if line.is_char_boundary(index) && word_at(line, index, word) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn lookup(catalogs: &[BTreeMap<String, u32>], key: &str) -> Option<u32> {
@@ -344,7 +403,7 @@ fn copy_string(chars: &[char], start: usize, out: &mut String) -> usize {
                 out.push_str("\"\"\"");
                 return index + 3;
             }
-            out.push(chars[index]);
+            blank_char(chars[index], out);
             index += 1;
         }
         return index;
@@ -353,18 +412,32 @@ fn copy_string(chars: &[char], start: usize, out: &mut String) -> usize {
     out.push(quote);
     let mut index = start + 1;
     while index < chars.len() {
-        out.push(chars[index]);
         if chars[index] == '\\' {
+            out.push(' ');
             index += 1;
             if index < chars.len() {
-                out.push(chars[index]);
+                blank_char(chars[index], out);
             }
-        } else if chars[index] == quote || chars[index] == '\n' {
+        } else if chars[index] == quote {
+            out.push(quote);
             return index + 1;
+        } else if chars[index] == '\n' {
+            out.push('\n');
+            return index + 1;
+        } else {
+            blank_char(chars[index], out);
         }
         index += 1;
     }
     index
+}
+
+fn blank_char(char: char, out: &mut String) {
+    if char == '\n' {
+        out.push('\n');
+    } else {
+        out.push(' ');
+    }
 }
 
 fn skip_block(chars: &[char], start: usize, out: &mut String) -> usize {

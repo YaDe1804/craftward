@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path joining, and HTTP body checks. OSV, endoflife.date, and the deadlines
   file use typed serde. `workspace.json` is written through Serialize. Cache
   and project serialization failures are returned instead of writing `{}`.
+- SeQu check F4 (SQ-04, SQ-09, SQ-10, SQ-11, SQ-12, and stricter OSV /
+  endoflife.date parsing): `targetSdk` ignores strings and
+  `testOptions` / `lint` / `managedDevices` blocks, and the lowest value
+  wins. Cargo.lock matches only the official crates.io source ids and
+  reads strings as UTF-8. Cache names that are only dots or start with `.`
+  are percent-encoded (existing entries for those names are rebuilt).
+  Relative XDG base directories are ignored. Batch `vulns`, advisory
+  `affected`, and EOL fields that raise or suppress findings fail the run
+  when present with the wrong shape.
 
 ### Added
 

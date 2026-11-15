@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::cache::{self, CacheChoice, CachePolicy, ShapeFault, TimedCache};
 use crate::date::{days_between, is_calendar_date};
 use crate::http::{HttpClient, HttpRequest, MAX_RESPONSE_BYTES, Method, accepted_body_or};
-use crate::json_loose::{lenient_array, optional_bool, optional_lenient_vec};
+use crate::json_loose::{lenient_array, optional_strict_bool, optional_strict_vec};
 use crate::model::Component;
 use crate::percent::{encode, encode_file_name};
 use crate::store::{FindingKind, Severity};
@@ -597,7 +597,7 @@ struct CyclesFile {
 #[derive(Deserialize)]
 struct RawCycle {
     name: String,
-    #[serde(alias = "isEol", default, deserialize_with = "optional_bool")]
+    #[serde(alias = "isEol", default, deserialize_with = "optional_strict_bool")]
     is_eol: Option<bool>,
     #[serde(alias = "eolFrom", default)]
     eol_from: EolFrom,
@@ -662,8 +662,11 @@ impl<'de> Deserialize<'de> for EolFrom {
 
 fn parse_product_list(body: &[u8]) -> Result<Vec<CatalogProduct>, String> {
     let list: ProductList = serde_json::from_slice(body).map_err(|error| {
+        let detail = error.to_string();
         if error.is_syntax() || error.is_eof() {
-            error.to_string()
+            detail
+        } else if detail.contains("expected array") || detail.contains("missing field") {
+            format!("endoflife.date product list is invalid: {detail}")
         } else {
             "endoflife.date product list has no result".to_owned()
         }
@@ -674,8 +677,14 @@ fn parse_product_list(body: &[u8]) -> Result<Vec<CatalogProduct>, String> {
 
 fn parse_product(body: &[u8]) -> Result<Vec<Cycle>, String> {
     let document: ProductDocument = serde_json::from_slice(body).map_err(|error| {
+        let detail = error.to_string();
         if error.is_syntax() || error.is_eof() {
-            error.to_string()
+            detail
+        } else if detail.contains("expected array")
+            || detail.contains("expected boolean")
+            || detail.contains("missing field")
+        {
+            format!("endoflife.date product is invalid: {detail}")
         } else {
             "endoflife.date product has no result".to_owned()
         }
@@ -706,7 +715,7 @@ fn get_json(client: &impl HttpClient, url: &str) -> Result<Vec<u8>, String> {
 
 #[derive(Deserialize)]
 struct ProductList {
-    #[serde(default, deserialize_with = "optional_lenient_vec")]
+    #[serde(default, deserialize_with = "optional_strict_vec")]
     result: Option<Vec<CatalogProduct>>,
 }
 
@@ -718,6 +727,42 @@ struct ProductDocument {
 
 #[derive(Deserialize)]
 struct ProductResult {
-    #[serde(default, deserialize_with = "optional_lenient_vec")]
+    #[serde(default, deserialize_with = "optional_strict_vec")]
     releases: Option<Vec<RawCycle>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_product, parse_product_list};
+
+    #[test]
+    fn product_list_result_must_be_an_array() {
+        let error = parse_product_list(br#"{ "result": { "name": "nodejs" } }"#)
+            .expect_err("result object");
+        assert!(
+            error.contains("invalid") || error.contains("array"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn product_releases_must_be_an_array() {
+        let error = parse_product(br#"{ "result": { "releases": { "name": "9" } } }"#)
+            .expect_err("releases object");
+        assert!(
+            error.contains("invalid") || error.contains("array"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn is_eol_must_be_a_boolean_when_present() {
+        let error =
+            parse_product(br#"{ "result": { "releases": [{ "name": "9", "isEol": "yes" }] } }"#)
+                .expect_err("isEol string");
+        assert!(
+            error.contains("invalid") || error.contains("boolean"),
+            "{error}"
+        );
+    }
 }

@@ -306,7 +306,10 @@ fn collect_cargo(packages: Vec<CargoPackage>) -> ParsedLock {
 }
 
 fn is_crates_io(source: &str) -> bool {
-    source.contains("github.com/rust-lang/crates.io-index") || source.contains("index.crates.io")
+    // Exact Cargo.lock source ids for crates.io (git index and sparse index).
+    // See https://doc.rust-lang.org/cargo/reference/registry-index.html
+    source == "registry+https://github.com/rust-lang/crates.io-index"
+        || source == "sparse+https://index.crates.io/"
 }
 
 fn parse_format_version(line: u32, value: &str) -> Result<u32, LockFailure> {
@@ -321,28 +324,37 @@ fn split_entry(line: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_string(line: u32, value: &str) -> Result<String, LockFailure> {
-    let bytes = value.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
+    let mut chars = value.chars();
+    if chars.next() != Some('"') {
         return Err(invalid(line, "expected a quoted string"));
     }
     let mut out = String::new();
     let mut escaped = false;
-    for byte in &bytes[1..bytes.len() - 1] {
+    let mut closed = false;
+    for char in chars {
+        if closed {
+            return Err(invalid(line, "expected a quoted string"));
+        }
         if escaped {
-            match byte {
-                b'\\' => out.push('\\'),
-                b'"' => out.push('"'),
+            match char {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
                 _ => return Err(invalid(line, "unsupported escape in a string")),
             }
             escaped = false;
-        } else if *byte == b'\\' {
+        } else if char == '\\' {
             escaped = true;
+        } else if char == '"' {
+            closed = true;
         } else {
-            out.push(char::from(*byte));
+            out.push(char);
         }
     }
     if escaped {
         return Err(invalid(line, "a string ended with an unfinished escape"));
+    }
+    if !closed {
+        return Err(invalid(line, "expected a quoted string"));
     }
     Ok(out)
 }

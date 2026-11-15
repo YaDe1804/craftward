@@ -12,7 +12,7 @@ The directory is `--data-dir`, then `CRAFTWARD_DATA_DIR`, then:
 | System | Default |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\Craftward` |
-| Linux | `$XDG_DATA_HOME/craftward`, or `~/.local/share/craftward` |
+| Linux | `$XDG_DATA_HOME/craftward` when absolute, or `~/.local/share/craftward` |
 | macOS | `~/Library/Application Support/Craftward` |
 
 An empty environment variable is treated as unset. The directory is created

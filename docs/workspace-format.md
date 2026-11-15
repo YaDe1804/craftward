@@ -23,9 +23,11 @@ Other Unix systems use the Linux rule. The home directory comes from
 that function.
 
 An empty `CRAFTWARD_WORKSPACE` or `XDG_CONFIG_HOME` is treated as unset. A
-relative path from the option or the environment variable is resolved from the
-current directory. The suggested directories are defaults only. `--workspace`
-and `CRAFTWARD_WORKSPACE` replace them.
+relative `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, or `XDG_DATA_HOME` is ignored
+and the home-directory default is used instead. A relative path from the
+option or `CRAFTWARD_WORKSPACE` is resolved from the current directory. The
+suggested directories are defaults only. `--workspace` and
+`CRAFTWARD_WORKSPACE` replace them.
 
 A missing workspace file means there are no projects yet. The first successful
 `craftward add` creates it.
