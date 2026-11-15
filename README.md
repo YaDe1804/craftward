@@ -38,8 +38,9 @@ line. `craftward --help` describes the commands.
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when
 every file is valid, 1 when a file is invalid or cannot be read, and 2 when
-the command line is wrong. `init`, `add`, `remove`, `list`, and
-`workspace path` are described in [docs/cli.md](docs/cli.md).
+the command line is wrong. A missing source directory or lockfile is a
+warning and does not change that status. `init`, `add`, `remove`, `list`,
+`roadmap`, and `workspace path` are described in [docs/cli.md](docs/cli.md).
 
 ```console
 cargo run -p craftward-cli -- validate examples/minimal.craftward.json examples/full.craftward.json

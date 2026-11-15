@@ -63,6 +63,13 @@
       "format": "uint32",
       "minimum": 0
     },
+    "source_dir": {
+      "description": "Directory that holds the project's source code.\n\nA relative path is resolved from the project file. An absolute path is\nused as given. `..` is allowed, because the project file may live\noutside the repository. When this is absent, the directory that\ncontains the project file is the source directory.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "stack": {
       "description": "Languages, tools, and lockfiles that make up the project.",
       "anyOf": [
@@ -402,7 +409,7 @@
           }
         },
         "lockfiles": {
-          "description": "Lockfiles or other dependency manifests, as paths relative to the project file.\n\nPaths are relative. Absolute paths and `..` segments are rejected.",
+          "description": "Lockfiles or other dependency manifests, relative to `source_dir`.\n\nWhen `source_dir` is absent, they are relative to the project file's\ndirectory. Each path must be relative. Absolute paths and `..`\nsegments are rejected.",
           "type": "array",
           "items": {
             "type": "string"

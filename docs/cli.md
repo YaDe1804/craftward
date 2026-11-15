@@ -72,11 +72,37 @@ craftward list
 
 With paths, checks those files. Without paths, checks every project in the
 workspace. Each file is reported as `ok` or as a list of errors. An error names
-its location, for example `plan.phases[0].tasks[1].due`.
+its location, for example `plan.phases[0].tasks[1].due`. A missing
+`source_dir` or lockfile is printed as `warning:` on the standard error
+stream. A warning does not change the exit status.
 
 ```console
 craftward validate
 craftward validate examples/minimal.craftward.json
+```
+
+## roadmap
+
+Writes one HTML file for a project. The argument is a workspace project id,
+or a `craftward.json` file, or a directory that contains one. A value is a
+path when it exists, ends with `.json`, contains `/` or `\`, or is absolute.
+Otherwise it is a project id. If it is both a registered project id and an
+existing path, the command exits 2. Pass `.\name` on Windows or `./name` on
+Linux and macOS to use the folder. Pass the path of the project file to use
+the registered project.
+
+`--dir` is the output directory and defaults to the current directory.
+`--lang` is `en` or `de` and defaults to `en`. It selects the fixed labels.
+Project titles and task text are copied as written.
+
+The file name is `<id>_roadmap_vN.html`. `N` is one higher than the highest
+existing number in that directory, or 1 when none exist. `v1` and `v3` produce
+`v4`. An existing file is never overwritten. The command prints the path of
+the new file.
+
+```console
+craftward roadmap harbor-light
+craftward roadmap ./app/craftward.json --dir ./docs/roadmap --lang de
 ```
 
 ## workspace path

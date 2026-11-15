@@ -56,9 +56,51 @@ fn is_leap_year(year: u32) -> bool {
     year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
+/// Formats the UTC calendar day of `time` as `YYYY-MM-DD`.
+///
+/// `SystemTime::duration_since(UNIX_EPOCH)` is the POSIX second count and does
+/// not include leap seconds. Dividing by 86400 is the UTC date. Returns
+/// [`None`] when `time` is before 1970-01-01 UTC or the year does not fit in
+/// four digits.
+#[must_use]
+pub fn utc_date(time: std::time::SystemTime) -> Option<String> {
+    let seconds = time
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    format_unix_days(seconds / 86_400)
+}
+
+fn format_unix_days(mut remaining: u64) -> Option<String> {
+    let mut year = 1970_u32;
+    loop {
+        let length: u64 = if is_leap_year(year) { 366 } else { 365 };
+        if remaining < length {
+            break;
+        }
+        remaining -= length;
+        year = year.checked_add(1)?;
+        if year > 9999 {
+            return None;
+        }
+    }
+    let mut month = 1_u32;
+    loop {
+        let length = days_in_month(year, month)?;
+        if remaining < u64::from(length) {
+            let day = u32::try_from(remaining).ok()? + 1;
+            return Some(format!("{year:04}-{month:02}-{day:02}"));
+        }
+        remaining -= u64::from(length);
+        month += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DateError, validate_date};
+    use std::time::{Duration, SystemTime};
+
+    use super::{DateError, utc_date, validate_date};
 
     #[test]
     fn accepts_leap_day_in_a_leap_year() {
@@ -80,6 +122,19 @@ mod tests {
         assert_eq!(validate_date("2026-00-10"), Err(DateError::Calendar));
         assert_eq!(validate_date("2026-13-01"), Err(DateError::Calendar));
         assert_eq!(validate_date("2026-01-00"), Err(DateError::Calendar));
+    }
+
+    #[test]
+    fn unix_epoch_is_the_first_utc_day() {
+        assert_eq!(
+            utc_date(SystemTime::UNIX_EPOCH).as_deref(),
+            Some("1970-01-01")
+        );
+        let next = SystemTime::UNIX_EPOCH + Duration::from_hours(24);
+        assert_eq!(utc_date(next).as_deref(), Some("1970-01-02"));
+        // 1970 and 1971 are common years: day 730 is 1972-01-01, day 789 is 1972-02-29.
+        let leap = SystemTime::UNIX_EPOCH + Duration::from_hours(789 * 24);
+        assert_eq!(utc_date(leap).as_deref(), Some("1972-02-29"));
     }
 
     #[test]

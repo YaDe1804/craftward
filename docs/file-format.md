@@ -46,10 +46,20 @@ leap days. `2024-02-29` is valid. `2026-02-30` and `1900-02-29` are not.
 
 ## Paths
 
-A lockfile path is relative to the project file. It is rejected when it is
-empty, when it starts with `/` or `\`, when it starts with an ASCII letter
-followed by `:`, or when any `/` or `\` segment is `..`. `foo..bar` is allowed,
-because `..` is a segment and not a substring.
+`source_dir` is the directory that holds the project's source. It may be
+relative to the project file or absolute. A relative path may contain `..`,
+because the project file may live outside the repository. An empty string is
+rejected. When `source_dir` is omitted, the directory that contains the
+project file is used.
+
+A lockfile path is relative to `source_dir`. It is rejected when it is empty,
+when it starts with `/` or `\`, when it starts with an ASCII letter followed
+by `:`, or when any `/` or `\` segment is `..`. `foo..bar` is allowed, because
+`..` is a segment and not a substring.
+
+Loading a file does not look at the disk. A project file stays valid on a
+machine where `source_dir` or a lockfile is absent. `craftward validate` warns
+about those missing paths and still exits 0 when the file itself is valid.
 
 ## Project
 
@@ -59,6 +69,7 @@ because `..` is a segment and not a substring.
 | `id` | yes | Short name of the project. |
 | `name` | yes | Human-readable name. |
 | `status` | yes | Lifecycle status. |
+| `source_dir` | no | Directory of the source code. Relative paths may contain `..`. |
 | `description` | no | Longer description. |
 | `current_version` | no | Version the maintainer currently ships or is working on. |
 | `tags` | no | List of strings. Exact duplicates are rejected. |
@@ -197,7 +208,9 @@ Each reminder has:
 
 ## Changing the schema later
 
-Adding, removing, or renaming a field, or changing the type or the allowed
+Craftward has not been released. Until that release, version 1 may gain an
+optional field. `source_dir` was added that way. After the first release,
+adding, removing, or renaming a field, or changing the type or the allowed
 values of a field, is a breaking change. It needs a new `schema_version`.
 
 A build that implements version 1 accepts only the integer `1`. It does not

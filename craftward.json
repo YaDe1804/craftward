@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "id": "craftward",
+  "name": "Craftward",
+  "status": "in_development",
+  "description": "Local-first project hub with a maintenance radar for updates, vulnerabilities and platform deadlines.",
+  "current_version": "0.1.0",
+  "tags": [
+    "rust",
+    "egui",
+    "developer-tools",
+    "open-source"
+  ],
+  "updated": "2026-11-15",
+  "links": [
+    {
+      "label": "Repository",
+      "url": "https://github.com/YaDe1804/craftward"
+    }
+  ],
+  "stack": {
+    "components": [
+      {
+        "kind": "language",
+        "name": "Rust",
+        "version": "1.100.0"
+      },
+      {
+        "kind": "platform",
+        "name": "Windows"
+      },
+      {
+        "kind": "platform",
+        "name": "Linux"
+      },
+      {
+        "kind": "platform",
+        "name": "macOS"
+      },
+      {
+        "kind": "framework",
+        "name": "egui",
+        "note": "planned for the desktop app"
+      },
+      {
+        "kind": "tool",
+        "name": "cargo-deny",
+        "version": "0.20.2"
+      },
+      {
+        "kind": "service",
+        "name": "GitHub Actions"
+      }
+    ],
+    "lockfiles": [
+      "Cargo.lock"
+    ]
+  },
+  "plan": {
+    "phases": [
+      {
+        "id": "phase-0",
+        "title": "Fundament & Entscheidungen",
+        "goal": "Alle Grundsatzfragen geklärt, Repo steht.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Name festgelegt: Craftward",
+            "status": "done"
+          },
+          {
+            "id": "t02",
+            "title": "Sprache festgelegt: Rust",
+            "status": "done"
+          },
+          {
+            "id": "t03",
+            "title": "Oberfläche festgelegt: egui",
+            "status": "done"
+          },
+          {
+            "id": "t04",
+            "title": "Code-Grundsatz: eigener Anwendungscode, nur geprüfte Bibliotheken",
+            "status": "done"
+          },
+          {
+            "id": "t05",
+            "title": "Datenquelle: eine craftward.json pro Projekt",
+            "status": "done"
+          },
+          {
+            "id": "t06",
+            "title": "Speicherkonzept: lokal als Standard, Team-Server später anschließbar",
+            "status": "done"
+          },
+          {
+            "id": "t07",
+            "title": "Lizenz festgelegt: Apache-2.0, keine Zweitlizenz",
+            "status": "done"
+          },
+          {
+            "id": "t08",
+            "title": "Sprache: Englisch als Standard, Oberfläche mehrsprachig",
+            "status": "done"
+          },
+          {
+            "id": "t09",
+            "title": "Ablage: pro Projekt wählbar, Standardordner nur als Vorschlag",
+            "status": "done"
+          },
+          {
+            "id": "t10",
+            "title": "Plattformen: Windows, Linux und macOS",
+            "status": "done"
+          },
+          {
+            "id": "t11",
+            "title": "GitHub-Repo angelegt, main per Ruleset geschützt",
+            "status": "done"
+          },
+          {
+            "id": "t12",
+            "title": "ADRs 0001 bis 0009 geschrieben",
+            "status": "done"
+          }
+        ]
+      },
+      {
+        "id": "phase-1",
+        "title": "Datenmodell",
+        "goal": "Das Dateiformat ist das Herz des Tools – erst das Schema, dann der Code.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Allgemeinen Kern definieren: Projekt, Status, Meilensteine, offene Punkte, Wächter",
+            "status": "done"
+          },
+          {
+            "id": "t02",
+            "title": "Stack-Abschnitt definieren (Plattformen, SDKs, Abhängigkeiten mit Versionen)",
+            "status": "done"
+          },
+          {
+            "id": "t03",
+            "title": "Abgrenzung festlegen: was in die craftward.json gehört, was in die Datenbank",
+            "status": "done"
+          },
+          {
+            "id": "t04",
+            "title": "JSON-Schema v1, aus dem Rust-Code erzeugt und per Test abgesichert",
+            "status": "done"
+          },
+          {
+            "id": "t05",
+            "title": "Regeln für Schema-Änderungen und Migration festlegen",
+            "status": "done"
+          },
+          {
+            "id": "t06",
+            "title": "Projektliste (workspace.json): merkt sich den Speicherort jedes Projekts",
+            "status": "done"
+          },
+          {
+            "id": "t07",
+            "title": "Projektliste anhand der 28 GitHub-Repos neu aufstellen, aktive Projekte als craftward.json erfassen",
+            "status": "open"
+          },
+          {
+            "id": "t08",
+            "title": "Lücken markieren (Versionen, offene Bugs) und ergänzen",
+            "status": "open"
+          }
+        ]
+      },
+      {
+        "id": "phase-2",
+        "title": "Kern & Kommandozeile",
+        "goal": "Früh nutzbar, auch ohne Oberfläche. Speicherung hinter einer einheitlichen Schnittstelle.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Workspace angelegt: Kern-Bibliothek, CLI, Oberfläche getrennt",
+            "status": "done"
+          },
+          {
+            "id": "t02",
+            "title": "Projektdateien einlesen und prüfen (craftward validate)",
+            "status": "done"
+          },
+          {
+            "id": "t03",
+            "title": "Verständliche Fehlermeldungen: alle Fehler einer Datei mit genauer Stelle",
+            "status": "done"
+          },
+          {
+            "id": "t04",
+            "title": "Speicher-Schnittstelle entwerfen: lokal jetzt, Server später ohne Umbau",
+            "status": "open"
+          },
+          {
+            "id": "t05",
+            "title": "Lokale Datenbank (SQLite) für Radar-Zustand, Cache und Verlauf",
+            "status": "open"
+          },
+          {
+            "id": "t06",
+            "title": "Tabellen automatisch anlegen und bei neuen Versionen migrieren",
+            "status": "open"
+          },
+          {
+            "id": "t07",
+            "title": "Speicherorte frei wählbar: Standardordner je Betriebssystem als Vorschlag, nichts fest vorgegeben",
+            "status": "done"
+          },
+          {
+            "id": "t08",
+            "title": "Betriebsart „geteilter Ordner / Git-Repo\" für kleine Teams",
+            "status": "open"
+          },
+          {
+            "id": "t09",
+            "title": "Befehl: Portfolio-Übersicht im Terminal (craftward list)",
+            "status": "done"
+          },
+          {
+            "id": "t10",
+            "title": "Befehl: Roadmap-HTML aus der craftward.json erzeugen",
+            "status": "open"
+          },
+          {
+            "id": "t11",
+            "title": "Tests inklusive Fuzzing des Parsers",
+            "status": "open"
+          },
+          {
+            "id": "t12",
+            "title": "CI: Format, Lints, Tests auf Windows, Linux und macOS, Lizenzprüfung der Abhängigkeiten",
+            "status": "done"
+          }
+        ]
+      },
+      {
+        "id": "phase-3",
+        "title": "Wartungsradar",
+        "goal": "Das Alleinstellungsmerkmal: Was muss ich tun, weil sich draußen etwas geändert hat?",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Wächter-Schnittstelle entwerfen (Quelle → Meldung)",
+            "status": "open"
+          },
+          {
+            "id": "t02",
+            "title": "Quelle: Sicherheitslücken (OSV) gegen Lockfiles",
+            "status": "open"
+          },
+          {
+            "id": "t03",
+            "title": "Quelle: Support-Ende (endoflife.date)",
+            "status": "open"
+          },
+          {
+            "id": "t04",
+            "title": "Quelle: neue Versionen (Release-Feeds, Paket-Registries)",
+            "status": "open"
+          },
+          {
+            "id": "t05",
+            "title": "Quelle: Plattform-Fristen (z. B. Play-Target-API)",
+            "status": "open"
+          },
+          {
+            "id": "t06",
+            "title": "Abgleich Meldung ↔ Stack jedes Projekts, mit Dringlichkeit",
+            "status": "open"
+          },
+          {
+            "id": "t07",
+            "title": "Cache in der lokalen Datenbank, funktioniert auch offline",
+            "status": "open"
+          },
+          {
+            "id": "t08",
+            "title": "Meldungen als erledigt / ignoriert markieren",
+            "status": "open"
+          }
+        ]
+      },
+      {
+        "id": "phase-4",
+        "title": "Desktop-Oberfläche",
+        "goal": "egui mit eigenem Erscheinungsbild.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Eigenes Theme: Farben, Schrift, Abstände, Karten",
+            "status": "open"
+          },
+          {
+            "id": "t02",
+            "title": "Mehrsprachigkeit: alle Texte über Schlüssel, eine Datei pro Sprache; Start mit Englisch und Deutsch",
+            "status": "open"
+          },
+          {
+            "id": "t03",
+            "title": "Sprachwahl nach Systemsprache, umstellbar in den Einstellungen",
+            "status": "open"
+          },
+          {
+            "id": "t04",
+            "title": "Einstellungen: Speicherorte jederzeit ändern, Daten ziehen dabei mit um",
+            "status": "open"
+          },
+          {
+            "id": "t05",
+            "title": "Einrichtungsdialog beim ersten Start: Betriebsart und Speicherort wählen, Standardordner vorgeschlagen",
+            "status": "open"
+          },
+          {
+            "id": "t06",
+            "title": "Ansicht: Portfolio mit allen Projekten und Status",
+            "status": "open"
+          },
+          {
+            "id": "t07",
+            "title": "Ansicht: Projektdetail mit Meilensteinen und Planung",
+            "status": "open"
+          },
+          {
+            "id": "t08",
+            "title": "Ansicht: Radar-Eingang über alle Projekte",
+            "status": "open"
+          },
+          {
+            "id": "t09",
+            "title": "Ansicht: Bugs und offene Punkte",
+            "status": "open"
+          },
+          {
+            "id": "t10",
+            "title": "Bearbeiten in der App, Speichern zurück in die craftward.json",
+            "status": "open"
+          },
+          {
+            "id": "t11",
+            "title": "Dateien beobachten und bei Änderung neu laden",
+            "status": "open"
+          }
+        ]
+      },
+      {
+        "id": "phase-5",
+        "title": "Veröffentlichung",
+        "goal": "Erstes öffentliches Release.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Eigene Abhängigkeiten mit Lockward und bomward prüfen",
+            "status": "open"
+          },
+          {
+            "id": "t02",
+            "title": "Drittlizenz-Datei und NOTICE automatisch erzeugen",
+            "status": "open"
+          },
+          {
+            "id": "t03",
+            "title": "README, Schema-Dokumentation, Beispielprojekt",
+            "status": "open"
+          },
+          {
+            "id": "t04",
+            "title": "Automatische Builds für Windows, Linux und macOS (Intel und Apple-Chip)",
+            "status": "open"
+          },
+          {
+            "id": "t05",
+            "title": "Handtest auf einem Mac vor dem Release",
+            "status": "open"
+          },
+          {
+            "id": "t06",
+            "title": "Code-Signierung für Windows und macOS klären",
+            "status": "open"
+          },
+          {
+            "id": "t07",
+            "title": "Release v0.1.0 auf GitHub",
+            "status": "open"
+          }
+        ]
+      },
+      {
+        "id": "phase-6",
+        "title": "Ausbau",
+        "goal": "Erst nach v0.1.0 entscheiden.",
+        "tasks": [
+          {
+            "id": "t01",
+            "title": "Team-Server: PostgreSQL-Anschluss (damit auch Supabase und eigene Server)",
+            "status": "open"
+          },
+          {
+            "id": "t02",
+            "title": "Anmeldung, Rechte pro Nutzer, gleichzeitige Änderungen",
+            "status": "open"
+          },
+          {
+            "id": "t03",
+            "title": "Zugangsdaten im Schlüsselspeicher des Betriebssystems",
+            "status": "open"
+          },
+          {
+            "id": "t04",
+            "title": "Datenübernahme von lokal auf den Server",
+            "status": "open"
+          },
+          {
+            "id": "t05",
+            "title": "Wächter-Pakete außerhalb von Software (Domains, Verträge, Fristen)",
+            "status": "open"
+          },
+          {
+            "id": "t06",
+            "title": "Benachrichtigungen und GitHub-Action",
+            "status": "open"
+          },
+          {
+            "id": "t07",
+            "title": "Bezahlversion prüfen (Kandidat: Team-Server als getrenntes Zusatzmodul)",
+            "status": "open"
+          }
+        ]
+      }
+    ]
+  }
+}

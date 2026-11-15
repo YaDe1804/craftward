@@ -14,6 +14,7 @@ const PROJECT_FIELDS: &[&str] = &[
     "id",
     "name",
     "status",
+    "source_dir",
     "description",
     "current_version",
     "tags",
@@ -134,6 +135,7 @@ fn validate_project(value: &Value, errors: &mut Vec<ValidationError>) {
     require_slug(object, "id", "$", errors);
     require_text(object, "name", "$", errors);
     require_choice(object, "status", "$", PROJECT_STATUSES, errors);
+    optional_source_dir(object, errors);
     optional_string(object, "description", "$", errors);
     optional_string(object, "current_version", "$", errors);
     optional_tags(object, errors);
@@ -570,25 +572,26 @@ fn check_date(text: &str, path: &str, errors: &mut Vec<ValidationError>) {
     }
 }
 
+fn optional_source_dir(object: &Map<String, Value>, errors: &mut Vec<ValidationError>) {
+    let Some(value) = optional(object, "source_dir") else {
+        return;
+    };
+    let Some(text) = expect_string(value, "source_dir", errors) else {
+        return;
+    };
+    if text.is_empty() {
+        push(errors, "source_dir", "must not be empty");
+    }
+}
+
 fn validate_relative_path(text: &str, path: &str, errors: &mut Vec<ValidationError>) {
-    if text.is_empty() || is_absolute_path(text) {
+    if text.is_empty() || crate::paths::is_portable_absolute(text) {
         push(errors, path, "must be a relative path");
         return;
     }
     if text.split(['/', '\\']).any(|segment| segment == "..") {
         push(errors, path, "must not contain a '..' path segment");
     }
-}
-
-fn is_absolute_path(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    if bytes
-        .first()
-        .is_some_and(|byte| *byte == b'/' || *byte == b'\\')
-    {
-        return true;
-    }
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn is_http_url(text: &str) -> bool {

@@ -21,3 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `list`, and `workspace path` commands. `validate` without paths checks that
   registry. `cargo deny` checks all Cargo features, including optional
   `schemars`.
+- Optional `source_dir` on a project file. Lockfiles are resolved from that
+  directory. `validate` warns when the directory or a lockfile is missing.
+- `craftward roadmap`, which writes the next versioned HTML roadmap and does
+  not overwrite an existing file. When hard links are unavailable, the file
+  is created exclusively instead. Fixed labels are English or German. A
+  value that is both a project id and an existing path is rejected.

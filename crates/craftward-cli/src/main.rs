@@ -4,10 +4,12 @@ use std::env;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use craftward_core::{
-    LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project, init_project,
-    list_projects, load_from_path, locate_workspace, remove_project,
+    Language, LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project,
+    init_project, is_portable_absolute, list_projects, load_from_path, locate_workspace,
+    missing_paths, project_file, project_file_by_id, remove_project, utc_date, write_roadmap,
 };
 
 /// Process exit status for a usage error.
@@ -20,15 +22,31 @@ fn main() -> ExitCode {
     match parse_args() {
         Ok(invocation) => match run(invocation) {
             Ok(code) => code,
-            Err(message) => {
+            Err(Failure::Data(message)) => {
                 eprintln!("error: {message}");
                 ExitCode::from(DATA_ERROR)
+            }
+            Err(Failure::Usage(message)) => {
+                eprintln!("error: {message}");
+                ExitCode::from(USAGE_ERROR)
             }
         },
         Err(message) => {
             eprintln!("error: {message}");
             ExitCode::from(USAGE_ERROR)
         }
+    }
+}
+
+/// Why a command stopped. Usage errors exit 2; everything else exits 1.
+enum Failure {
+    Usage(String),
+    Data(String),
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Data(message)
     }
 }
 
@@ -45,6 +63,7 @@ enum Topic {
     List,
     Validate,
     Workspace,
+    Roadmap,
 }
 
 enum Command {
@@ -67,10 +86,15 @@ enum Command {
         paths: Vec<PathBuf>,
     },
     WorkspacePath,
+    Roadmap {
+        target: String,
+        directory: Option<PathBuf>,
+        language: Language,
+    },
     Usage(Topic),
 }
 
-fn run(invocation: Invocation) -> Result<ExitCode, String> {
+fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
     match invocation.command {
         Command::Version => {
             println!("{} {}", env!("CARGO_BIN_NAME"), craftward_core::version());
@@ -105,9 +129,9 @@ fn run(invocation: Invocation) -> Result<ExitCode, String> {
                     for error in errors {
                         let _ = write!(message, "\n  {}: {}", error.path, error.message);
                     }
-                    Err(message)
+                    Err(Failure::Data(message))
                 }
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(Failure::Data(error.to_string())),
             }
         }
         Command::Add { path } => {
@@ -118,7 +142,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, String> {
                     println!("added {id}");
                     Ok(ExitCode::SUCCESS)
                 }
-                Err(error) => Err(explain_workspace(&error)),
+                Err(error) => Err(Failure::Data(explain_workspace(&error))),
             }
         }
         Command::Remove { id } => {
@@ -128,20 +152,20 @@ fn run(invocation: Invocation) -> Result<ExitCode, String> {
                     println!("removed {id}");
                     Ok(ExitCode::SUCCESS)
                 }
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(Failure::Data(error.to_string())),
             }
         }
         Command::List => {
             let workspace = workspace_file(invocation.workspace.as_deref())?;
             match list_projects(&workspace) {
                 Ok(rows) => Ok(print_list(&rows)),
-                Err(error) => Err(explain_workspace(&error)),
+                Err(error) => Err(Failure::Data(explain_workspace(&error))),
             }
         }
         Command::Validate { paths } => {
             if paths.is_empty() {
                 let workspace = workspace_file(invocation.workspace.as_deref())?;
-                validate_workspace(&workspace)
+                Ok(validate_workspace(&workspace)?)
             } else {
                 Ok(validate_files(&paths))
             }
@@ -153,7 +177,89 @@ fn run(invocation: Invocation) -> Result<ExitCode, String> {
             println!("{} ({})", path.display(), location.origin.label());
             Ok(ExitCode::SUCCESS)
         }
+        Command::Roadmap {
+            target,
+            directory,
+            language,
+        } => run_roadmap(
+            &target,
+            directory.as_deref(),
+            language,
+            invocation.workspace.as_deref(),
+        ),
     }
+}
+
+fn run_roadmap(
+    target: &str,
+    directory: Option<&Path>,
+    language: Language,
+    workspace: Option<&Path>,
+) -> Result<ExitCode, Failure> {
+    let project = roadmap_project(target, workspace)?;
+    let directory = match directory {
+        Some(path) => absolute_from_cwd(path)?,
+        None => env::current_dir()
+            .map_err(|error| format!("cannot read the current directory: {error}"))?,
+    };
+    let generated_on =
+        utc_date(SystemTime::now()).ok_or_else(|| "cannot read the system clock".to_owned())?;
+    match write_roadmap(&project, &directory, language, &generated_on) {
+        Ok(path) => {
+            println!("{}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => Err(Failure::Data(error.to_string())),
+    }
+}
+
+fn roadmap_project(target: &str, workspace: Option<&Path>) -> Result<PathBuf, Failure> {
+    let path = platform_path(Path::new(target));
+    let exists = path.exists();
+    let registered = match registered_project_id(target, workspace) {
+        Ok(found) => found,
+        Err(_) if is_path_target(target, &path) => false,
+        Err(error) => return Err(Failure::Data(error)),
+    };
+    if exists && registered {
+        let kind = if path.is_dir() { "folder" } else { "path" };
+        let separator = std::path::MAIN_SEPARATOR;
+        return Err(Failure::Usage(format!(
+            "`{target}` is both a workspace project id and an existing {kind}. \
+             Pass `.{separator}{target}` to use the {kind}, or pass the path of \
+             the project file to use the registered project."
+        )));
+    }
+    if is_path_target(target, &path) {
+        let absolute = absolute_from_cwd(&path)?;
+        return project_file(&absolute).map_err(|error| Failure::Data(error.to_string()));
+    }
+    let workspace = workspace_file(workspace)?;
+    project_file_by_id(&workspace, target).map_err(|error| Failure::Data(error.to_string()))
+}
+
+/// Whether `target` is the id of a readable project in the workspace.
+///
+/// A missing workspace file means the id is not registered. A workspace that
+/// cannot be located or read is returned as an error so the caller can decide
+/// whether a path argument still stands on its own.
+fn registered_project_id(target: &str, workspace: Option<&Path>) -> Result<bool, String> {
+    let file = workspace_file(workspace)?;
+    match project_file_by_id(&file, target) {
+        Ok(_) => Ok(true),
+        Err(WorkspaceError::UnknownId(_)) => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn is_path_target(raw: &str, path: &Path) -> bool {
+    path.exists()
+        || Path::new(raw)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        || raw.contains('/')
+        || raw.contains('\\')
+        || is_portable_absolute(raw)
 }
 
 fn workspace_file(explicit: Option<&Path>) -> Result<PathBuf, String> {
@@ -208,8 +314,11 @@ fn validate_files(paths: &[PathBuf]) -> ExitCode {
 fn report_project(path: &Path) -> bool {
     let rendered = path.to_string_lossy();
     match load_from_path(path) {
-        Ok(_) => {
+        Ok(project) => {
             println!("{rendered}: ok");
+            for missing in missing_paths(path, &project) {
+                eprintln!("warning: {missing}");
+            }
             true
         }
         Err(error) => {
@@ -456,6 +565,7 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
         "list" => Topic::List,
         "validate" => Topic::Validate,
         "workspace" => Topic::Workspace,
+        "roadmap" => Topic::Roadmap,
         _ => return Err(format!("unrecognized command: {name}")),
     };
     if help_only(name, args)? {
@@ -484,6 +594,7 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
             Ok(Command::Validate { paths })
         }
         "workspace" => parse_workspace_command(args),
+        "roadmap" => parse_roadmap(args),
         _ => Err(format!("unrecognized command: {name}")),
     }
 }
@@ -589,6 +700,59 @@ fn parse_init(args: &[std::ffi::OsString]) -> Result<Command, String> {
     })
 }
 
+fn parse_roadmap(args: &[std::ffi::OsString]) -> Result<Command, String> {
+    let mut target = None;
+    let mut directory = None;
+    let mut language = None;
+    let mut index = 0;
+    while index < args.len() {
+        let rendered = args[index].to_string_lossy();
+        if rendered == "--dir" || rendered == "--lang" {
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("{rendered} needs a value"));
+            };
+            if value.to_string_lossy().starts_with('-') {
+                return Err(format!("{rendered} needs a value"));
+            }
+            match rendered.as_ref() {
+                "--dir" => {
+                    if directory.is_some() {
+                        return Err("duplicate option: --dir".to_owned());
+                    }
+                    directory = Some(platform_path(Path::new(value)));
+                }
+                "--lang" => {
+                    if language.is_some() {
+                        return Err("duplicate option: --lang".to_owned());
+                    }
+                    let text = value.to_string_lossy();
+                    language = Some(
+                        Language::parse(&text)
+                            .ok_or_else(|| format!("unknown language: {text}"))?,
+                    );
+                }
+                _ => {}
+            }
+            index += 2;
+        } else if rendered.starts_with('-') {
+            return Err(format!("unrecognized argument: {rendered}"));
+        } else if target.is_some() {
+            return Err("roadmap accepts only one project".to_owned());
+        } else {
+            target = Some(rendered.into_owned());
+            index += 1;
+        }
+    }
+    let Some(target) = target else {
+        return Err("roadmap requires a project id or path".to_owned());
+    };
+    Ok(Command::Roadmap {
+        target,
+        directory,
+        language: language.unwrap_or(Language::En),
+    })
+}
+
 fn assign(slot: &mut Option<String>, flag: &str, value: String) -> Result<(), String> {
     if slot.is_some() {
         Err(format!("duplicate option: {flag}"))
@@ -633,7 +797,12 @@ Commands:
   craftward validate [PATH]...
       Check the given files, or every project in the workspace when no path
       is given. An error names its location, for example
-      plan.phases[0].tasks[1].due.
+      plan.phases[0].tasks[1].due. A missing source directory or lockfile is
+      a warning and does not change the exit status.
+  roadmap <ID|PATH> [--dir DIR] [--lang en|de]
+      Write the next <id>_roadmap_vN.html for a workspace id or a project
+      file. DIR defaults to the current directory. The language defaults to
+      en. An existing file is never overwritten.
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.
@@ -713,7 +882,8 @@ Usage:
   craftward validate [PATH]...
 
 With no paths, every project in the workspace is checked. Each file is
-reported as \"ok\" or as a list of errors.
+reported as \"ok\" or as a list of errors. A missing source directory or
+lockfile is reported as a warning and does not change the exit status.
 
 Example:
   craftward validate
@@ -731,6 +901,26 @@ variable CRAFTWARD_WORKSPACE, or default location.
 
 Example:
   craftward workspace path"
+        }
+        Topic::Roadmap => {
+            "\
+Write a versioned HTML roadmap for one project.
+
+Usage:
+  craftward roadmap <ID|PATH> [--dir DIR] [--lang en|de]
+
+ID selects a project from the workspace. PATH is a craftward.json file or
+a directory that contains one. A path is recognized when it exists, ends
+with .json, contains a separator, or is absolute. If the argument is both a
+registered id and an existing path, the command exits 2. Pass .\\name or
+./name to use the folder, or pass the project file path to use the
+registered project. DIR defaults to the
+current directory. --lang is en or de, and defaults to en. The file is
+named <id>_roadmap_vN.html. N is one higher than the highest existing
+number in DIR, starting at 1. An existing file is never overwritten.
+
+Example:
+  craftward roadmap harbor-light --dir ./docs/roadmap --lang de"
         }
     };
     println!("{text}");
