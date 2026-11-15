@@ -9,5 +9,23 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[dependencies]
+schemars = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+
+# No default features. `schema` is opt-in so the CLI and the desktop app
+# do not compile the schema generator.
+[features]
+schema = ["dep:schemars"]
+
+[[example]]
+name = "generate-schema"
+required-features = ["schema"]
+
+[[test]]
+name = "schema"
+required-features = ["schema"]
+
 [lints]
 workspace = true

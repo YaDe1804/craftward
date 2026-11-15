@@ -33,14 +33,22 @@ cargo run -p craftward-app -- --version
 ```
 
 Both executables print their name and version. `--version` prints the same
-line. Any other argument is an error.
+line. `craftward --help` describes the commands.
+
+`craftward validate` checks one or more [`craftward.json`](docs/file-format.md)
+files. The process exits 0 when every file is valid, 1 when a file is invalid
+or cannot be read, and 2 when the command line is wrong.
+
+```console
+cargo run -p craftward-cli -- validate examples/minimal.craftward.json examples/full.craftward.json
+```
 
 Checks used by CI:
 
 ```console
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 cargo deny check
 ```
 
@@ -61,4 +69,5 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 - [Architecture decisions](docs/adr/)
+- [Project file format](docs/file-format.md)
 - [Roadmap](docs/roadmap/)
