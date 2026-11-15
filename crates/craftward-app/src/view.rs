@@ -1,0 +1,1288 @@
+//! Pure view-model builders. No egui types live here.
+
+use craftward_core::{
+    ComponentKind, Issue, IssueSeverity, IssueStatus, Phase, PhaseState, Project, ProjectStatus,
+    Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind, days_between,
+    phase_state, snapshot, task_progress, unix_now, utc_day,
+};
+
+use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject, count_by_severity};
+use crate::theme::{GRID_THREE_COLUMNS_FROM, GRID_TWO_COLUMNS_FROM};
+
+/// Portfolio summary shown above the project cards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioSummary {
+    /// Number of projects in the workspace (including load failures).
+    pub project_count: usize,
+    /// Projects whose files loaded.
+    pub loaded_count: usize,
+    /// Projects that failed to load.
+    pub error_count: usize,
+    /// Open issues across loaded projects.
+    pub open_issues: usize,
+    /// Open findings across loaded projects.
+    pub open_findings: usize,
+    /// Open findings by severity: critical, high, medium, low, unknown.
+    pub findings_by_severity: [usize; 5],
+    /// Human summary line.
+    pub summary_line: String,
+}
+
+/// Task progress for display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProgressView {
+    /// Done tasks (not dropped).
+    pub done: usize,
+    /// Counted tasks.
+    pub total: usize,
+    /// Rounded percent.
+    pub percent: u32,
+}
+
+impl ProgressView {
+    fn from_progress(progress: TaskProgress) -> Self {
+        Self {
+            done: progress.done,
+            total: progress.total,
+            percent: progress.percent,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            done: 0,
+            total: 0,
+            percent: 0,
+        }
+    }
+
+    /// Caption next to the bar, for example `Tasks 2/4 (50%)`.
+    #[must_use]
+    pub fn caption(self) -> String {
+        format!("Tasks {}/{} ({}%)", self.done, self.total, self.percent)
+    }
+}
+
+/// Symbol plus readable label for a status or severity.
+///
+/// Labels live here so a later translation pass can replace the strings in one
+/// place without touching egui code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusBadge {
+    /// Stable key (schema word), useful for tests and later i18n.
+    pub key: &'static str,
+    /// Short symbol shown with the label.
+    pub symbol: &'static str,
+    /// Human-readable English label.
+    pub label: &'static str,
+}
+
+impl StatusBadge {
+    /// Combined badge text (`◐ In development`).
+    #[must_use]
+    pub fn display(&self) -> String {
+        format!("{} {}", self.symbol, self.label)
+    }
+}
+
+/// One project card on the overview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectCard {
+    /// Index into [`LoadedPortfolio::projects`].
+    pub index: usize,
+    /// Project id when known (tooltip / secondary only).
+    pub id: String,
+    /// Display name (or a fallback when loading failed).
+    pub name: String,
+    /// Status badge, when the file loaded.
+    pub status: Option<StatusBadge>,
+    /// Current version when set.
+    pub version: Option<String>,
+    /// Task progress.
+    pub progress: ProgressView,
+    /// Open issues (`open` / `in_progress`).
+    pub open_issues: usize,
+    /// Label for open issues.
+    pub open_issues_label: String,
+    /// Open findings by severity.
+    pub findings_by_severity: [usize; 5],
+    /// Finding severity badges with counts (non-zero only).
+    pub finding_badges: Vec<(StatusBadge, usize)>,
+    /// Next due date `YYYY-MM-DD`.
+    pub next_due: Option<String>,
+    /// Human remaining-time text for [`Self::next_due`].
+    pub next_due_remaining: Option<String>,
+    /// Title of the first phase that is not done.
+    pub current_phase: Option<String>,
+    /// Stored Android `target_sdk` when the project file sets one.
+    pub target_sdk: Option<u32>,
+    /// Load error shown on the card.
+    pub load_error: Option<String>,
+}
+
+/// One open finding row in the detail view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindingRow {
+    /// Severity badge.
+    pub severity: StatusBadge,
+    /// Advisory kind badge.
+    pub kind: StatusBadge,
+    /// Source label (package + vulnerability id).
+    pub source: String,
+    /// Short summary.
+    pub summary: String,
+}
+
+/// One issue row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueRow {
+    /// Issue id (tooltip / secondary).
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// Severity badge.
+    pub severity: StatusBadge,
+    /// Status badge.
+    pub status: StatusBadge,
+}
+
+/// One task row inside a phase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    /// Task id (tooltip / secondary).
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// Status badge.
+    pub status: StatusBadge,
+    /// Due date when set.
+    pub due: Option<String>,
+}
+
+/// One phase block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhaseBlock {
+    /// Phase id (tooltip / secondary).
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// Goal when set.
+    pub goal: Option<String>,
+    /// Derived phase status.
+    pub status: StatusBadge,
+    /// Whether the phase should start expanded.
+    pub initially_expanded: bool,
+    /// Progress of tasks in the phase.
+    pub progress: ProgressView,
+    /// Tasks.
+    pub tasks: Vec<TaskRow>,
+}
+
+/// One stack component row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentRow {
+    /// Kind label.
+    pub kind: StatusBadge,
+    /// Name.
+    pub name: String,
+    /// Version when set.
+    pub version: Option<String>,
+}
+
+/// One watch / deadline row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeadlineRow {
+    /// Kind badge.
+    pub kind: StatusBadge,
+    /// Title.
+    pub title: String,
+    /// Due date.
+    pub due: String,
+    /// Remaining-time text for `due`.
+    pub remaining: String,
+}
+
+/// Label/value pair for the overview section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRow {
+    /// Field label.
+    pub label: &'static str,
+    /// Field value.
+    pub value: String,
+}
+
+/// Full detail page for one project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectDetail {
+    /// Index into the portfolio.
+    pub index: usize,
+    /// Absolute path (secondary / tooltip).
+    pub path: String,
+    /// Breadcrumb title, for example `Portfolio › Lockward`.
+    pub breadcrumb: String,
+    /// Load error when the file failed.
+    pub load_error: Option<String>,
+    /// Project id (secondary).
+    pub id: String,
+    /// Name.
+    pub name: String,
+    /// Status badge.
+    pub status: Option<StatusBadge>,
+    /// Overview fields (label/value).
+    pub overview_fields: Vec<FieldRow>,
+    /// Description.
+    pub description: Option<String>,
+    /// Overall progress.
+    pub progress: ProgressView,
+    /// Stored Android `target_sdk` when set.
+    pub target_sdk: Option<u32>,
+    /// Stack components.
+    pub components: Vec<ComponentRow>,
+    /// Phases.
+    pub phases: Vec<PhaseBlock>,
+    /// Open issues.
+    pub issues: Vec<IssueRow>,
+    /// Open findings.
+    pub findings: Vec<FindingRow>,
+    /// Watch items / due dates.
+    pub deadlines: Vec<DeadlineRow>,
+}
+
+/// Overview built from a loaded portfolio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioView {
+    /// Workspace path for the footer / tooltip.
+    pub workspace_path: Option<String>,
+    /// Workspace-level error.
+    pub workspace_error: Option<String>,
+    /// Database path for the footer / tooltip.
+    pub database_path: Option<String>,
+    /// Human message about the database.
+    pub database_message: Option<String>,
+    /// Aggregate summary.
+    pub summary: PortfolioSummary,
+    /// Cards sorted by urgency.
+    pub cards: Vec<ProjectCard>,
+}
+
+/// Builds the overview using today's UTC date from the system clock.
+#[must_use]
+pub fn build_portfolio(loaded: &LoadedPortfolio) -> PortfolioView {
+    let today = utc_day(unix_now()).unwrap_or_else(|| "1970-01-01".to_owned());
+    build_portfolio_at(loaded, &today)
+}
+
+/// Builds the overview with an injected calendar day (`YYYY-MM-DD`).
+#[must_use]
+pub fn build_portfolio_at(loaded: &LoadedPortfolio, today: &str) -> PortfolioView {
+    let mut cards: Vec<ProjectCard> = loaded
+        .projects
+        .iter()
+        .enumerate()
+        .map(|(index, project)| build_card(index, project, today))
+        .collect();
+    cards.sort_by(compare_urgency);
+
+    let mut findings_by_severity = [0_usize; 5];
+    let mut open_issues = 0;
+    let mut loaded_count = 0;
+    let mut error_count = 0;
+    for card in &cards {
+        if card.load_error.is_some() {
+            error_count += 1;
+        } else {
+            loaded_count += 1;
+        }
+        open_issues += card.open_issues;
+        for (slot, count) in findings_by_severity
+            .iter_mut()
+            .zip(card.findings_by_severity)
+        {
+            *slot += count;
+        }
+    }
+    let open_findings = findings_by_severity.iter().sum();
+    let summary_line = format!(
+        "{} · {} · {}",
+        project_count_label(cards.len(), loaded_count, error_count),
+        open_issues_label(open_issues),
+        open_findings_label(open_findings)
+    );
+
+    PortfolioView {
+        workspace_path: loaded
+            .workspace_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        workspace_error: loaded.workspace_error.clone(),
+        database_path: loaded
+            .database_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        database_message: database_message(&loaded.database),
+        summary: PortfolioSummary {
+            project_count: cards.len(),
+            loaded_count,
+            error_count,
+            open_issues,
+            open_findings,
+            findings_by_severity,
+            summary_line,
+        },
+        cards,
+    }
+}
+
+/// Builds the detail page using today's UTC date from the system clock.
+#[must_use]
+pub fn build_detail(index: usize, loaded: &LoadedProject) -> ProjectDetail {
+    let today = utc_day(unix_now()).unwrap_or_else(|| "1970-01-01".to_owned());
+    build_detail_at(index, loaded, &today)
+}
+
+/// Builds the detail page with an injected calendar day (`YYYY-MM-DD`).
+#[must_use]
+pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> ProjectDetail {
+    let path = loaded.path.display().to_string();
+    match &loaded.project {
+        Ok(project) => {
+            let status = Some(project_status_badge(project.status));
+            let target_sdk = stored_target_sdk(project);
+            let mut overview_fields = vec![
+                FieldRow {
+                    label: "Status",
+                    value: status
+                        .as_ref()
+                        .map_or_else(String::new, StatusBadge::display),
+                },
+                FieldRow {
+                    label: "Id",
+                    value: project.id.clone(),
+                },
+            ];
+            if let Some(version) = &project.current_version {
+                overview_fields.push(FieldRow {
+                    label: "Version",
+                    value: version.clone(),
+                });
+            }
+            if let Some(sdk) = target_sdk {
+                overview_fields.push(FieldRow {
+                    label: "Android targetSdk",
+                    value: sdk.to_string(),
+                });
+            }
+            ProjectDetail {
+                index,
+                path,
+                breadcrumb: format!("Portfolio › {}", project.name),
+                load_error: None,
+                id: project.id.clone(),
+                name: project.name.clone(),
+                status,
+                overview_fields,
+                description: project.description.clone(),
+                progress: project_progress(project),
+                target_sdk,
+                components: component_rows(project),
+                phases: phase_blocks(project),
+                issues: open_issue_rows(project),
+                findings: finding_rows(&loaded.findings),
+                deadlines: deadline_rows(project, today),
+            }
+        }
+        Err(error) => ProjectDetail {
+            index,
+            path,
+            breadcrumb: "Portfolio › Unavailable project".to_owned(),
+            load_error: Some(error.clone()),
+            id: String::new(),
+            name: "Unavailable project".to_owned(),
+            status: None,
+            overview_fields: Vec::new(),
+            description: None,
+            progress: ProgressView::empty(),
+            target_sdk: None,
+            components: Vec::new(),
+            phases: Vec::new(),
+            issues: Vec::new(),
+            findings: finding_rows(&loaded.findings),
+            deadlines: Vec::new(),
+        },
+    }
+}
+
+/// How many portfolio columns fit in `available_width` points.
+#[must_use]
+pub fn grid_columns(available_width: f32) -> usize {
+    if available_width >= GRID_THREE_COLUMNS_FROM {
+        3
+    } else if available_width >= GRID_TWO_COLUMNS_FROM {
+        2
+    } else {
+        1
+    }
+}
+
+/// Human label for open issues (singular / plural / none).
+#[must_use]
+pub fn open_issues_label(count: usize) -> String {
+    match count {
+        0 => "No open issues".to_owned(),
+        1 => "1 open issue".to_owned(),
+        _ => format!("{count} open issues"),
+    }
+}
+
+/// Human label for open findings (singular / plural / none).
+#[must_use]
+pub fn open_findings_label(count: usize) -> String {
+    match count {
+        0 => "No open findings".to_owned(),
+        1 => "1 open finding".to_owned(),
+        _ => format!("{count} open findings"),
+    }
+}
+
+/// Remaining-time text for a due date relative to `today` (`YYYY-MM-DD`).
+#[must_use]
+pub fn remaining_label(today: &str, due: &str) -> String {
+    match days_between(today, due) {
+        Some(0) => "due today".to_owned(),
+        Some(days) if days > 0 => {
+            if days == 1 {
+                "in 1 day".to_owned()
+            } else {
+                format!("in {days} days")
+            }
+        }
+        Some(days) => {
+            let overdue = -days;
+            if overdue == 1 {
+                "1 day overdue".to_owned()
+            } else {
+                format!("{overdue} days overdue")
+            }
+        }
+        None => String::new(),
+    }
+}
+
+/// Title of the first phase that is not done.
+#[must_use]
+pub fn current_phase_title(project: &Project) -> Option<String> {
+    let plan = project.plan.as_ref()?;
+    plan.phases
+        .iter()
+        .find(|phase| phase_state(&phase.tasks) != PhaseState::Done)
+        .map(|phase| phase.title.clone())
+}
+
+fn project_count_label(total: usize, loaded: usize, errors: usize) -> String {
+    let projects = match total {
+        0 => "No projects".to_owned(),
+        1 => "1 project".to_owned(),
+        _ => format!("{total} projects"),
+    };
+    format!("{projects} ({loaded} loaded, {errors} with errors)")
+}
+
+fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard {
+    let findings_by_severity = count_by_severity(&loaded.findings);
+    let finding_badges = finding_count_badges(findings_by_severity);
+    match &loaded.project {
+        Ok(project) => {
+            let snap = snapshot(project);
+            let next_due = snap.next_due.clone();
+            let next_due_remaining = next_due
+                .as_ref()
+                .map(|due| remaining_label(today, due))
+                .filter(|text| !text.is_empty());
+            ProjectCard {
+                index,
+                id: snap.id,
+                name: snap.name,
+                status: Some(project_status_badge(snap.status)),
+                version: snap.current_version,
+                progress: project_progress(project),
+                open_issues: snap.open_issues,
+                open_issues_label: open_issues_label(snap.open_issues),
+                findings_by_severity,
+                finding_badges,
+                next_due,
+                next_due_remaining,
+                current_phase: current_phase_title(project),
+                target_sdk: stored_target_sdk(project),
+                load_error: None,
+            }
+        }
+        Err(error) => ProjectCard {
+            index,
+            id: String::new(),
+            name: loaded.path.file_name().map_or_else(
+                || "Unavailable project".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            status: None,
+            version: None,
+            progress: ProgressView::empty(),
+            open_issues: 0,
+            open_issues_label: open_issues_label(0),
+            findings_by_severity,
+            finding_badges,
+            next_due: None,
+            next_due_remaining: None,
+            current_phase: None,
+            target_sdk: None,
+            load_error: Some(error.clone()),
+        },
+    }
+}
+
+/// Non-zero finding severity badges with counts.
+#[must_use]
+pub fn finding_count_badges(counts: [usize; 5]) -> Vec<(StatusBadge, usize)> {
+    Severity::all()
+        .iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .map(|(severity, count)| (severity_badge(*severity), count))
+        .collect()
+}
+
+fn compare_urgency(left: &ProjectCard, right: &ProjectCard) -> std::cmp::Ordering {
+    right
+        .findings_by_severity
+        .cmp(&left.findings_by_severity)
+        .then_with(|| match (&left.next_due, &right.next_due) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        })
+        .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn database_message(status: &DatabaseStatus) -> Option<String> {
+    match status {
+        DatabaseStatus::Ready => None,
+        DatabaseStatus::Missing => {
+            Some("No craftward.db yet. Open findings appear after a radar run.".to_owned())
+        }
+        DatabaseStatus::Error(message) => Some(format!("Database unavailable: {message}")),
+    }
+}
+
+fn project_progress(project: &Project) -> ProgressView {
+    let Some(plan) = &project.plan else {
+        return ProgressView::empty();
+    };
+    let mut done = 0_usize;
+    let mut total = 0_usize;
+    for phase in &plan.phases {
+        for task in &phase.tasks {
+            if task.status == TaskStatus::Dropped {
+                continue;
+            }
+            total += 1;
+            if task.status == TaskStatus::Done {
+                done += 1;
+            }
+        }
+    }
+    let percent = match total {
+        0 => 0,
+        _ => u32::try_from(done.saturating_mul(100).saturating_add(total / 2) / total).unwrap_or(0),
+    };
+    ProgressView {
+        done,
+        total,
+        percent,
+    }
+}
+
+fn stored_target_sdk(project: &Project) -> Option<u32> {
+    project
+        .stack
+        .as_ref()
+        .and_then(|stack| stack.android.as_ref())
+        .and_then(|android| android.target_sdk)
+}
+
+fn component_rows(project: &Project) -> Vec<ComponentRow> {
+    project.stack.as_ref().map_or_else(Vec::new, |stack| {
+        stack
+            .components
+            .iter()
+            .map(|component| ComponentRow {
+                kind: component_kind_badge(component.kind),
+                name: component.name.clone(),
+                version: component.version.clone(),
+            })
+            .collect()
+    })
+}
+
+fn phase_blocks(project: &Project) -> Vec<PhaseBlock> {
+    project.plan.as_ref().map_or_else(Vec::new, |plan| {
+        let current = current_phase_title(project);
+        plan.phases
+            .iter()
+            .map(|phase| phase_block(phase, current.as_deref()))
+            .collect()
+    })
+}
+
+fn phase_block(phase: &Phase, current_title: Option<&str>) -> PhaseBlock {
+    let state = phase_state(&phase.tasks);
+    let progress = task_progress(&phase.tasks);
+    let initially_expanded =
+        state != PhaseState::Done && current_title.is_some_and(|title| title == phase.title);
+    PhaseBlock {
+        id: phase.id.clone(),
+        title: phase.title.clone(),
+        goal: phase.goal.clone(),
+        status: phase_status_badge(state),
+        initially_expanded,
+        progress: ProgressView::from_progress(progress),
+        tasks: phase.tasks.iter().map(task_row).collect(),
+    }
+}
+
+fn task_row(task: &Task) -> TaskRow {
+    TaskRow {
+        id: task.id.clone(),
+        title: task.title.clone(),
+        status: task_status_badge(task.status),
+        due: task.due.clone(),
+    }
+}
+
+fn open_issue_rows(project: &Project) -> Vec<IssueRow> {
+    project.issues.as_ref().map_or_else(Vec::new, |issues| {
+        issues
+            .iter()
+            .filter(|issue| is_open_issue(issue.status))
+            .map(issue_row)
+            .collect()
+    })
+}
+
+fn issue_row(issue: &Issue) -> IssueRow {
+    IssueRow {
+        id: issue.id.clone(),
+        title: issue.title.clone(),
+        severity: issue_severity_badge(issue.severity),
+        status: issue_status_badge(issue.status),
+    }
+}
+
+fn finding_rows(findings: &[StoredFinding]) -> Vec<FindingRow> {
+    findings.iter().map(finding_row).collect()
+}
+
+fn finding_row(finding: &StoredFinding) -> FindingRow {
+    FindingRow {
+        severity: severity_badge(finding.severity),
+        kind: finding_kind_badge(finding.kind),
+        source: format!(
+            "{} {} ({})",
+            finding.package, finding.version, finding.vulnerability_id
+        ),
+        summary: finding.summary.clone(),
+    }
+}
+
+fn deadline_rows(project: &Project, today: &str) -> Vec<DeadlineRow> {
+    let mut rows = Vec::new();
+    if let Some(plan) = &project.plan {
+        for phase in &plan.phases {
+            for task in &phase.tasks {
+                if matches!(task.status, TaskStatus::Open | TaskStatus::InProgress)
+                    && let Some(due) = &task.due
+                {
+                    rows.push(DeadlineRow {
+                        kind: StatusBadge {
+                            key: "task",
+                            symbol: "☑",
+                            label: "Task",
+                        },
+                        title: task.title.clone(),
+                        due: due.clone(),
+                        remaining: remaining_label(today, due),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(items) = &project.watch_items {
+        for item in items {
+            rows.push(watch_row(item, today));
+        }
+    }
+    rows.sort_by(|left, right| left.due.cmp(&right.due).then(left.title.cmp(&right.title)));
+    rows
+}
+
+fn watch_row(item: &WatchItem, today: &str) -> DeadlineRow {
+    DeadlineRow {
+        kind: watch_kind_badge(item.kind),
+        title: item.title.clone(),
+        due: item.due.clone(),
+        remaining: remaining_label(today, &item.due),
+    }
+}
+
+fn is_open_issue(status: IssueStatus) -> bool {
+    matches!(status, IssueStatus::Open | IssueStatus::InProgress)
+}
+
+fn project_status_badge(status: ProjectStatus) -> StatusBadge {
+    match status {
+        ProjectStatus::Idea => StatusBadge {
+            key: "idea",
+            symbol: "○",
+            label: "Idea",
+        },
+        ProjectStatus::InDevelopment => StatusBadge {
+            key: "in_development",
+            symbol: "◐",
+            label: "In development",
+        },
+        ProjectStatus::Released => StatusBadge {
+            key: "released",
+            symbol: "●",
+            label: "Released",
+        },
+        ProjectStatus::Maintenance => StatusBadge {
+            key: "maintenance",
+            symbol: "◇",
+            label: "Maintenance",
+        },
+        ProjectStatus::Paused => StatusBadge {
+            key: "paused",
+            symbol: "||",
+            label: "Paused",
+        },
+        ProjectStatus::Discontinued => StatusBadge {
+            key: "discontinued",
+            symbol: "x",
+            label: "Discontinued",
+        },
+    }
+}
+
+fn phase_status_badge(state: PhaseState) -> StatusBadge {
+    match state {
+        PhaseState::Open => StatusBadge {
+            key: "open",
+            symbol: "○",
+            label: "Open",
+        },
+        PhaseState::InProgress => StatusBadge {
+            key: "in_progress",
+            symbol: "◐",
+            label: "In progress",
+        },
+        PhaseState::Done => StatusBadge {
+            key: "done",
+            symbol: "✓",
+            label: "Done",
+        },
+    }
+}
+
+fn task_status_badge(status: TaskStatus) -> StatusBadge {
+    match status {
+        TaskStatus::Open => StatusBadge {
+            key: "open",
+            symbol: "○",
+            label: "Open",
+        },
+        TaskStatus::InProgress => StatusBadge {
+            key: "in_progress",
+            symbol: "◐",
+            label: "In progress",
+        },
+        TaskStatus::Done => StatusBadge {
+            key: "done",
+            symbol: "✓",
+            label: "Done",
+        },
+        TaskStatus::Dropped => StatusBadge {
+            key: "dropped",
+            symbol: "–",
+            label: "Dropped",
+        },
+    }
+}
+
+fn issue_status_badge(status: IssueStatus) -> StatusBadge {
+    match status {
+        IssueStatus::Open => StatusBadge {
+            key: "open",
+            symbol: "○",
+            label: "Open",
+        },
+        IssueStatus::InProgress => StatusBadge {
+            key: "in_progress",
+            symbol: "◐",
+            label: "In progress",
+        },
+        IssueStatus::Resolved => StatusBadge {
+            key: "resolved",
+            symbol: "✓",
+            label: "Resolved",
+        },
+        IssueStatus::WontFix => StatusBadge {
+            key: "wont_fix",
+            symbol: "–",
+            label: "Won't fix",
+        },
+    }
+}
+
+fn issue_severity_badge(severity: IssueSeverity) -> StatusBadge {
+    match severity {
+        IssueSeverity::Low => StatusBadge {
+            key: "low",
+            symbol: "v",
+            label: "Low",
+        },
+        IssueSeverity::Medium => StatusBadge {
+            key: "medium",
+            symbol: "*",
+            label: "Medium",
+        },
+        IssueSeverity::High => StatusBadge {
+            key: "high",
+            symbol: "^",
+            label: "High",
+        },
+        IssueSeverity::Critical => StatusBadge {
+            key: "critical",
+            symbol: "!",
+            label: "Critical",
+        },
+    }
+}
+
+fn severity_badge(severity: Severity) -> StatusBadge {
+    match severity {
+        Severity::Critical => StatusBadge {
+            key: "critical",
+            symbol: "!",
+            label: "Critical",
+        },
+        Severity::High => StatusBadge {
+            key: "high",
+            symbol: "^",
+            label: "High",
+        },
+        Severity::Medium => StatusBadge {
+            key: "medium",
+            symbol: "*",
+            label: "Medium",
+        },
+        Severity::Low => StatusBadge {
+            key: "low",
+            symbol: "v",
+            label: "Low",
+        },
+        Severity::Unknown => StatusBadge {
+            key: "unknown",
+            symbol: "?",
+            label: "Unknown",
+        },
+    }
+}
+
+fn finding_kind_badge(kind: craftward_core::FindingKind) -> StatusBadge {
+    let (symbol, label) = match kind {
+        craftward_core::FindingKind::Vulnerability => ("!", "Vulnerability"),
+        craftward_core::FindingKind::Malicious => ("!", "Malicious"),
+        craftward_core::FindingKind::Unmaintained => ("~", "Unmaintained"),
+        craftward_core::FindingKind::Unsound => ("!", "Unsound"),
+        craftward_core::FindingKind::Notice => ("i", "Notice"),
+        craftward_core::FindingKind::Eol => ("!", "End of life"),
+        craftward_core::FindingKind::EolSoon => ("*", "EOL soon"),
+        craftward_core::FindingKind::PlatformDeadline => ("!", "Play deadline"),
+        craftward_core::FindingKind::PlatformDeadlineSoon => ("*", "Play deadline soon"),
+    };
+    StatusBadge {
+        key: kind.as_str(),
+        symbol,
+        label,
+    }
+}
+
+fn component_kind_badge(kind: ComponentKind) -> StatusBadge {
+    match kind {
+        ComponentKind::Platform => StatusBadge {
+            key: "platform",
+            symbol: "▣",
+            label: "Platform",
+        },
+        ComponentKind::Language => StatusBadge {
+            key: "language",
+            symbol: "Aa",
+            label: "Language",
+        },
+        ComponentKind::Framework => StatusBadge {
+            key: "framework",
+            symbol: "⬡",
+            label: "Framework",
+        },
+        ComponentKind::Runtime => StatusBadge {
+            key: "runtime",
+            symbol: "▶",
+            label: "Runtime",
+        },
+        ComponentKind::Sdk => StatusBadge {
+            key: "sdk",
+            symbol: "⧉",
+            label: "SDK",
+        },
+        ComponentKind::Service => StatusBadge {
+            key: "service",
+            symbol: "~",
+            label: "Service",
+        },
+        ComponentKind::Tool => StatusBadge {
+            key: "tool",
+            symbol: "+",
+            label: "Tool",
+        },
+        ComponentKind::Other => StatusBadge {
+            key: "other",
+            symbol: "·",
+            label: "Other",
+        },
+    }
+}
+
+fn watch_kind_badge(kind: WatchKind) -> StatusBadge {
+    match kind {
+        WatchKind::Deadline => StatusBadge {
+            key: "deadline",
+            symbol: "!",
+            label: "Deadline",
+        },
+        WatchKind::Expiry => StatusBadge {
+            key: "expiry",
+            symbol: "*",
+            label: "Expiry",
+        },
+        WatchKind::Review => StatusBadge {
+            key: "review",
+            symbol: "@",
+            label: "Review",
+        },
+        WatchKind::Other => StatusBadge {
+            key: "other",
+            symbol: "·",
+            label: "Other",
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use craftward_core::{
+        AndroidConfig, FindingKind, FindingState, Plan, Project, ProjectStatus, Severity, Stack,
+        StoredFinding, Task, TaskStatus,
+    };
+
+    use super::{
+        ProgressView, StatusBadge, build_detail_at, build_portfolio_at, compare_urgency,
+        current_phase_title, grid_columns, open_findings_label, open_issues_label,
+        project_progress, project_status_badge, remaining_label, task_status_badge,
+    };
+    use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
+    use crate::view::ProjectCard;
+
+    fn sample_project(id: &str, name: &str, due: Option<&str>) -> Project {
+        Project {
+            schema_version: 1,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            status: ProjectStatus::InDevelopment,
+            source_dir: None,
+            description: None,
+            current_version: Some("1.0.0".to_owned()),
+            tags: None,
+            updated: None,
+            links: None,
+            stack: Some(Stack {
+                components: Vec::new(),
+                lockfiles: Vec::new(),
+                android: Some(AndroidConfig {
+                    target_sdk: Some(34),
+                    ..AndroidConfig::default()
+                }),
+            }),
+            plan: Some(Plan {
+                phases: vec![
+                    craftward_core::Phase {
+                        id: "done-phase".to_owned(),
+                        title: "Foundation".to_owned(),
+                        goal: None,
+                        tasks: vec![Task {
+                            id: "done".to_owned(),
+                            title: "Done".to_owned(),
+                            status: TaskStatus::Done,
+                            due: None,
+                            note: None,
+                        }],
+                    },
+                    craftward_core::Phase {
+                        id: "current".to_owned(),
+                        title: "Release".to_owned(),
+                        goal: None,
+                        tasks: vec![Task {
+                            id: "open".to_owned(),
+                            title: "Open".to_owned(),
+                            status: TaskStatus::Open,
+                            due: due.map(str::to_owned),
+                            note: None,
+                        }],
+                    },
+                ],
+            }),
+            issues: Some(vec![craftward_core::Issue {
+                id: "bug".to_owned(),
+                title: "Bug".to_owned(),
+                severity: craftward_core::IssueSeverity::High,
+                status: craftward_core::IssueStatus::Open,
+                url: None,
+                note: None,
+            }]),
+            watch_items: None,
+        }
+    }
+
+    fn finding(project_id: &str, severity: Severity) -> StoredFinding {
+        StoredFinding {
+            id: 1,
+            project_id: project_id.to_owned(),
+            ecosystem: "crates.io".to_owned(),
+            package: "demo".to_owned(),
+            vulnerability_id: "OSV-1".to_owned(),
+            version: "1.0.0".to_owned(),
+            severity,
+            summary: "demo".to_owned(),
+            aliases: Vec::new(),
+            fixed_versions: Vec::new(),
+            state: FindingState::Open,
+            kind: FindingKind::Vulnerability,
+            first_seen: "2026-01-01T00:00:00Z".to_owned(),
+            last_seen: "2026-01-01T00:00:00Z".to_owned(),
+            resolved_at: None,
+            ignore_reason: None,
+            ignore_until: None,
+        }
+    }
+
+    fn empty_card(id: &str, name: &str, findings: [usize; 5], due: Option<&str>) -> ProjectCard {
+        ProjectCard {
+            index: 0,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            status: Some(project_status_badge(ProjectStatus::Idea)),
+            version: None,
+            progress: ProgressView::empty(),
+            open_issues: 0,
+            open_issues_label: open_issues_label(0),
+            findings_by_severity: findings,
+            finding_badges: Vec::new(),
+            next_due: due.map(str::to_owned),
+            next_due_remaining: None,
+            current_phase: None,
+            target_sdk: None,
+            load_error: None,
+        }
+    }
+
+    #[test]
+    fn sorts_by_finding_severity_then_due_then_name() {
+        let critical = empty_card("c", "Zebra", [1, 0, 0, 0, 0], Some("2027-01-01"));
+        let due_soon = empty_card("a", "Alpha", [0, 0, 0, 0, 0], Some("2026-01-01"));
+        let due_later = empty_card("b", "Beta", [0, 0, 0, 0, 0], Some("2026-06-01"));
+        let mut cards = [due_later.clone(), critical.clone(), due_soon.clone()];
+        cards.sort_by(compare_urgency);
+        assert_eq!(cards[0].id, "c");
+        assert_eq!(cards[1].id, "a");
+        assert_eq!(cards[2].id, "b");
+    }
+
+    #[test]
+    fn progress_counts_non_dropped_tasks() {
+        let project = sample_project("p", "P", None);
+        let progress = project_progress(&project);
+        assert_eq!(progress.done, 1);
+        assert_eq!(progress.total, 2);
+        assert_eq!(progress.percent, 50);
+    }
+
+    #[test]
+    fn empty_project_has_zero_progress() {
+        let project = Project {
+            schema_version: 1,
+            id: "empty".to_owned(),
+            name: "Empty".to_owned(),
+            status: ProjectStatus::Idea,
+            source_dir: None,
+            description: None,
+            current_version: None,
+            tags: None,
+            updated: None,
+            links: None,
+            stack: None,
+            plan: None,
+            issues: None,
+            watch_items: None,
+        };
+        let progress = project_progress(&project);
+        assert_eq!(progress, ProgressView::empty());
+    }
+
+    #[test]
+    fn load_errors_and_missing_database_appear_in_the_view() {
+        let loaded = LoadedPortfolio {
+            workspace_path: Some(PathBuf::from("/tmp/workspace.json")),
+            workspace_error: None,
+            database_path: Some(PathBuf::from("/tmp/craftward.db")),
+            database: DatabaseStatus::Missing,
+            projects: vec![
+                LoadedProject {
+                    path: PathBuf::from("/tmp/good.json"),
+                    project: Ok(sample_project("good", "Good", Some("2026-12-01"))),
+                    findings: vec![finding("good", Severity::High)],
+                },
+                LoadedProject {
+                    path: PathBuf::from("/tmp/bad.json"),
+                    project: Err("invalid file".to_owned()),
+                    findings: Vec::new(),
+                },
+            ],
+        };
+        let view = build_portfolio_at(&loaded, "2026-11-15");
+        assert_eq!(view.summary.project_count, 2);
+        assert_eq!(view.summary.loaded_count, 1);
+        assert_eq!(view.summary.error_count, 1);
+        assert_eq!(view.summary.open_findings, 1);
+        assert_eq!(view.summary.open_issues, 1);
+        assert!(
+            view.database_message
+                .as_ref()
+                .is_some_and(|text| text.contains("craftward.db"))
+        );
+        assert!(view.cards.iter().any(|card| card.load_error.is_some()));
+        let good = view
+            .cards
+            .iter()
+            .find(|card| card.id == "good")
+            .expect("good");
+        assert_eq!(good.current_phase.as_deref(), Some("Release"));
+        assert_eq!(good.target_sdk, Some(34));
+        assert_eq!(
+            good.status.as_ref().map(|b| b.label),
+            Some("In development")
+        );
+        assert_eq!(good.next_due_remaining.as_deref(), Some("in 16 days"));
+        let detail = build_detail_at(1, &loaded.projects[1], "2026-11-15");
+        assert!(detail.load_error.is_some());
+        assert!(detail.breadcrumb.starts_with("Portfolio ›"));
+    }
+
+    #[test]
+    fn database_error_is_surfaced() {
+        let loaded = LoadedPortfolio {
+            workspace_path: None,
+            workspace_error: Some("no workspace".to_owned()),
+            database_path: None,
+            database: DatabaseStatus::Error("locked".to_owned()),
+            projects: Vec::new(),
+        };
+        let view = build_portfolio_at(&loaded, "2026-11-15");
+        assert_eq!(view.workspace_error.as_deref(), Some("no workspace"));
+        assert!(
+            view.database_message
+                .as_ref()
+                .is_some_and(|text| text.contains("locked"))
+        );
+        assert_eq!(view.cards, []);
+    }
+
+    #[test]
+    fn status_badges_use_readable_labels() {
+        let badge = project_status_badge(ProjectStatus::InDevelopment);
+        assert_eq!(badge.key, "in_development");
+        assert_eq!(badge.label, "In development");
+        assert_ne!(badge.symbol, "");
+        let done = task_status_badge(TaskStatus::Done);
+        assert_eq!(done.display(), "✓ Done");
+    }
+
+    #[test]
+    fn pluralization_covers_zero_one_and_many() {
+        assert_eq!(open_issues_label(0), "No open issues");
+        assert_eq!(open_issues_label(1), "1 open issue");
+        assert_eq!(open_issues_label(2), "2 open issues");
+        assert_eq!(open_findings_label(0), "No open findings");
+        assert_eq!(open_findings_label(1), "1 open finding");
+        assert_eq!(open_findings_label(3), "3 open findings");
+    }
+
+    #[test]
+    fn current_phase_skips_completed_phases() {
+        let project = sample_project("p", "P", None);
+        assert_eq!(current_phase_title(&project).as_deref(), Some("Release"));
+    }
+
+    #[test]
+    fn remaining_time_uses_injected_today() {
+        assert_eq!(remaining_label("2026-11-15", "2026-11-15"), "due today");
+        assert_eq!(remaining_label("2026-11-15", "2026-11-16"), "in 1 day");
+        assert_eq!(remaining_label("2026-11-15", "2026-11-20"), "in 5 days");
+        assert_eq!(remaining_label("2026-11-15", "2026-11-14"), "1 day overdue");
+        assert_eq!(
+            remaining_label("2026-11-15", "2026-11-10"),
+            "5 days overdue"
+        );
+    }
+
+    #[test]
+    fn grid_columns_follow_width_breakpoints() {
+        assert_eq!(grid_columns(500.0), 1);
+        assert_eq!(grid_columns(899.0), 1);
+        assert_eq!(grid_columns(900.0), 2);
+        assert_eq!(grid_columns(1399.0), 2);
+        assert_eq!(grid_columns(1400.0), 3);
+    }
+
+    #[test]
+    fn detail_collapses_done_phases_by_default() {
+        let project = sample_project("p", "P", Some("2026-12-01"));
+        let loaded = LoadedProject {
+            path: PathBuf::from("/tmp/p.json"),
+            project: Ok(project),
+            findings: Vec::new(),
+        };
+        let detail = build_detail_at(0, &loaded, "2026-11-15");
+        assert_eq!(detail.phases[0].status.key, "done");
+        assert!(!detail.phases[0].initially_expanded);
+        assert_eq!(detail.phases[1].status.key, "open");
+        assert!(detail.phases[1].initially_expanded);
+        assert!(
+            detail
+                .overview_fields
+                .iter()
+                .any(|field| field.label == "Android targetSdk" && field.value == "34")
+        );
+        let _badge: StatusBadge = detail.phases[1].status.clone();
+    }
+}

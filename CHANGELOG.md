@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop app foundation in `craftward-app` (eframe 0.37.0, glow renderer,
+  accesskit, Wayland and X11): dark theme aligned with the HTML roadmaps,
+  portfolio overview sorted by urgency, and a per-project detail view.
+  Read-only; same workspace and `craftward.db` paths as the CLI. See
+  [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md) and
+  [docs/desktop.md](docs/desktop.md).
 - Repository skeleton with a Cargo workspace, command-line and desktop
   application binaries, CI, dependency policy, and project documentation.
 - Schema version 1 of `craftward.json`, with loading and validation in

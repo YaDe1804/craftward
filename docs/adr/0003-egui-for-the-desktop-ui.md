@@ -10,4 +10,5 @@ Use egui for the desktop UI. A custom theme is planned.
 ## Rationale
 
 egui is pure Rust and permissively licensed, and the author has prior
-experience with it.
+experience with it. The first concrete integration uses eframe; see
+[ADR 0023](0023-desktop-app-with-eframe.md).
