@@ -1,5 +1,6 @@
 //! Command-line interface for Craftward.
 
+mod cli;
 mod deadlines;
 mod editing;
 mod findings;
@@ -12,11 +13,17 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::SystemTime;
 
+use clap::Parser;
 use craftward_core::{
     Language, LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project,
     init_project, is_portable_absolute, list_projects, load_from_path, locate_workspace,
     missing_paths, platform_path, project_file, project_file_by_id, remove_project, utc_date,
     write_roadmap,
+};
+
+use crate::cli::{
+    Cli, Command, FindingsCommand, IssueCommand, PhaseCommand, ProjectCommand, StackCommand,
+    StackLockfileCommand, TaskCommand, WatchCommand, WorkspaceCommand,
 };
 
 /// Process exit status for a usage error.
@@ -26,19 +33,20 @@ const USAGE_ERROR: u8 = 2;
 const DATA_ERROR: u8 = 1;
 
 fn main() -> ExitCode {
-    match parse_args() {
-        Ok(invocation) => match run(invocation) {
-            Ok(code) => code,
-            Err(Failure::Data(message)) => {
-                eprintln!("error: {message}");
-                ExitCode::from(DATA_ERROR)
-            }
-            Err(Failure::Usage(message)) => {
-                eprintln!("error: {message}");
-                ExitCode::from(USAGE_ERROR)
-            }
-        },
-        Err(message) => {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let _ = error.print();
+            return ExitCode::from(u8::try_from(error.exit_code()).unwrap_or(USAGE_ERROR));
+        }
+    };
+    match run(cli) {
+        Ok(code) => code,
+        Err(Failure::Data(message)) => {
+            eprintln!("error: {message}");
+            ExitCode::from(DATA_ERROR)
+        }
+        Err(Failure::Usage(message)) => {
             eprintln!("error: {message}");
             ExitCode::from(USAGE_ERROR)
         }
@@ -57,70 +65,17 @@ impl From<String> for Failure {
     }
 }
 
-struct Invocation {
-    workspace: Option<PathBuf>,
-    command: Command,
-}
-
-#[derive(Clone, Copy)]
-enum Topic {
-    Init,
-    Add,
-    Remove,
-    List,
-    Validate,
-    Workspace,
-    Roadmap,
-}
-
-enum Command {
-    Version,
-    Help,
-    Init {
-        directory: Option<PathBuf>,
-        id: String,
-        name: String,
-        status: ProjectStatus,
-    },
-    Add {
-        path: PathBuf,
-    },
-    Remove {
-        id: String,
-    },
-    List,
-    Validate {
-        paths: Vec<PathBuf>,
-    },
-    WorkspacePath,
-    Roadmap {
-        target: String,
-        directory: Option<PathBuf>,
-        language: Language,
-    },
-    Edit(editing::Request),
-    Radar(radar::Request),
-    Findings(findings::Request),
-    Stack(stack::Request),
-    Deadlines(deadlines::Request),
-    HelpText(&'static str),
-    Usage(Topic),
-}
-
-fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
-    match invocation.command {
-        Command::Version => {
-            println!("{} {}", env!("CARGO_BIN_NAME"), craftward_core::version());
-            Ok(ExitCode::SUCCESS)
+#[allow(clippy::too_many_lines)]
+fn run(cli: Cli) -> Result<ExitCode, Failure> {
+    let Some(command) = cli.command else {
+        if cli.workspace.is_some() {
+            return Err(Failure::Usage("--workspace needs a command".to_owned()));
         }
-        Command::Help => {
-            print_help();
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::Usage(topic) => {
-            print_command_help(topic);
-            Ok(ExitCode::SUCCESS)
-        }
+        println!("{} {}", env!("CARGO_BIN_NAME"), craftward_core::version());
+        return Ok(ExitCode::SUCCESS);
+    };
+    let workspace = cli.workspace.as_deref();
+    match command {
         Command::Init {
             directory,
             id,
@@ -128,8 +83,8 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             status,
         } => run_init(directory.as_deref(), &id, &name, status),
         Command::Add { path } => {
-            let workspace = workspace_file(invocation.workspace.as_deref())?;
-            let input = absolute_from_cwd(&path)?;
+            let workspace = workspace_file(workspace)?;
+            let input = absolute_from_cwd(&platform_path(&path))?;
             match add_project(&workspace, &input) {
                 Ok(id) => {
                     println!("added {id}");
@@ -139,7 +94,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Command::Remove { id } => {
-            let workspace = workspace_file(invocation.workspace.as_deref())?;
+            let workspace = workspace_file(workspace)?;
             match remove_project(&workspace, &id) {
                 Ok(()) => {
                     println!("removed {id}");
@@ -149,7 +104,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             }
         }
         Command::List => {
-            let workspace = workspace_file(invocation.workspace.as_deref())?;
+            let workspace = workspace_file(workspace)?;
             match list_projects(&workspace) {
                 Ok(rows) => Ok(print_list(&rows)),
                 Err(error) => Err(Failure::Data(explain_workspace(&error))),
@@ -157,15 +112,21 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         }
         Command::Validate { paths } => {
             if paths.is_empty() {
-                let workspace = workspace_file(invocation.workspace.as_deref())?;
+                let workspace = workspace_file(workspace)?;
                 Ok(validate_workspace(&workspace)?)
             } else {
+                let paths = paths
+                    .iter()
+                    .map(|path| platform_path(path))
+                    .collect::<Vec<_>>();
                 Ok(validate_files(&paths))
             }
         }
-        Command::WorkspacePath => {
-            let location = locate_workspace(&ProcessHost, invocation.workspace.as_deref())
-                .map_err(|error| error.to_string())?;
+        Command::Workspace {
+            command: WorkspaceCommand::Path,
+        } => {
+            let location =
+                locate_workspace(&ProcessHost, workspace).map_err(|error| error.to_string())?;
             let path = absolute_from_cwd(&location.path)?;
             println!("{} ({})", path.display(), location.origin.label());
             Ok(ExitCode::SUCCESS)
@@ -174,21 +135,332 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             target,
             directory,
             language,
-        } => run_roadmap(
-            &target,
-            directory.as_deref(),
-            language,
-            invocation.workspace.as_deref(),
-        ),
-        Command::Edit(request) => editing::run(request, invocation.workspace.as_deref()),
-        Command::Radar(request) => radar::run(&request, invocation.workspace.as_deref()),
-        Command::Findings(request) => findings::run(&request, invocation.workspace.as_deref()),
-        Command::Stack(request) => stack::run(&request, invocation.workspace.as_deref()),
-        Command::Deadlines(request) => deadlines::run(&request),
-        Command::HelpText(text) => {
-            println!("{text}");
-            Ok(ExitCode::SUCCESS)
+        } => run_roadmap(&target, directory.as_deref(), language, workspace),
+        Command::Show { project } => {
+            editing::run(editing::Request::Show { target: project }, workspace)
         }
+        Command::Project {
+            command:
+                ProjectCommand::Set {
+                    project,
+                    name,
+                    status,
+                    version,
+                    description,
+                    source_dir,
+                },
+        } => {
+            if name.is_none()
+                && status.is_none()
+                && version.is_none()
+                && description.is_none()
+                && source_dir.is_none()
+            {
+                return Err(Failure::Usage(
+                    "project set requires at least one option".to_owned(),
+                ));
+            }
+            editing::run(
+                editing::Request::SetProject {
+                    target: project,
+                    name,
+                    status,
+                    version: clearable(version),
+                    description: clearable(description),
+                    source_dir,
+                },
+                workspace,
+            )
+        }
+        Command::Phase { command } => editing::run(phase_request(command), workspace),
+        Command::Task { command } => editing::run(task_request(command), workspace),
+        Command::Issue { command } => editing::run(issue_request(command), workspace),
+        Command::Watch { command } => editing::run(watch_request(command), workspace),
+        Command::Radar {
+            projects,
+            refresh,
+            offline,
+            json,
+            show_all,
+            strict,
+            eol_warning_days,
+            deadline_warning_days,
+        } => {
+            let mode = if refresh {
+                radar::ScanMode::Refresh
+            } else if offline {
+                radar::ScanMode::Offline
+            } else {
+                radar::ScanMode::Normal
+            };
+            radar::run(
+                &radar::Request {
+                    projects,
+                    mode,
+                    json,
+                    show_all,
+                    cache_dir: cli.cache_dir.clone(),
+                    data_dir: cli.data_dir.clone(),
+                    strict,
+                    eol_warning_days,
+                    deadline_warning_days,
+                },
+                workspace,
+            )
+        }
+        Command::Findings {
+            command,
+            projects,
+            state,
+            kind,
+            json,
+        } => {
+            let request = match command {
+                None => findings::Request::List(findings::ListRequest {
+                    projects,
+                    state: state.into(),
+                    kind,
+                    json,
+                    data_dir: cli.data_dir.clone(),
+                }),
+                Some(FindingsCommand::Show { id, json }) => {
+                    findings::Request::Show(findings::IdRequest {
+                        id,
+                        json,
+                        data_dir: cli.data_dir.clone(),
+                    })
+                }
+                Some(FindingsCommand::Ignore { id, reason, until }) => {
+                    findings::Request::Ignore(findings::IgnoreRequest {
+                        id,
+                        reason,
+                        until,
+                        data_dir: cli.data_dir.clone(),
+                    })
+                }
+                Some(FindingsCommand::Reopen { id }) => {
+                    findings::Request::Reopen(findings::IdRequest {
+                        id,
+                        json: false,
+                        data_dir: cli.data_dir.clone(),
+                    })
+                }
+            };
+            findings::run(&request, workspace)
+        }
+        Command::Stack { command } => stack::run(&stack_request(command), workspace),
+        Command::Deadlines => deadlines::run(&deadlines::Request {
+            data_dir: cli.data_dir.clone(),
+        }),
+    }
+}
+
+fn clearable(value: Option<String>) -> editing::Update {
+    match value {
+        None => editing::Update::Keep,
+        Some(text) if text.is_empty() => editing::Update::Clear,
+        Some(text) => editing::Update::Set(text),
+    }
+}
+
+fn clearable_stack(value: Option<String>) -> stack::Update {
+    match value {
+        None => stack::Update::Keep,
+        Some(text) if text.is_empty() => stack::Update::Clear,
+        Some(text) => stack::Update::Set(text),
+    }
+}
+
+fn phase_request(command: PhaseCommand) -> editing::Request {
+    match command {
+        PhaseCommand::Add {
+            project,
+            title,
+            id,
+            goal,
+        } => editing::Request::AddPhase {
+            target: project,
+            title,
+            id,
+            goal,
+        },
+        PhaseCommand::Remove {
+            project,
+            phase,
+            force,
+        } => editing::Request::RemovePhase {
+            target: project,
+            phase,
+            force,
+        },
+    }
+}
+
+fn task_request(command: TaskCommand) -> editing::Request {
+    match command {
+        TaskCommand::Add {
+            project,
+            phase,
+            title,
+            id,
+            status,
+            due,
+            note,
+        } => editing::Request::AddTask {
+            target: project,
+            phase,
+            title,
+            id,
+            status,
+            due,
+            note,
+        },
+        TaskCommand::Status {
+            project,
+            phase,
+            task,
+            status,
+        } => editing::Request::SetTaskStatus {
+            target: project,
+            phase,
+            task,
+            status,
+        },
+        TaskCommand::Done {
+            project,
+            phase,
+            task,
+        } => editing::Request::SetTaskStatus {
+            target: project,
+            phase,
+            task,
+            status: "done".to_owned(),
+        },
+        TaskCommand::Remove {
+            project,
+            phase,
+            task,
+        } => editing::Request::RemoveTask {
+            target: project,
+            phase,
+            task,
+        },
+    }
+}
+
+fn issue_request(command: IssueCommand) -> editing::Request {
+    match command {
+        IssueCommand::Add {
+            project,
+            title,
+            severity,
+            id,
+            url,
+            note,
+        } => editing::Request::AddIssue {
+            target: project,
+            title,
+            severity,
+            id,
+            url,
+            note,
+        },
+        IssueCommand::Status {
+            project,
+            issue,
+            status,
+        } => editing::Request::SetIssueStatus {
+            target: project,
+            issue,
+            status,
+        },
+        IssueCommand::Remove { project, issue } => editing::Request::RemoveIssue {
+            target: project,
+            issue,
+        },
+    }
+}
+
+fn watch_request(command: WatchCommand) -> editing::Request {
+    match command {
+        WatchCommand::Add {
+            project,
+            kind,
+            title,
+            due,
+            id,
+            note,
+        } => editing::Request::AddWatch {
+            target: project,
+            kind,
+            title,
+            due,
+            id,
+            note,
+        },
+        WatchCommand::Remove { project, watch } => editing::Request::RemoveWatch {
+            target: project,
+            watch,
+        },
+    }
+}
+
+fn stack_request(command: StackCommand) -> stack::Request {
+    match command {
+        StackCommand::Add {
+            project,
+            kind,
+            name,
+            version,
+            note,
+            eol_product,
+        } => stack::Request::Add(stack::AddRequest {
+            project,
+            kind,
+            name,
+            version,
+            note,
+            eol_product,
+        }),
+        StackCommand::Set {
+            project,
+            name,
+            version,
+            note,
+            eol_product,
+        } => stack::Request::Set(stack::SetRequest {
+            project,
+            name,
+            version: clearable_stack(version),
+            note: clearable_stack(note),
+            eol_product: clearable_stack(eol_product),
+        }),
+        StackCommand::Remove { project, name } => {
+            stack::Request::Remove(stack::NameRequest { project, name })
+        }
+        StackCommand::Lockfile {
+            command: StackLockfileCommand::Add { project, path },
+        } => stack::Request::AddLockfile(stack::PathRequest { project, path }),
+        StackCommand::Lockfile {
+            command: StackLockfileCommand::Remove { project, path },
+        } => stack::Request::RemoveLockfile(stack::PathRequest { project, path }),
+        StackCommand::Android {
+            project,
+            target_sdk,
+            min_sdk,
+            form_factor,
+            store,
+            detect_from,
+            clear_detect_from,
+        } => stack::Request::Android(stack::AndroidRequest {
+            project,
+            target_sdk: clearable_stack(target_sdk),
+            min_sdk: clearable_stack(min_sdk),
+            form_factor,
+            store,
+            detect_from,
+            clear_detect_from,
+        }),
     }
 }
 
@@ -267,11 +539,6 @@ pub(crate) fn resolve_project(target: &str, workspace: Option<&Path>) -> Result<
     project_file_by_id(&workspace, target).map_err(|error| Failure::Data(error.to_string()))
 }
 
-/// Whether `target` is the id of a readable project in the workspace.
-///
-/// A missing workspace file means the id is not registered. A workspace that
-/// cannot be located or read is returned as an error so the caller can decide
-/// whether a path argument still stands on its own.
 fn registered_project_id(target: &str, workspace: Option<&Path>) -> Result<bool, String> {
     let file = workspace_file(workspace)?;
     match project_file_by_id(&file, target) {
@@ -507,494 +774,4 @@ fn explain_workspace(error: &WorkspaceError) -> String {
         }
         other => other.to_string(),
     }
-}
-
-/// Accepts the global options and one command.
-///
-/// With no arguments, the program prints its name and version.
-///
-/// # Errors
-///
-/// Returns an error when the command line is not a supported form.
-fn parse_args() -> Result<Invocation, String> {
-    let arguments: Vec<_> = env::args_os().skip(1).collect();
-    let (workspace, rest) = extract_workspace(&arguments)?;
-    if rest.is_empty() {
-        if workspace.is_some() {
-            return Err("--workspace needs a command".to_owned());
-        }
-        return Ok(Invocation {
-            workspace: None,
-            command: Command::Version,
-        });
-    }
-    let command_name = rest[0].to_string_lossy();
-    if command_name == "--version" || command_name == "--help" {
-        if rest.len() != 1 || workspace.is_some() {
-            return Err("too many arguments".to_owned());
-        }
-        let command = if command_name == "--version" {
-            Command::Version
-        } else {
-            Command::Help
-        };
-        return Ok(Invocation {
-            workspace: None,
-            command,
-        });
-    }
-    if command_name.starts_with('-') {
-        return Err(format!("unrecognized argument: {command_name}"));
-    }
-    let command_args = &rest[1..];
-    let command = parse_command(&command_name, command_args)?;
-    Ok(Invocation { workspace, command })
-}
-
-fn extract_workspace(
-    arguments: &[std::ffi::OsString],
-) -> Result<(Option<PathBuf>, Vec<std::ffi::OsString>), String> {
-    let mut workspace = None;
-    let mut rest = Vec::new();
-    let mut index = 0;
-    while index < arguments.len() {
-        if arguments[index] == "--workspace" {
-            let Some(value) = arguments.get(index + 1) else {
-                return Err("--workspace needs a file path".to_owned());
-            };
-            if value.to_string_lossy().starts_with('-') {
-                return Err("--workspace needs a file path".to_owned());
-            }
-            if workspace.is_some() {
-                return Err("duplicate option: --workspace".to_owned());
-            }
-            workspace = Some(platform_path(Path::new(value)));
-            index += 2;
-        } else {
-            rest.push(arguments[index].clone());
-            index += 1;
-        }
-    }
-    Ok((workspace, rest))
-}
-
-fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, String> {
-    let topic = match name {
-        "init" => Topic::Init,
-        "add" => Topic::Add,
-        "remove" => Topic::Remove,
-        "list" => Topic::List,
-        "validate" => Topic::Validate,
-        "workspace" => Topic::Workspace,
-        "roadmap" => Topic::Roadmap,
-        "radar" => {
-            return match radar::parse(args)? {
-                radar::Parsed::Help(text) => Ok(Command::HelpText(text)),
-                radar::Parsed::Run(request) => Ok(Command::Radar(request)),
-            };
-        }
-        "findings" => {
-            return match findings::parse(args)? {
-                findings::Parsed::Help(text) => Ok(Command::HelpText(text)),
-                findings::Parsed::Run(request) => Ok(Command::Findings(request)),
-            };
-        }
-        "stack" => {
-            return match stack::parse(args)? {
-                stack::Parsed::Help(text) => Ok(Command::HelpText(text)),
-                stack::Parsed::Run(request) => Ok(Command::Stack(request)),
-            };
-        }
-        "deadlines" => {
-            return match deadlines::parse(args)? {
-                deadlines::Parsed::Help(text) => Ok(Command::HelpText(text)),
-                deadlines::Parsed::Run(request) => Ok(Command::Deadlines(request)),
-            };
-        }
-        "show" | "project" | "phase" | "task" | "issue" | "watch" => {
-            return match editing::parse(name, args)? {
-                editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
-                editing::Parsed::Run(request) => Ok(Command::Edit(request)),
-            };
-        }
-        _ => return Err(format!("unrecognized command: {name}")),
-    };
-    if help_only(name, args)? {
-        return Ok(Command::Usage(topic));
-    }
-    match name {
-        "init" => parse_init(args),
-        "add" => parse_one_path(args).map(|path| Command::Add { path }),
-        "remove" => parse_one_word(args, "remove").map(|id| Command::Remove { id }),
-        "list" => {
-            if args.is_empty() {
-                Ok(Command::List)
-            } else {
-                Err(unexpected(&args[0]))
-            }
-        }
-        "validate" => {
-            let mut paths = Vec::new();
-            for arg in args {
-                let rendered = arg.to_string_lossy();
-                if rendered.starts_with('-') {
-                    return Err(format!("unrecognized argument: {rendered}"));
-                }
-                paths.push(platform_path(Path::new(arg)));
-            }
-            Ok(Command::Validate { paths })
-        }
-        "workspace" => parse_workspace_command(args),
-        "roadmap" => parse_roadmap(args),
-        _ => Err(format!("unrecognized command: {name}")),
-    }
-}
-
-fn help_only(name: &str, args: &[std::ffi::OsString]) -> Result<bool, String> {
-    if !args.iter().any(|arg| arg == "--help") {
-        return Ok(false);
-    }
-    let workspace_path_help = name == "workspace"
-        && args.len() == 2
-        && args.iter().any(|arg| arg == "path")
-        && args.iter().any(|arg| arg == "--help");
-    if args.len() == 1 || workspace_path_help {
-        Ok(true)
-    } else {
-        Err("too many arguments".to_owned())
-    }
-}
-
-fn parse_workspace_command(args: &[std::ffi::OsString]) -> Result<Command, String> {
-    if args.len() == 1 && args[0] == "path" {
-        Ok(Command::WorkspacePath)
-    } else if args.is_empty() {
-        Err("workspace requires a subcommand: path".to_owned())
-    } else if args[0] == "path" {
-        Err("too many arguments".to_owned())
-    } else {
-        Err(unexpected(&args[0]))
-    }
-}
-
-fn parse_one_path(args: &[std::ffi::OsString]) -> Result<PathBuf, String> {
-    if args.len() != 1 {
-        return Err("add requires one project file or directory".to_owned());
-    }
-    let rendered = args[0].to_string_lossy();
-    if rendered.starts_with('-') {
-        return Err(format!("unrecognized argument: {rendered}"));
-    }
-    Ok(platform_path(Path::new(&args[0])))
-}
-
-fn parse_one_word(args: &[std::ffi::OsString], command: &str) -> Result<String, String> {
-    if args.len() != 1 {
-        return Err(format!("{command} requires one project id"));
-    }
-    let rendered = args[0].to_string_lossy();
-    if rendered.starts_with('-') {
-        return Err(format!("unrecognized argument: {rendered}"));
-    }
-    Ok(rendered.into_owned())
-}
-
-fn parse_init(args: &[std::ffi::OsString]) -> Result<Command, String> {
-    let mut directory = None;
-    let mut id = None;
-    let mut name = None;
-    let mut status = None;
-    let mut index = 0;
-    while index < args.len() {
-        let rendered = args[index].to_string_lossy();
-        if rendered == "--id" || rendered == "--name" || rendered == "--status" {
-            let Some(value) = args.get(index + 1) else {
-                return Err(format!("{rendered} needs a value"));
-            };
-            if value.to_string_lossy().starts_with('-') {
-                return Err(format!("{rendered} needs a value"));
-            }
-            let text = value.to_string_lossy().into_owned();
-            match rendered.as_ref() {
-                "--id" => assign(&mut id, "--id", text)?,
-                "--name" => assign(&mut name, "--name", text)?,
-                "--status" => assign(&mut status, "--status", text)?,
-                _ => {}
-            }
-            index += 2;
-        } else if rendered.starts_with('-') {
-            return Err(format!("unrecognized argument: {rendered}"));
-        } else if directory.is_some() {
-            return Err("init accepts only one directory".to_owned());
-        } else {
-            directory = Some(platform_path(Path::new(&args[index])));
-            index += 1;
-        }
-    }
-    let Some(id) = id else {
-        return Err("init requires --id".to_owned());
-    };
-    let Some(name) = name else {
-        return Err("init requires --name".to_owned());
-    };
-    let status = match status {
-        None => ProjectStatus::Idea,
-        Some(text) => {
-            ProjectStatus::parse(&text).ok_or_else(|| format!("unknown status: {text}"))?
-        }
-    };
-    Ok(Command::Init {
-        directory,
-        id,
-        name,
-        status,
-    })
-}
-
-fn parse_roadmap(args: &[std::ffi::OsString]) -> Result<Command, String> {
-    let mut target = None;
-    let mut directory = None;
-    let mut language = None;
-    let mut index = 0;
-    while index < args.len() {
-        let rendered = args[index].to_string_lossy();
-        if rendered == "--dir" || rendered == "--lang" {
-            let Some(value) = args.get(index + 1) else {
-                return Err(format!("{rendered} needs a value"));
-            };
-            if value.to_string_lossy().starts_with('-') {
-                return Err(format!("{rendered} needs a value"));
-            }
-            match rendered.as_ref() {
-                "--dir" => {
-                    if directory.is_some() {
-                        return Err("duplicate option: --dir".to_owned());
-                    }
-                    directory = Some(platform_path(Path::new(value)));
-                }
-                "--lang" => {
-                    if language.is_some() {
-                        return Err("duplicate option: --lang".to_owned());
-                    }
-                    let text = value.to_string_lossy();
-                    language = Some(
-                        Language::parse(&text)
-                            .ok_or_else(|| format!("unknown language: {text}"))?,
-                    );
-                }
-                _ => {}
-            }
-            index += 2;
-        } else if rendered.starts_with('-') {
-            return Err(format!("unrecognized argument: {rendered}"));
-        } else if target.is_some() {
-            return Err("roadmap accepts only one project".to_owned());
-        } else {
-            target = Some(rendered.into_owned());
-            index += 1;
-        }
-    }
-    let Some(target) = target else {
-        return Err("roadmap requires a project id or path".to_owned());
-    };
-    Ok(Command::Roadmap {
-        target,
-        directory,
-        language: language.unwrap_or(Language::En),
-    })
-}
-
-fn assign(slot: &mut Option<String>, flag: &str, value: String) -> Result<(), String> {
-    if slot.is_some() {
-        Err(format!("duplicate option: {flag}"))
-    } else {
-        *slot = Some(value);
-        Ok(())
-    }
-}
-
-fn unexpected(argument: &std::ffi::OsString) -> String {
-    format!("unrecognized argument: {}", argument.to_string_lossy())
-}
-
-fn print_help() {
-    let version = craftward_core::version();
-    println!(
-        "\
-craftward {version}
-
-Track project files and print a summary of the workspace.
-
-Usage:
-  craftward
-  craftward --help
-  craftward --version
-  craftward [--workspace <FILE>] <COMMAND> [--help]
-
-Commands:
-  init [DIR] --id <ID> --name <NAME> [--status <STATUS>]
-      Create DIR/craftward.json with the required fields. DIR defaults to
-      the current directory. STATUS defaults to idea. An existing file is
-      left unchanged, and the project is not added to the workspace.
-  add <PATH>
-      Add a craftward.json file, or a directory that contains one. The file
-      must be valid. The same path and the same project id are rejected.
-  remove <ID>
-      Remove a project from the workspace. The project file stays where it is.
-  list
-      Show id, name, status, version, open tasks, open issues, and the next
-      due date. A missing or invalid file is still listed, and the command
-      then exits 1.
-  craftward validate [PATH]...
-      Check the given files, or every project in the workspace when no path
-      is given. An error names its location, for example
-      plan.phases[0].tasks[1].due. A missing source directory or lockfile is
-      a warning and does not change the exit status.
-  roadmap <ID|PATH> [--dir DIR] [--lang en|de]
-      Write the next <id>_roadmap_vN.html for a workspace id or a project
-      file. DIR defaults to the current directory. The language defaults to
-      en. An existing file is never overwritten.
-  show <PROJECT>
-      Print a project, including the ids later commands use.
-  project set <PROJECT> [--name ..] [--status ..] [--version ..]
-      [--description ..] [--source-dir ..]
-      Change header fields. An empty --version or --description removes it.
-  phase add <PROJECT> --title .. | phase remove <PROJECT> <PHASE> [--force]
-  task add|status|done|remove
-  issue add|status|remove
-  watch add|remove
-  radar [PROJECT...] [--refresh] [--offline] [--json] [--all] [--strict]
-      [--eol-warning-days N] [--deadline-warning-days N]
-      [--cache-dir DIR] [--data-dir DIR]
-      Look up known vulnerabilities, support ends, Play target-API deadlines,
-      and store them.
-  findings [PROJECT...] [--state ..] [--kind ..] [--json] [--data-dir DIR]
-      List, show, ignore, or reopen stored findings.
-  stack add|set|remove | stack lockfile add|remove | stack android
-      Change stack components, lockfile paths, and Android targetSdk settings.
-  deadlines [--data-dir DIR]
-      Show the Google Play target-API deadlines in use.
-  workspace path
-      Print the workspace file in use and whether it came from --workspace,
-      CRAFTWARD_WORKSPACE, or the default location.
-
---workspace selects the workspace file. Otherwise CRAFTWARD_WORKSPACE is used,
-then the default directory for this system.
-
-Exit status:
-  0  success, or radar found nothing
-  1  a file or request failed
-  2  the command line is wrong
-  3  radar has an open vulnerability, malicious package, past support end,
-     or past Play deadline. Notices count only with --strict"
-    );
-}
-
-fn print_command_help(topic: Topic) {
-    let text = match topic {
-        Topic::Init => {
-            "\
-Create a project file with the required fields.
-
-Usage:
-  craftward init [DIR] --id <ID> --name <NAME> [--status <STATUS>]
-
-STATUS is idea, in_development, released, maintenance, paused, or
-discontinued. The default is idea. DIR defaults to the current directory.
-An existing craftward.json is not overwritten. The workspace list is not
-changed.
-
-Example:
-  craftward init --id harbor-light --name \"Harbor Light\""
-        }
-        Topic::Add => {
-            "\
-Add a project file to the workspace.
-
-Usage:
-  craftward add <PATH>
-
-PATH is a craftward.json file or a directory that contains one. The file
-must be valid. A path or project id that is already listed is rejected.
-
-Example:
-  craftward add ./harbor-light"
-        }
-        Topic::Remove => {
-            "\
-Remove a project from the workspace.
-
-Usage:
-  craftward remove <ID>
-
-The project file is not deleted.
-
-Example:
-  craftward remove harbor-light"
-        }
-        Topic::List => {
-            "\
-Show every project in the workspace.
-
-Usage:
-  craftward list
-
-Open tasks and open issues are those marked open or in_progress. The next
-due date is the earliest task or watch-item date still outstanding. Done
-and dropped tasks are left out. A missing or invalid project file is shown
-with a note, and the command exits 1.
-
-Example:
-  craftward list"
-        }
-        Topic::Validate => {
-            "\
-Check project files.
-
-Usage:
-  craftward validate [PATH]...
-
-With no paths, every project in the workspace is checked. Each file is
-reported as \"ok\" or as a list of errors. A missing source directory or
-lockfile is reported as a warning and does not change the exit status.
-
-Example:
-  craftward validate
-  craftward validate ./harbor-light/craftward.json"
-        }
-        Topic::Workspace => {
-            "\
-Show which workspace file is in use.
-
-Usage:
-  craftward workspace path
-
-The line names the file and the source: command-line option, environment
-variable CRAFTWARD_WORKSPACE, or default location.
-
-Example:
-  craftward workspace path"
-        }
-        Topic::Roadmap => {
-            "\
-Write a versioned HTML roadmap for one project.
-
-Usage:
-  craftward roadmap <ID|PATH> [--dir DIR] [--lang en|de]
-
-ID selects a project from the workspace. PATH is a craftward.json file or
-a directory that contains one. A path is recognized when it exists, ends
-with .json, contains a separator, or is absolute. If the argument is both a
-registered id and an existing path, the command exits 2. Pass .\\name or
-./name to use the folder, or pass the project file path to use the
-registered project. DIR defaults to the
-current directory. --lang is en or de, and defaults to en. The file is
-named <id>_roadmap_vN.html. N is one higher than the highest existing
-number in DIR, starting at 1. An existing file is never overwritten.
-
-Example:
-  craftward roadmap harbor-light --dir ./docs/roadmap --lang de"
-        }
-    };
-    println!("{text}");
 }
