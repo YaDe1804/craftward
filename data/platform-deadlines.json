@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "data_version": "2026-11-15",
+  "deadlines": [
+    {
+      "platform": "google_play",
+      "form_factor": "phone",
+      "requirement": "new_apps_and_updates",
+      "api_level": 36,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "New apps and app updates must target Android 16 (API 36) or higher. A Play Console extension to 2026-11-01 can be requested; that date is not the requirement."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "phone",
+      "requirement": "new_apps_and_updates",
+      "api_level": 35,
+      "deadline": "2025-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "New apps and app updates were required to target Android 15 (API 35) or higher from this date."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "phone",
+      "requirement": "existing_apps",
+      "api_level": 35,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Existing apps must target Android 15 (API 35) or higher to remain available to new users on devices running a newer Android version."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "wear",
+      "requirement": "new_apps_and_updates",
+      "api_level": 35,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Wear OS new apps and app updates must target Android 15 (API 35) or higher."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "wear",
+      "requirement": "new_apps_and_updates",
+      "api_level": 34,
+      "deadline": "2025-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Wear OS new apps and app updates were required to target Android 14 (API 34) or higher from this date."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "wear",
+      "requirement": "existing_apps",
+      "api_level": 34,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Existing Wear OS apps must target Android 14 (API 34) or higher. An app that targets API 33 or lower stays available only on devices at or below that target."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "tv",
+      "requirement": "new_apps_and_updates",
+      "api_level": 34,
+      "deadline": "2025-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Android TV new apps and app updates must target Android 14 (API 34) or higher. The page lists no later submission date."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "tv",
+      "requirement": "existing_apps",
+      "api_level": 33,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Existing Android TV apps must target Android 13 (API 33) or higher. The device-specific section calls API 33 compliant."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "automotive",
+      "requirement": "new_apps_and_updates",
+      "api_level": 35,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Android Automotive OS new apps and app updates must target Android 15 (API 35) or higher."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "automotive",
+      "requirement": "new_apps_and_updates",
+      "api_level": 34,
+      "deadline": "2025-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Android Automotive OS new apps and app updates were required to target Android 14 (API 34) or higher from this date."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "automotive",
+      "requirement": "existing_apps",
+      "api_level": 32,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Existing Android Automotive OS apps must target Android 12L (API 32) or higher. An app that targets API 31 or lower stays available only on devices at or below that target."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "xr",
+      "requirement": "new_apps_and_updates",
+      "api_level": 34,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Android XR new apps and app updates must target Android 14 (API 34) or higher."
+    },
+    {
+      "platform": "google_play",
+      "form_factor": "xr",
+      "requirement": "existing_apps",
+      "api_level": 34,
+      "deadline": "2026-08-31",
+      "source": "https://support.google.com/googleplay/android-developer/answer/11926878",
+      "checked_on": "2026-11-15",
+      "note": "Existing Android XR apps must target Android 14 (API 34) or higher. An app that targets API 33 or lower stays available only on devices at or below that target."
+    }
+  ]
+}

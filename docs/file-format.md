@@ -131,6 +131,20 @@ A component has:
 }
 ```
 
+`android` is optional. When it is absent, Play target-API deadlines are
+not checked. When it is present, the fields are:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `target_sdk` | no | Positive integer. When set, Gradle files are not read. |
+| `min_sdk` | no | Positive integer. Recorded only. The Play check does not use it. |
+| `form_factor` | no | `phone`, `automotive`, `wear`, `tv`, or `xr`. The default is `phone`. |
+| `store` | no | `google_play` or `none`. The default is `google_play`. `none` skips the check. |
+| `detect_from` | no | Relative paths, with the same rules as `lockfiles`. Gradle files and `gradle/libs.versions.toml` are read from here. |
+
+An empty `android` object is valid and uses the defaults. `target_sdk` and
+`min_sdk` must be positive integers when they are present.
+
 ## plan
 
 When `plan` is present, `phases` is required.

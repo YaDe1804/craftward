@@ -52,3 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stack add`, `stack set`, `stack remove`, and `stack lockfile add` /
   `remove`, which edit components and lockfile paths. The database schema
   is version 3 and adds `kind` on findings.
+- Google Play target-API deadlines from `data/platform-deadlines.json`,
+  compiled into the program. `stack android` records `targetSdk` and the
+  files it is read from. `radar` reports `platform_deadline` and
+  `platform_deadline_soon`. `deadlines` prints the rows in use. The
+  database schema is version 5: version 4 stores those kinds, and version 5
+  records `deadline_passed` when a warning becomes a missed deadline. One
+  finding per form factor and requirement uses the newest reached row.

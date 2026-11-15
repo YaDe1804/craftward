@@ -8,13 +8,15 @@ use serde::Serialize;
 
 use crate::cache::{self, CachedAdvisory, CachedQuery};
 use crate::date::{format_unix_timestamp, utc_day};
+use crate::deadlines::{self, CatalogOrigin};
 use crate::eol::{self, EolHit};
 use crate::http::HttpClient;
 use crate::load::load_from_path;
 use crate::lockfile::{self, LockKind, PackageQuery, ParsedLock, read_lockfile};
-use crate::model::Component;
+use crate::model::{AndroidConfig, AndroidStore, Component};
 use crate::osv::{self, ADVISORY_TTL_SECONDS, Advisory, QUERY_TTL_SECONDS};
 use crate::paths::resolve_project_paths;
+use crate::target_sdk;
 
 /// Options for one radar run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,8 @@ pub struct RadarOptions {
     pub now: i64,
     /// Days ahead of today that still count as `eol_soon`.
     pub eol_warning_days: u32,
+    /// Days ahead of today that still count as `platform_deadline_soon`.
+    pub deadline_warning_days: u32,
 }
 
 /// One project after a radar run.
@@ -52,6 +56,10 @@ pub struct ProjectReport {
     pub lockfiles_checked: bool,
     /// Whether a component version was compared with endoflife.date.
     pub eol_checked: bool,
+    /// Whether a Play deadline was compared with a known targetSdk.
+    pub deadlines_checked: bool,
+    /// `targetSdk N (source)` when a level was found.
+    pub target_sdk_note: Option<String>,
 }
 
 /// Counts for one lockfile.
@@ -89,7 +97,7 @@ pub struct Finding {
     /// Page on osv.dev or endoflife.date.
     pub url: String,
     /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, `notice`,
-    /// `eol`, or `eol_soon`.
+    /// `eol`, `eol_soon`, `platform_deadline`, or `platform_deadline_soon`.
     pub kind: String,
 }
 
@@ -99,6 +107,7 @@ pub fn scan(
     project_files: &[PathBuf],
     client: &impl HttpClient,
     cache_dir: &Path,
+    data_dir: &Path,
     options: &RadarOptions,
 ) -> Vec<ProjectReport> {
     let mut prepared = project_files
@@ -149,6 +158,12 @@ pub fn scan(
             project.findings.push(eol_finding(&hit));
         }
     }
+    check_android(
+        &mut prepared,
+        data_dir,
+        &today,
+        options.deadline_warning_days,
+    );
     prepared.into_iter().map(Prepared::into_report).collect()
 }
 
@@ -162,9 +177,17 @@ pub fn render_text(projects: &[ProjectReport]) -> String {
     for project in projects {
         out.push_str(&project.id);
         out.push('\n');
-        if project.lockfiles.is_empty() && project.error.is_none() && project.warnings.is_empty() {
+        if project.lockfiles.is_empty()
+            && project.findings.is_empty()
+            && project.error.is_none()
+            && project.warnings.is_empty()
+            && project.target_sdk_note.is_none()
+        {
             out.push_str("  no lockfiles configured\n");
             continue;
+        }
+        if let Some(note) = &project.target_sdk_note {
+            let _ = writeln!(out, "  {note}");
         }
         for lockfile in &project.lockfiles {
             let _ = writeln!(
@@ -240,6 +263,10 @@ struct Prepared {
     withdrawn: Vec<String>,
     lockfiles_checked: bool,
     eol_checked: bool,
+    deadlines_checked: bool,
+    target_sdk_note: Option<String>,
+    android: Option<AndroidConfig>,
+    source_dir: PathBuf,
 }
 
 impl Prepared {
@@ -255,6 +282,8 @@ impl Prepared {
             withdrawn: self.withdrawn,
             lockfiles_checked: self.lockfiles_checked,
             eol_checked: self.eol_checked,
+            deadlines_checked: self.deadlines_checked,
+            target_sdk_note: self.target_sdk_note,
         }
     }
 }
@@ -277,6 +306,10 @@ fn prepare(path: &Path) -> Prepared {
                 withdrawn: Vec::new(),
                 lockfiles_checked: false,
                 eol_checked: false,
+                deadlines_checked: false,
+                target_sdk_note: None,
+                android: None,
+                source_dir: PathBuf::new(),
             };
         }
     };
@@ -284,7 +317,12 @@ fn prepare(path: &Path) -> Prepared {
         .stack
         .as_ref()
         .map_or_default(|stack| stack.components.clone());
+    let android = project
+        .stack
+        .as_ref()
+        .and_then(|stack| stack.android.clone());
     let resolved = resolve_project_paths(path, &project);
+    let source_dir = resolved.source_dir.clone();
     if resolved.lockfiles.is_empty() {
         return Prepared {
             id: project.id,
@@ -299,6 +337,10 @@ fn prepare(path: &Path) -> Prepared {
             withdrawn: Vec::new(),
             lockfiles_checked: false,
             eol_checked: false,
+            deadlines_checked: false,
+            target_sdk_note: None,
+            android,
+            source_dir,
         };
     }
     let mut lockfiles = Vec::new();
@@ -336,6 +378,92 @@ fn prepare(path: &Path) -> Prepared {
         withdrawn: Vec::new(),
         lockfiles_checked: true,
         eol_checked: false,
+        deadlines_checked: false,
+        target_sdk_note: None,
+        android,
+        source_dir,
+    }
+}
+
+fn check_android(projects: &mut [Prepared], data_dir: &Path, today: &str, warning_days: u32) {
+    let Some(catalog) = android_catalog(projects, data_dir) else {
+        return;
+    };
+    for project in projects {
+        if project.error.is_some() {
+            continue;
+        }
+        let Some(config) = project.android.clone() else {
+            continue;
+        };
+        if config.store == AndroidStore::None {
+            continue;
+        }
+        if let Some(warning) = &catalog.warning {
+            project.warnings.push(warning.clone());
+        }
+        if catalog.origin == CatalogOrigin::DataDirectory {
+            project.warnings.push(format!(
+                "using platform deadlines from the data directory (data_version {})",
+                catalog.data_version
+            ));
+        }
+        if let Some(stale) = deadlines::stale_warning(&catalog.data_version, today) {
+            project.warnings.push(stale);
+        }
+        let found = target_sdk::detect(&project.id, &project.source_dir, &config);
+        project.warnings.extend(found.warnings);
+        let Some(level) = found.value else {
+            continue;
+        };
+        let source = found.source.unwrap_or_else(|| "configured".to_owned());
+        project.target_sdk_note = Some(format!("targetSdk {level} ({source})"));
+        project.deadlines_checked = true;
+        for hit in deadlines::compare(
+            &catalog,
+            config.form_factor.as_str(),
+            level,
+            &source,
+            today,
+            warning_days,
+        ) {
+            project.findings.push(Finding {
+                ecosystem: "platform".to_owned(),
+                package: "google-play".to_owned(),
+                version: level.to_string(),
+                id: hit.id,
+                aliases: Vec::new(),
+                severity: hit.severity.to_owned(),
+                summary: hit.summary,
+                fixed_versions: Vec::new(),
+                url: hit.url,
+                kind: hit.kind.to_owned(),
+            });
+        }
+    }
+}
+
+fn android_catalog(projects: &mut [Prepared], data_dir: &Path) -> Option<deadlines::Catalog> {
+    let wanted = |project: &Prepared| {
+        project.error.is_none()
+            && project
+                .android
+                .as_ref()
+                .is_some_and(|config| config.store != AndroidStore::None)
+    };
+    if !projects.iter().any(wanted) {
+        return None;
+    }
+    match deadlines::load(data_dir) {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            for project in projects.iter_mut() {
+                if wanted(project) {
+                    project.error = Some(error.clone());
+                }
+            }
+            None
+        }
     }
 }
 

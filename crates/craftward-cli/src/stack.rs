@@ -5,8 +5,9 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use craftward_core::{
-    ComponentChanges, EditError, NewComponent, ProjectUpdate, add_component, add_lockfile,
-    edit_file, remove_component, remove_lockfile, set_component, utc_date,
+    AndroidChanges, ComponentChanges, EditError, NewComponent, ProjectUpdate, add_component,
+    add_lockfile, edit_file, remove_component, remove_lockfile, set_android, set_component,
+    utc_date,
 };
 
 use crate::{Failure, resolve_project};
@@ -31,6 +32,26 @@ pub(crate) enum Request {
     AddLockfile(PathRequest),
     /// Remove a lockfile path.
     RemoveLockfile(PathRequest),
+    /// Create or change `stack.android`.
+    Android(AndroidRequest),
+}
+
+/// Arguments of `stack android`.
+pub(crate) struct AndroidRequest {
+    /// Project id or path.
+    pub project: String,
+    /// `target_sdk` update. An empty string clears it.
+    pub target_sdk: Update,
+    /// `min_sdk` update. An empty string clears it.
+    pub min_sdk: Update,
+    /// Form factor, when the flag was present.
+    pub form_factor: Option<String>,
+    /// Store, when the flag was present.
+    pub store: Option<String>,
+    /// Paths to add to `detect_from`.
+    pub detect_from: Vec<String>,
+    /// Drop the current `detect_from` list before adding paths.
+    pub clear_detect_from: bool,
 }
 
 /// Arguments of `stack add`.
@@ -102,7 +123,8 @@ pub(crate) fn parse(args: &[OsString]) -> Result<Parsed, String> {
             .collect();
         let known = matches!(
             words.as_slice(),
-            [] | ["add" | "set" | "remove" | "lockfile"] | ["lockfile", "add" | "remove"]
+            [] | ["add" | "set" | "remove" | "lockfile" | "android"]
+                | ["lockfile", "add" | "remove"]
         );
         if known && args.len() == words.len() + 1 {
             return Ok(Parsed::Help(HELP));
@@ -114,6 +136,9 @@ pub(crate) fn parse(args: &[OsString]) -> Result<Parsed, String> {
         "set" => parse_set(&args[1..]).map(|request| Parsed::Run(Request::Set(request))),
         "remove" => parse_remove(&args[1..]).map(|request| Parsed::Run(Request::Remove(request))),
         "lockfile" => parse_lockfile(&args[1..]),
+        "android" => {
+            parse_android(&args[1..]).map(|request| Parsed::Run(Request::Android(request)))
+        }
         other => Err(format!("unrecognized argument: {other}")),
     }
 }
@@ -183,6 +208,25 @@ pub(crate) fn run(
             })
             .map_err(|error| map_edit(&error))?;
             println!("removed lockfile {}", request.path);
+        }
+        Request::Android(request) => {
+            let path = resolve_project(&request.project, workspace)?;
+            edit_file(&path, &today, |project, updated| {
+                set_android(
+                    project,
+                    AndroidChanges {
+                        target_sdk: to_update(&request.target_sdk),
+                        min_sdk: to_update(&request.min_sdk),
+                        form_factor: request.form_factor.as_deref(),
+                        store: request.store.as_deref(),
+                        detect_from: &request.detect_from,
+                        clear_detect_from: request.clear_detect_from,
+                    },
+                    updated,
+                )
+            })
+            .map_err(|error| map_edit(&error))?;
+            println!("updated android settings");
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -285,6 +329,75 @@ fn parse_remove(args: &[OsString]) -> Result<NameRequest, String> {
     })
 }
 
+fn parse_android(args: &[OsString]) -> Result<AndroidRequest, String> {
+    let mut project = None;
+    let mut target_sdk = Update::Keep;
+    let mut min_sdk = Update::Keep;
+    let mut form_factor = None;
+    let mut store = None;
+    let mut detect_from = Vec::new();
+    let mut clear_detect_from = false;
+    let mut index = 0;
+    while index < args.len() {
+        let rendered = args[index].to_string_lossy();
+        match rendered.as_ref() {
+            "--target-sdk" => {
+                target_sdk = update_flag(args, &mut index, "--target-sdk", &target_sdk)?;
+            }
+            "--min-sdk" => min_sdk = update_flag(args, &mut index, "--min-sdk", &min_sdk)?,
+            "--form-factor" => {
+                form_factor = Some(one_value(
+                    args,
+                    &mut index,
+                    "--form-factor",
+                    form_factor.is_some(),
+                )?);
+            }
+            "--store" => store = Some(one_value(args, &mut index, "--store", store.is_some())?),
+            "--detect-from" => {
+                detect_from.push(required(args, &mut index, "--detect-from")?);
+            }
+            "--clear-detect-from" => {
+                if clear_detect_from {
+                    return Err("duplicate option: --clear-detect-from".to_owned());
+                }
+                clear_detect_from = true;
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unrecognized argument: {other}"));
+            }
+            _ if project.is_some() => return Err("too many arguments".to_owned()),
+            _ => project = Some(rendered.into_owned()),
+        }
+        index += 1;
+    }
+    Ok(AndroidRequest {
+        project: project.ok_or_else(|| "stack android needs a project".to_owned())?,
+        target_sdk,
+        min_sdk,
+        form_factor,
+        store,
+        detect_from,
+        clear_detect_from,
+    })
+}
+
+fn one_value(
+    args: &[OsString],
+    index: &mut usize,
+    name: &str,
+    present: bool,
+) -> Result<String, String> {
+    if present {
+        return Err(format!("duplicate option: {name}"));
+    }
+    let value = required(args, index, name)?;
+    if value.is_empty() {
+        return Err(format!("{name} needs a value"));
+    }
+    Ok(value)
+}
+
 fn parse_lockfile(args: &[OsString]) -> Result<Parsed, String> {
     if args.is_empty() {
         return Err("stack lockfile needs add or remove".to_owned());
@@ -352,14 +465,20 @@ Usage:
   craftward stack remove <PROJECT> <NAME>
   craftward stack lockfile add <PROJECT> <PATH>
   craftward stack lockfile remove <PROJECT> <PATH>
+  craftward stack android <PROJECT> [--target-sdk N] [--min-sdk N]
+      [--form-factor phone|automotive|wear|tv|xr] [--store google_play|none]
+      [--detect-from PATH]... [--clear-detect-from]
 
 Components are matched by name, ignoring letter case. An empty --version,
---note, or --eol-product removes that field. The file is written only when
-the result is valid, and updated is set to today.
+--note, --eol-product, --target-sdk, or --min-sdk removes that field.
+--detect-from may be repeated and appends a path. --clear-detect-from
+drops the current list first. The file is written only when the result is
+valid, and updated is set to today.
 
 Exit status is 0 on success, 1 when the name or file is wrong, and 2 when
 the command line is wrong.
 
 Example:
   craftward stack add harbor-light --kind runtime --name Node.js --version 22
-  craftward stack lockfile add harbor-light package-lock.json";
+  craftward stack lockfile add harbor-light package-lock.json
+  craftward stack android harbor-light --detect-from app/build.gradle.kts";

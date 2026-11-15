@@ -121,6 +121,61 @@
     "status"
   ],
   "$defs": {
+    "AndroidConfig": {
+      "description": "Android settings used by the Play target-API check.",
+      "type": "object",
+      "properties": {
+        "detect_from": {
+          "description": "Gradle and version-catalog files, relative to `source_dir`.\n\nThe same rules as `lockfiles`: relative, and no `..` segment.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "form_factor": {
+          "description": "Which Play device rules apply. The default is [`FormFactor::Phone`].",
+          "$ref": "#/$defs/FormFactor"
+        },
+        "min_sdk": {
+          "description": "`minSdk` recorded for the project. The Play check does not use it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "store": {
+          "description": "`google_play` runs the check. `none` skips it. The default is Google Play.",
+          "$ref": "#/$defs/AndroidStore"
+        },
+        "target_sdk": {
+          "description": "`targetSdk` to compare with Play deadlines. When set, files are not read.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AndroidStore": {
+      "description": "Whether the Play deadline check runs.",
+      "oneOf": [
+        {
+          "description": "Compare `targetSdk` with the Google Play deadlines.",
+          "type": "string",
+          "const": "google_play"
+        },
+        {
+          "description": "Do not compare `targetSdk`.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
     "Component": {
       "description": "One piece of a project's stack.",
       "type": "object",
@@ -203,6 +258,36 @@
           "description": "A component that does not fit the other roles.",
           "type": "string",
           "const": "other"
+        }
+      ]
+    },
+    "FormFactor": {
+      "description": "Device family whose Play deadline applies.",
+      "oneOf": [
+        {
+          "description": "Phones and tablets. This is the default.",
+          "type": "string",
+          "const": "phone"
+        },
+        {
+          "description": "Android Automotive OS.",
+          "type": "string",
+          "const": "automotive"
+        },
+        {
+          "description": "Wear OS.",
+          "type": "string",
+          "const": "wear"
+        },
+        {
+          "description": "Android TV.",
+          "type": "string",
+          "const": "tv"
+        },
+        {
+          "description": "Android XR.",
+          "type": "string",
+          "const": "xr"
         }
       ]
     },
@@ -408,6 +493,17 @@
       "description": "The technical stack recorded for a project.",
       "type": "object",
       "properties": {
+        "android": {
+          "description": "Android `targetSdk` settings. Absent means Play deadlines are not checked.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AndroidConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "components": {
           "description": "Named pieces of the stack, such as a language or a hosted service.",
           "type": "array",

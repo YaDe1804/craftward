@@ -127,6 +127,121 @@ pub struct Stack {
     /// directory. Each path must be relative. Absolute paths and `..`
     /// segments are rejected.
     pub lockfiles: Vec<String>,
+    /// Android `targetSdk` settings. Absent means Play deadlines are not checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<AndroidConfig>,
+}
+
+/// Android settings used by the Play target-API check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AndroidConfig {
+    /// `targetSdk` to compare with Play deadlines. When set, files are not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_sdk: Option<u32>,
+    /// `minSdk` recorded for the project. The Play check does not use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_sdk: Option<u32>,
+    /// Which Play device rules apply. The default is [`FormFactor::Phone`].
+    #[serde(default, skip_serializing_if = "is_phone")]
+    pub form_factor: FormFactor,
+    /// `google_play` runs the check. `none` skips it. The default is Google Play.
+    #[serde(default, skip_serializing_if = "is_google_play")]
+    pub store: AndroidStore,
+    /// Gradle and version-catalog files, relative to `source_dir`.
+    ///
+    /// The same rules as `lockfiles`: relative, and no `..` segment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detect_from: Vec<String>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_phone(value: &FormFactor) -> bool {
+    *value == FormFactor::Phone
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_google_play(value: &AndroidStore) -> bool {
+    *value == AndroidStore::GooglePlay
+}
+
+/// Device family whose Play deadline applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FormFactor {
+    /// Phones and tablets. This is the default.
+    #[default]
+    Phone,
+    /// Android Automotive OS.
+    Automotive,
+    /// Wear OS.
+    Wear,
+    /// Android TV.
+    Tv,
+    /// Android XR.
+    Xr,
+}
+
+impl FormFactor {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Automotive => "automotive",
+            Self::Wear => "wear",
+            Self::Tv => "tv",
+            Self::Xr => "xr",
+        }
+    }
+
+    /// Parses a stored word.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "phone" => Some(Self::Phone),
+            "automotive" => Some(Self::Automotive),
+            "wear" => Some(Self::Wear),
+            "tv" => Some(Self::Tv),
+            "xr" => Some(Self::Xr),
+            _ => None,
+        }
+    }
+}
+
+/// Whether the Play deadline check runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AndroidStore {
+    /// Compare `targetSdk` with the Google Play deadlines.
+    #[default]
+    GooglePlay,
+    /// Do not compare `targetSdk`.
+    None,
+}
+
+impl AndroidStore {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "google_play",
+            Self::None => "none",
+        }
+    }
+
+    /// Parses a stored word.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "google_play" => Some(Self::GooglePlay),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
 }
 
 /// One piece of a project's stack.

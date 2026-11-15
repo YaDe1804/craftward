@@ -49,6 +49,8 @@ pub(crate) struct Request {
     pub strict: bool,
     /// Days ahead that still count as `eol_soon`.
     pub eol_warning_days: u32,
+    /// Days ahead that still count as `platform_deadline_soon`.
+    pub deadline_warning_days: u32,
 }
 
 pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
@@ -66,6 +68,7 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
     let mut data_dir = None;
     let mut strict = false;
     let mut eol_warning_days = None;
+    let mut deadline_warning_days = None;
     let mut index = 0;
     while index < args.len() {
         let rendered = args[index].to_string_lossy();
@@ -107,8 +110,20 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
                 strict = true;
             }
             "--eol-warning-days" => {
-                eol_warning_days =
-                    Some(warning_days(args, &mut index, eol_warning_days.is_some())?);
+                eol_warning_days = Some(warning_days(
+                    args,
+                    &mut index,
+                    "--eol-warning-days",
+                    eol_warning_days.is_some(),
+                )?);
+            }
+            "--deadline-warning-days" => {
+                deadline_warning_days = Some(warning_days(
+                    args,
+                    &mut index,
+                    "--deadline-warning-days",
+                    deadline_warning_days.is_some(),
+                )?);
             }
             other if other.starts_with('-') => {
                 return Err(format!("unrecognized argument: {other}"));
@@ -126,6 +141,7 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
         data_dir,
         strict,
         eol_warning_days: eol_warning_days.unwrap_or(90),
+        deadline_warning_days: deadline_warning_days.unwrap_or(180),
     }))
 }
 
@@ -163,21 +179,22 @@ fn one_directory(
 fn warning_days(
     args: &[std::ffi::OsString],
     index: &mut usize,
+    name: &str,
     present: bool,
 ) -> Result<u32, String> {
     if present {
-        return Err("duplicate option: --eol-warning-days".to_owned());
+        return Err(format!("duplicate option: {name}"));
     }
     let Some(value) = args.get(*index + 1) else {
-        return Err("--eol-warning-days needs a number".to_owned());
+        return Err(format!("{name} needs a number"));
     };
     let text = value.to_string_lossy();
     if text.starts_with('-') {
-        return Err("--eol-warning-days needs a number".to_owned());
+        return Err(format!("{name} needs a number"));
     }
     let days = text
         .parse::<u32>()
-        .map_err(|_| "--eol-warning-days needs a non-negative number".to_owned())?;
+        .map_err(|_| format!("{name} needs a non-negative number"))?;
     *index += 1;
     Ok(days)
 }
@@ -188,6 +205,8 @@ pub(crate) fn run(
 ) -> Result<ExitCode, Failure> {
     let cache_dir = locate_cache(&ProcessHost, request.cache_dir.as_deref())
         .map_err(|error| Failure::Data(error.to_string()))?;
+    let data_dir = locate_data(&ProcessHost, request.data_dir.as_deref())
+        .map_err(|error| Failure::Data(error.to_string()))?;
     let files = project_files(&request.projects, workspace)?;
     let started = unix_now();
     let refresh = matches!(request.mode, ScanMode::Refresh);
@@ -197,17 +216,16 @@ pub(crate) fn run(
         offline,
         now: started,
         eol_warning_days: request.eol_warning_days,
+        deadline_warning_days: request.deadline_warning_days,
     };
     let reports = if offline {
-        scan(&files, &OfflineClient, &cache_dir, &options)
+        scan(&files, &OfflineClient, &cache_dir, &data_dir, &options)
     } else {
         let client =
             craftward_net::UreqClient::new(&format!("craftward/{}", craftward_core::version()))
                 .map_err(Failure::Data)?;
-        scan(&files, &client, &cache_dir, &options)
+        scan(&files, &client, &cache_dir, &data_dir, &options)
     };
-    let data_dir = locate_data(&ProcessHost, request.data_dir.as_deref())
-        .map_err(|error| Failure::Data(error.to_string()))?;
     let mut store = SqliteStore::open(&data_dir.join(DATABASE_FILE))
         .map_err(|error| Failure::Data(error.to_string()))?;
     let ledgers = apply_reports(&mut store, &reports, started, unix_now(), offline)
@@ -269,7 +287,7 @@ Look up known vulnerabilities for the packages in project lockfiles.
 
 Usage:
   craftward radar [PROJECT...] [--refresh] [--offline] [--json] [--all]
-      [--strict] [--eol-warning-days N]
+      [--strict] [--eol-warning-days N] [--deadline-warning-days N]
       [--cache-dir DIR] [--data-dir DIR]
 
 With no PROJECT, every project in the workspace is checked. PROJECT is a
@@ -277,13 +295,17 @@ workspace id or a project path, with the same rules as roadmap. --refresh
 ignores cached answers. --offline never contacts OSV or endoflife.date.
 --all includes ignored findings in the list. --json prints the same report
 as JSON. --eol-warning-days sets how far ahead a support end counts as
-eol_soon. The default is 90. Findings are stored in the data directory.
+eol_soon. The default is 90. --deadline-warning-days sets how far ahead a
+Play target-API deadline counts as platform_deadline_soon. The default is
+180. Findings are stored in the data directory. Play deadlines need no
+network.
 
 Exit status is 0 when no actionable finding is open, 3 when a vulnerability,
-malicious package, or past support end is open, 1 when a project could not
-be checked, and 2 when the command line is wrong. Notices and eol_soon
-count toward status 3 only with --strict. An error takes priority over an
-open finding. Ignored findings do not change the status.
+malicious package, past support end, or past Play deadline is open, 1 when a
+project could not be checked, and 2 when the command line is wrong. Notices,
+eol_soon, and platform_deadline_soon count toward status 3 only with
+--strict. An error takes priority over an open finding. Ignored findings do
+not change the status.
 
 Example:
   craftward radar harbor-light

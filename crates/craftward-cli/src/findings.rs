@@ -300,10 +300,17 @@ fn parse_id_command(
 
 fn parse_kind(value: &str) -> Result<String, String> {
     match value {
-        "vulnerability" | "malicious" | "unmaintained" | "unsound" | "notice" | "eol"
-        | "eol_soon" => Ok(value.to_owned()),
+        "vulnerability"
+        | "malicious"
+        | "unmaintained"
+        | "unsound"
+        | "notice"
+        | "eol"
+        | "eol_soon"
+        | "platform_deadline"
+        | "platform_deadline_soon" => Ok(value.to_owned()),
         _ => Err(
-            "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, or eol_soon"
+            "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, eol_soon, platform_deadline, or platform_deadline_soon"
                 .to_owned(),
         ),
     }

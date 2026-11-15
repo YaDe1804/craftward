@@ -70,6 +70,8 @@ fn report(findings: Vec<Finding>, error: Option<&str>) -> ProjectReport {
         withdrawn: Vec::new(),
         lockfiles_checked: true,
         eol_checked: false,
+        deadlines_checked: false,
+        target_sdk_note: None,
     }
 }
 
@@ -85,6 +87,8 @@ fn report_without_lockfiles() -> ProjectReport {
         withdrawn: Vec::new(),
         lockfiles_checked: false,
         eol_checked: false,
+        deadlines_checked: false,
+        target_sdk_note: None,
     }
 }
 
@@ -485,5 +489,237 @@ fn a_version_2_file_gains_kind_and_keeps_a_backup() {
         )
         .unwrap();
     connection.close().unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_version_3_file_accepts_platform_deadlines_and_keeps_a_backup() {
+    let root = scratch("v3");
+    let path = root.join("craftward.db");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE runs (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                offline INTEGER NOT NULL,
+                packages_checked INTEGER NOT NULL,
+                open_count INTEGER NOT NULL,
+                new_count INTEGER NOT NULL,
+                resolved_count INTEGER NOT NULL,
+                error TEXT,
+                evaluated INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE findings (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                vulnerability_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                aliases TEXT NOT NULL,
+                fixed_versions TEXT NOT NULL,
+                state TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                resolved_at TEXT,
+                ignore_reason TEXT,
+                ignore_until TEXT,
+                kind TEXT NOT NULL DEFAULT 'vulnerability'
+            );
+            INSERT INTO findings (
+                project_id, ecosystem, package_name, vulnerability_id, version, severity,
+                summary, aliases, fixed_versions, state, first_seen, last_seen, kind
+            ) VALUES (
+                'demo', 'endoflife', 'postgresql', 'EOL:postgresql:16', '16', 'high',
+                'old', '[]', '[]', 'open', '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'eol'
+            );
+            CREATE TABLE finding_events (
+                id INTEGER PRIMARY KEY,
+                finding_id INTEGER NOT NULL REFERENCES findings(id),
+                kind TEXT NOT NULL,
+                at TEXT NOT NULL,
+                reason TEXT NOT NULL
+            );
+            INSERT INTO finding_events (finding_id, kind, at, reason)
+                VALUES (1, 'discovered', '1970-01-01T00:00:00Z', '');",
+        )
+        .unwrap();
+    connection
+        .pragma_update(None, "user_version", 3_i64)
+        .unwrap();
+    connection.close().unwrap();
+    SqliteStore::open(&path).unwrap();
+    assert!(root.join("craftward.db.bak-v3").exists());
+    let connection = Connection::open(&path).unwrap();
+    let kind: String = connection
+        .query_row(
+            "SELECT kind FROM findings WHERE vulnerability_id = 'EOL:postgresql:16'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(kind, "eol");
+    connection
+        .execute(
+            "INSERT INTO findings (
+                project_id, ecosystem, package_name, vulnerability_id, version, severity,
+                summary, aliases, fixed_versions, state, kind, first_seen, last_seen
+            ) VALUES (
+                'demo', 'platform', 'google-play', 'PLAY:phone:2026-08-31:existing_apps',
+                '30', 'high', 'late', '[]', '[]', 'open', 'platform_deadline',
+                '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z'
+            )",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO finding_events (finding_id, kind, at, reason)
+             VALUES (1, 'deadline_passed', '1970-01-01T00:00:00Z', '')",
+            [],
+        )
+        .unwrap();
+    connection.close().unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+fn play(kind: &str, summary: &str, version: &str) -> Finding {
+    Finding {
+        ecosystem: "platform".to_owned(),
+        package: "google-play".to_owned(),
+        version: version.to_owned(),
+        id: "PLAY:phone:new_apps_and_updates".to_owned(),
+        aliases: Vec::new(),
+        severity: if kind == "platform_deadline" {
+            "high"
+        } else {
+            "medium"
+        }
+        .to_owned(),
+        summary: summary.to_owned(),
+        fixed_versions: Vec::new(),
+        url: "https://example.com/play".to_owned(),
+        kind: kind.to_owned(),
+    }
+}
+
+fn deadline_report(findings: Vec<Finding>) -> ProjectReport {
+    let mut report = report(findings, None);
+    report.lockfiles.clear();
+    report.lockfiles_checked = false;
+    report.deadlines_checked = true;
+    report
+}
+
+#[test]
+fn a_deadline_that_arrives_keeps_the_same_finding() {
+    let root = scratch("passed");
+    let mut store = SqliteStore::open(&root.join("craftward.db")).unwrap();
+    let soon = play(
+        "platform_deadline_soon",
+        "targetSdk 30 is below required 36 for new apps and updates (deadline 2027-02-01)",
+        "30",
+    );
+    let first = apply_reports(&mut store, &[deadline_report(vec![soon])], NOW, NOW, true)
+        .unwrap()
+        .remove(0);
+    let id = first.open[0].record_id;
+    assert!(first.open[0].new);
+    let passed = play(
+        "platform_deadline",
+        "targetSdk 30 is below required 36 for new apps and updates (deadline 2027-02-01)",
+        "30",
+    );
+    let second = apply_reports(
+        &mut store,
+        &[deadline_report(vec![passed])],
+        LATER,
+        LATER,
+        true,
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(second.open.len(), 1);
+    assert_eq!(second.open[0].record_id, id);
+    assert!(!second.open[0].new);
+    assert_eq!(second.open[0].kind, "platform_deadline");
+    assert_eq!(second.open[0].severity, "high");
+    let (_finding, events) = show_finding(&mut store, id).unwrap();
+    assert!(
+        events.iter().any(|event| event.kind == "deadline_passed"),
+        "{events:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_higher_requirement_updates_the_finding_until_the_sdk_meets_it() {
+    let root = scratch("raised");
+    let mut store = SqliteStore::open(&root.join("craftward.db")).unwrap();
+    let first = apply_reports(
+        &mut store,
+        &[deadline_report(vec![play(
+            "platform_deadline",
+            "required 35 (deadline 2025-08-31)",
+            "30",
+        )])],
+        NOW,
+        NOW,
+        true,
+    )
+    .unwrap()
+    .remove(0);
+    let id = first.open[0].record_id;
+    let second = apply_reports(
+        &mut store,
+        &[deadline_report(vec![play(
+            "platform_deadline",
+            "required 36 (deadline 2026-08-31)",
+            "30",
+        )])],
+        LATER,
+        LATER,
+        true,
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(second.open.len(), 1);
+    assert_eq!(second.open[0].record_id, id);
+    assert!(!second.open[0].new);
+    assert!(second.open[0].summary.contains("required 36"));
+    let still = apply_reports(
+        &mut store,
+        &[deadline_report(vec![play(
+            "platform_deadline",
+            "required 36 (deadline 2026-08-31)",
+            "35",
+        )])],
+        LATER + 1,
+        LATER + 1,
+        true,
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(still.open[0].record_id, id);
+    assert_eq!(still.resolved_count, 0);
+    let cleared = apply_reports(
+        &mut store,
+        &[deadline_report(Vec::new())],
+        LATER + 2,
+        LATER + 2,
+        true,
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(cleared.open.len(), 0);
+    assert_eq!(cleared.resolved_count, 1);
+    let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].state, FindingState::Resolved);
     let _ = fs::remove_dir_all(root);
 }

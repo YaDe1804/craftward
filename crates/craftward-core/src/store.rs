@@ -11,7 +11,7 @@ use serde::Serialize;
 pub const DATABASE_FILE: &str = "craftward.db";
 
 /// Schema version this build knows how to write.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Lifecycle state of one finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +64,10 @@ pub enum FindingKind {
     Eol,
     /// The release cycle's support end is inside the warning window.
     EolSoon,
+    /// A Play target-API deadline is today or in the past.
+    PlatformDeadline,
+    /// A Play target-API deadline is inside the warning window.
+    PlatformDeadlineSoon,
 }
 
 impl FindingKind {
@@ -78,6 +82,8 @@ impl FindingKind {
             Self::Notice => "notice",
             Self::Eol => "eol",
             Self::EolSoon => "eol_soon",
+            Self::PlatformDeadline => "platform_deadline",
+            Self::PlatformDeadlineSoon => "platform_deadline_soon",
         }
     }
 
@@ -92,6 +98,8 @@ impl FindingKind {
             "notice" => Some(Self::Notice),
             "eol" => Some(Self::Eol),
             "eol_soon" => Some(Self::EolSoon),
+            "platform_deadline" => Some(Self::PlatformDeadline),
+            "platform_deadline_soon" => Some(Self::PlatformDeadlineSoon),
             _ => None,
         }
     }
@@ -100,8 +108,12 @@ impl FindingKind {
     #[must_use]
     pub const fn affects_exit(self, strict: bool) -> bool {
         match self {
-            Self::Vulnerability | Self::Malicious | Self::Eol => true,
-            Self::Unmaintained | Self::Unsound | Self::Notice | Self::EolSoon => strict,
+            Self::Vulnerability | Self::Malicious | Self::Eol | Self::PlatformDeadline => true,
+            Self::Unmaintained
+            | Self::Unsound
+            | Self::Notice
+            | Self::EolSoon
+            | Self::PlatformDeadlineSoon => strict,
         }
     }
 
@@ -110,7 +122,11 @@ impl FindingKind {
     pub const fn is_notice(self) -> bool {
         matches!(
             self,
-            Self::Unmaintained | Self::Unsound | Self::Notice | Self::EolSoon
+            Self::Unmaintained
+                | Self::Unsound
+                | Self::Notice
+                | Self::EolSoon
+                | Self::PlatformDeadlineSoon
         )
     }
 }
@@ -198,7 +214,8 @@ pub struct NewFinding {
 /// One row of a finding's history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoredEvent {
-    /// `discovered`, `ignored`, `reopened`, `resolved`, `reappeared`, or `withdrawn`.
+    /// `discovered`, `ignored`, `reopened`, `resolved`, `reappeared`,
+    /// `withdrawn`, or `deadline_passed`.
     pub kind: String,
     /// When the event was recorded.
     pub at: String,

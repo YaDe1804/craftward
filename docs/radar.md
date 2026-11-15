@@ -139,6 +139,57 @@ network fails that project and changes nothing.
 When an end-of-life check ran, the text report includes
 `endoflife.date data, MIT License, https://endoflife.date`.
 
+## Play target API level
+
+A project with `stack.android` is checked against the Google Play target
+API deadlines. The check does not use the network. The dates come from
+[`data/platform-deadlines.json`](platform-deadlines.md), which is compiled
+into the program. A `platform-deadlines.json` in the data directory is
+used instead when it is valid and its `data_version` is newer. The report
+then says `using platform deadlines from the data directory (data_version
+YYYY-MM-DD)`. An older file is ignored. An invalid file is a warning and
+the built-in file is used. When `data_version` is more than 365 days
+before today, the report warns that the deadline data may be out of date.
+
+`store` `none` skips the check and prints nothing about it. A project
+without `stack.android` is not checked.
+
+`targetSdk` is chosen in this order:
+
+1. `stack.android.target_sdk`, shown as `configured`.
+2. Otherwise the files in `detect_from`, relative to `source_dir`. The
+   usual Gradle forms are `targetSdk = 35`, `targetSdk 35`,
+   `targetSdkVersion 35`, and `targetSdkVersion = 35`, plus a version
+   catalog reference such as `libs.versions.targetSdk.get().toInt()`.
+   The reference is resolved from the `[versions]` table of a `*.toml`
+   file that is also listed in `detect_from`. Comments in Gradle and TOML
+   files are ignored.
+3. When the files disagree, the highest value is used and the report names
+   the other locations.
+4. When nothing is found, or an expression cannot be resolved (for example
+   `flutter.targetSdkVersion`), the warning is `could not determine
+   targetSdk for <project>; set stack.android.target_sdk` and there is no
+   finding. Existing Play findings are left as they are.
+
+The report prints `targetSdk N (<source>)`. `<source>` is `configured` or
+`path:line`. The same source is in the finding summary. `min_sdk` is
+stored and is not compared.
+
+A deadline applies when its form factor matches and `targetSdk` is lower
+than the required API level. For one form factor and one requirement,
+only the newest row whose deadline is today or earlier is a
+`platform_deadline` (severity `high`). Older rows of that pair are not
+reported. When that row is already met, or there is no such row, the next
+future row is `platform_deadline_soon` (severity `medium`) if it falls
+inside `--deadline-warning-days` (default 180). A later future row is not
+used in its place. The finding id is `PLAY:<form factor>:<requirement>`.
+The required level, the deadline, and the kind are updated on that same
+finding. A change from `platform_deadline_soon` to `platform_deadline`
+records a `deadline_passed` event. The finding is resolved only when
+`targetSdk` meets the row that currently governs that id. The ecosystem is
+`platform` and the package name is `google-play`. The link is the source
+URL of the governing row. Different requirements can both apply at once.
+
 ## Cache
 
 Results are JSON files. The directory is `--cache-dir`, then
@@ -190,8 +241,9 @@ On a successful check, in one transaction:
   `resolved`, becomes `resolved`, but only inside the ecosystems this
   check actually compared. Lockfile ecosystems are compared only when
   `stack.lockfiles` is not empty. `endoflife` is compared only when a
-  component version was checked. An ignored finding that disappeared
-  from a compared ecosystem is included.
+  component version was checked. `platform` is compared only when a
+  targetSdk was found and compared with the deadlines. An ignored finding
+  that disappeared from a compared ecosystem is included.
 - The run is appended, including how many packages were checked and how
   many findings are open, new, or newly resolved.
 
@@ -199,14 +251,16 @@ A failed check (the lockfile cannot be read, or there is no network and no
 cache) does not change that project's findings. The run is still appended,
 with `error` set and the counters at zero.
 
-A project with no lockfiles and no versioned component is not a check.
-Its findings stay as they are, including open and ignored ones. The run
-is appended with `evaluated` 0 and `error` null. `open_count` is how many
-findings were already open. The other counters are zero. `error` stays
-empty because nothing failed: there was nothing to compare. A project
-with no lockfiles but a versioned component still checks end of support.
-That run has `evaluated` 1. Its OSV findings stay until lockfiles are
-configured again.
+A project with no lockfiles, no versioned component, and no compared
+targetSdk is not a check. Its findings stay as they are, including open
+and ignored ones. The run is appended with `evaluated` 0 and `error`
+null. `open_count` is how many findings were already open. The other
+counters are zero. `error` stays empty because nothing failed: there was
+nothing to compare. A project with no lockfiles but a versioned component
+still checks end of support. A project with `stack.android` still checks
+Play deadlines when a targetSdk was found. That run has `evaluated` 1.
+Its OSV findings stay until lockfiles are configured again, and its Play
+findings stay until a targetSdk is compared again.
 
 `findings ignore` stores the reason and an optional last day. `findings
 reopen` makes the finding `open` and clears the ignore. Reopening a
@@ -216,14 +270,17 @@ finding that is already open is an error.
 
 Each project starts with its id. Each lockfile that was read is one line,
 `lockfile <path>: queried N, skipped M`. Warnings and errors are indented
-under the project. A project with an empty lockfile list and no warning or
-error prints `no lockfiles configured`. When that project still has an
-open or ignored finding that did not come from endoflife.date, the report
-adds `existing findings are unchanged until lockfiles are configured` and
-still lists the open findings. An empty workspace prints `no projects`.
+under the project. A project with an empty lockfile list, no warning, no
+error, and no compared targetSdk prints `no lockfiles configured`. When
+a targetSdk was found, the report prints `targetSdk N (<source>)`. When
+that project still has an open or ignored finding that did not come from
+endoflife.date or from a Play deadline, the report adds `existing findings
+are unchanged until lockfiles are configured` and still lists the open
+findings. An empty workspace prints `no projects`.
 
-Open findings of kind `vulnerability`, `malicious`, and `eol` are listed
-first. `unmaintained`, `unsound`, `notice`, and `eol_soon` follow under a
+Open findings of kind `vulnerability`, `malicious`, `eol`, and
+`platform_deadline` are listed first. `unmaintained`, `unsound`,
+`notice`, `eol_soon`, and `platform_deadline_soon` follow under a
 `notices:` heading. Each group is ordered by severity (`critical`, `high`,
 `medium`, `low`, `unknown`), then by package, version, and vulnerability
 id. A finding inserted by this run is marked `new`. Each one prints the
@@ -284,8 +341,8 @@ stream and produce no JSON document.
 by `findings`. Without `--all`, `findings` lists only open findings.
 `--all` appends the ignored ones. `ignored` and `resolved` are the same
 counts as in the text report. `kind` is the advisory kind. `evaluated` is
-false when neither lockfiles nor end of support were compared, or the
-check failed. `error` is a string only when the check
+false when lockfiles, end of support, and Play deadlines were not
+compared, or the check failed. `error` is a string only when the check
 failed, and null when nothing was evaluated. `stale_cache_from` is
 `YYYY-MM-DD HH:MM:SS UTC` when a network failure was answered from the cache.
 
@@ -295,7 +352,7 @@ for the database id and `vulnerability` for the OSV id, plus `project_id`,
 and `ignore_until`. `findings show --json` prints `{ "finding": { ... },
 "events": [ { "kind": "discovered", "at": "YYYY-MM-DDTHH:MM:SSZ", "reason": "" } ] }`.
 Event kinds are `discovered`, `ignored`, `reopened`, `resolved`,
-`reappeared`, and `withdrawn`.
+`reappeared`, `withdrawn`, and `deadline_passed`.
 
 ## Exit status
 
@@ -304,8 +361,9 @@ Event kinds are `discovered`, `ignored`, `reopened`, `resolved`,
 | 0 | No actionable finding is open. |
 | 1 | A project could not be checked, or the cache or data directory could not be chosen. |
 | 2 | The command line is wrong. |
-| 3 | An open finding is a `vulnerability`, `malicious`, or `eol`. With `--strict`, an open `unmaintained`, `unsound`, `notice`, or `eol_soon` also counts. |
+| 3 | An open finding is a `vulnerability`, `malicious`, `eol`, or `platform_deadline`. With `--strict`, an open `unmaintained`, `unsound`, `notice`, `eol_soon`, or `platform_deadline_soon` also counts. |
 
 Status 1 wins over status 3. A project with no lockfiles still exits 3 when
-one of its stored actionable findings is open. Notices and `eol_soon` do
-not, unless `--strict` is set. `findings` does not use status 3.
+one of its stored actionable findings is open. Notices, `eol_soon`, and
+`platform_deadline_soon` do not, unless `--strict` is set. `findings` does
+not use status 3.
