@@ -33,7 +33,8 @@ cargo run -p craftward-app -- --version
 ```
 
 Both executables print their name and version. `--version` prints the same
-line. `craftward --help` describes the commands.
+line. `craftward --help` describes the commands. The CLI parser is clap
+(Derive API); see [ADR 0022](docs/adr/0022-command-line-parsing-with-clap.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when
@@ -62,9 +63,9 @@ Checks used by CI:
 
 ```console
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo deny check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo deny --locked check
 ```
 
 `cargo deny` is not part of the Rust toolchain. CI runs cargo-deny 0.20.2.

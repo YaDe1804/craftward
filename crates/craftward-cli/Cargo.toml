@@ -15,6 +15,7 @@ name = "craftward"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 craftward-core.workspace = true
 craftward-net.workspace = true
 craftward-store.workspace = true

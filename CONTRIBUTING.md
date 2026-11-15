@@ -75,6 +75,21 @@ licensed under a license allowed by `deny.toml`, and recorded in a new or
 updated ADR that names the crate and the reason it was accepted. CI enforces
 the license and ban policy.
 
+## Adding a CLI command
+
+Command-line parsing lives in `crates/craftward-cli/src/cli.rs` and uses clap
+Derive ([ADR 0022](docs/adr/0022-command-line-parsing-with-clap.md)). To add a
+command:
+
+1. Add a variant (or nested `Subcommand` enum) on `Command` in `cli.rs`, with
+   `about` / `long_about` text and typed fields for options and arguments.
+2. Wire the variant in `run` in `main.rs` (or the matching module's `run`) so
+   it calls into `craftward-core`.
+3. Keep clap out of `craftward-core` and `craftward-app`. Prefer core enums and
+   `value_parser` helpers for allowed values.
+4. Run `Cli::command().debug_assert()` coverage (the unit test in `cli.rs`) and
+   the CLI integration tests.
+
 ## Pull requests
 
 Keep changes focused. Describe why the change is needed. All CI jobs must pass.

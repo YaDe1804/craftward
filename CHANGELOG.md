@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirements instead of `=`, CI Clippy, tests, and `cargo deny` run with
   `--locked`, and Dependabot opens weekly grouped update pull requests for
   Cargo and GitHub Actions.
+- SeQu check F6 (SQ-08): `craftward-cli` parses arguments with clap 4.6.7
+  (Derive API; no default features; `std`, `derive`, `help`, `usage`,
+  `error-context`, `suggestions`). The hand-written parser is removed.
 
 ### Added
 

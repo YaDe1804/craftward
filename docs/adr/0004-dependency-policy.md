@@ -6,9 +6,12 @@
 ## Decision
 
 Own the application code. Use third-party libraries only when necessary, after
-review, under a permissive license, and enforce that policy in CI.
+review, under a permissive license, and enforce that policy in CI. Accepted
+crates are recorded in ADRs (for example ADR 0011 for serde/`serde_json`/
+schemars, ADR 0022 for clap in `craftward-cli`).
 
 ## Rationale
 
 Third-party libraries are used only when necessary, reviewed, permissively
-licensed, and enforced in CI.
+licensed, and enforced in CI. Each addition needs an ADR entry and a
+`deny.toml` license check.

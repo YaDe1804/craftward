@@ -429,8 +429,11 @@ fn every_edit_command_has_help() {
         );
         assert!(text.contains("Usage:"), "{command:?}: {text}");
     }
+    // clap treats `--help` as a help request even when other arguments are
+    // present, so this exits 0 with help text instead of a usage error.
     let extra = run(&root, &["task", "add", "extra", "--help"]);
-    assert_eq!(extra.status.code(), Some(2), "{}", stderr(&extra));
+    assert!(extra.status.success(), "{}", stderr(&extra));
+    assert!(stdout(&extra).contains("Usage:"), "{}", stdout(&extra));
     let _ = fs::remove_dir_all(root);
 }
 

@@ -30,8 +30,9 @@ cargo run -p craftward-core --features schema --example generate-schema
 
 The running tools do not need that generator. The schema file is checked in,
 and validation uses `serde` and `serde_json`. Dates stay hand-written strings.
-Errors implement `std::error::Error` directly. The command-line parser stays
-in the standard library.
+Errors implement `std::error::Error` directly. The command-line parser for
+`craftward-cli` later moved to clap; see
+[ADR 0022](0022-command-line-parsing-with-clap.md).
 
 A hand-written JSON parser was considered and rejected. JSON strings, escapes,
 numbers, and source locations are easy to get wrong, and a separate parser
