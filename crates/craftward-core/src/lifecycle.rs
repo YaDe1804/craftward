@@ -7,11 +7,10 @@ use serde::Serialize;
 
 use crate::date::{format_iso8601, utc_day};
 use crate::deadlines::page_url;
-use crate::osv::severity_rank;
 use crate::radar::{Finding, LockfileReport, ProjectReport};
 use crate::store::{
-    FindingKind, FindingState, NewFinding, NewRun, StateFilter, StateStore, StoreError,
-    StoreSession, StoredEvent, StoredFinding,
+    EventKind, FindingKind, FindingState, NewFinding, NewRun, Severity, StateFilter, StateStore,
+    StoreError, StoreSession, StoredEvent, StoredFinding,
 };
 
 /// One project after its findings have been stored.
@@ -67,8 +66,8 @@ pub struct LedgerFinding {
     pub vulnerability_id: String,
     /// Aliases.
     pub aliases: Vec<String>,
-    /// Severity word.
-    pub severity: String,
+    /// How severe the finding is.
+    pub severity: Severity,
     /// Short description.
     pub summary: String,
     /// Fixed versions.
@@ -76,7 +75,7 @@ pub struct LedgerFinding {
     /// Page on osv.dev or endoflife.date.
     pub url: String,
     /// Advisory kind.
-    pub kind: String,
+    pub kind: FindingKind,
 }
 
 /// Applies every project report.
@@ -138,7 +137,7 @@ pub fn ignore_finding(
         finding.ignore_until = until.map(str::to_owned);
         finding.resolved_at = None;
         session.update_finding(&finding)?;
-        session.insert_event(id, "ignored", &at, reason)?;
+        session.insert_event(id, EventKind::Ignored, &at, reason)?;
         Ok(())
     })
 }
@@ -161,7 +160,7 @@ pub fn reopen_finding(store: &mut impl StateStore, id: i64, now: i64) -> Result<
         finding.ignore_until = None;
         finding.resolved_at = None;
         session.update_finding(&finding)?;
-        session.insert_event(id, "reopened", &at, "")?;
+        session.insert_event(id, EventKind::Reopened, &at, "")?;
         Ok(())
     })
 }
@@ -178,13 +177,16 @@ pub fn list_findings(
     kind: Option<&str>,
 ) -> Result<Vec<StoredFinding>, StoreError> {
     let mut rows = store.in_transaction(|session| session.list_findings(projects, filter))?;
-    if let Some(kind) = kind {
-        rows.retain(|row| row.kind == kind);
+    if let Some(text) = kind {
+        let Ok(parsed) = text.parse::<FindingKind>() else {
+            return Ok(Vec::new());
+        };
+        rows.retain(|row| row.kind == parsed);
     }
     rows.sort_by(|left, right| {
         left.project_id
             .cmp(&right.project_id)
-            .then(severity_rank(&left.severity).cmp(&severity_rank(&right.severity)))
+            .then(left.severity.cmp(&right.severity))
             .then(left.package.cmp(&right.package))
             .then(left.version.cmp(&right.version))
             .then(left.id.cmp(&right.id))
@@ -290,7 +292,8 @@ fn touch_known(
     finished: &str,
     today: &str,
 ) -> Result<(), StoreError> {
-    let passed = row.kind == "platform_deadline_soon" && finding.kind == "platform_deadline";
+    let passed = row.kind == FindingKind::PlatformDeadlineSoon
+        && finding.kind == FindingKind::PlatformDeadline;
     row.version.clone_from(&finding.version);
     row.severity.clone_from(&finding.severity);
     row.summary.clone_from(&finding.summary);
@@ -305,7 +308,7 @@ fn touch_known(
         row.ignore_until = None;
         session.update_finding(row)?;
         note_passed(session, row.id, passed, finished)?;
-        return session.insert_event(row.id, "reappeared", finished, "");
+        return session.insert_event(row.id, EventKind::Reappeared, finished, "");
     }
     if let Some(until) = row.ignore_until.clone()
         && row.state == FindingState::Ignored
@@ -318,7 +321,7 @@ fn touch_known(
         note_passed(session, row.id, passed, finished)?;
         return session.insert_event(
             row.id,
-            "reopened",
+            EventKind::Reopened,
             finished,
             &format!("ignore expired on {until}"),
         );
@@ -334,7 +337,7 @@ fn note_passed(
     finished: &str,
 ) -> Result<(), StoreError> {
     if passed {
-        session.insert_event(id, "deadline_passed", finished, "")?;
+        session.insert_event(id, EventKind::DeadlinePassed, finished, "")?;
     }
     Ok(())
 }
@@ -351,14 +354,14 @@ fn insert_new(
         package: finding.package.clone(),
         vulnerability_id: finding.id.clone(),
         version: finding.version.clone(),
-        severity: finding.severity.clone(),
+        severity: finding.severity,
         summary: finding.summary.clone(),
         aliases: finding.aliases.clone(),
         fixed_versions: finding.fixed_versions.clone(),
-        kind: finding.kind.clone(),
+        kind: finding.kind,
         seen_at: finished.to_owned(),
     })?;
-    session.insert_event(id, "discovered", finished, "")?;
+    session.insert_event(id, EventKind::Discovered, finished, "")?;
     Ok(id)
 }
 
@@ -386,7 +389,7 @@ fn withdraw_advisories(
         row.state = FindingState::Resolved;
         row.resolved_at = Some(finished.to_owned());
         session.update_finding(row)?;
-        session.insert_event(row.id, "withdrawn", finished, "")?;
+        session.insert_event(row.id, EventKind::Withdrawn, finished, "")?;
         withdrawn += 1;
     }
     Ok(withdrawn)
@@ -414,7 +417,7 @@ fn resolve_missing(
         row.state = FindingState::Resolved;
         row.resolved_at = Some(finished.to_owned());
         session.update_finding(row)?;
-        session.insert_event(row.id, "resolved", finished, "")?;
+        session.insert_event(row.id, EventKind::Resolved, finished, "")?;
         resolved += 1;
     }
     Ok(resolved)
@@ -543,18 +546,18 @@ fn listed(row: &StoredFinding, new: bool, url: String) -> LedgerFinding {
         version: row.version.clone(),
         vulnerability_id: row.vulnerability_id.clone(),
         aliases: row.aliases.clone(),
-        severity: row.severity.clone(),
+        severity: row.severity,
         summary: row.summary.clone(),
         fixed_versions: row.fixed_versions.clone(),
         url,
-        kind: row.kind.clone(),
+        kind: row.kind,
     }
 }
 
 fn sort_listed(findings: &mut [LedgerFinding]) {
     findings.sort_by(|left, right| {
-        severity_rank(&left.severity)
-            .cmp(&severity_rank(&right.severity))
+        left.severity
+            .cmp(&right.severity)
             .then(left.package.cmp(&right.package))
             .then(left.version.cmp(&right.version))
             .then(left.vulnerability_id.cmp(&right.vulnerability_id))
@@ -676,7 +679,7 @@ fn write_project(out: &mut String, project: &ProjectLedger, show_ignored: bool) 
     }
     let mut notices = Vec::new();
     for finding in &project.open {
-        if FindingKind::parse(&finding.kind).is_some_and(FindingKind::is_notice) {
+        if finding.kind.is_notice() {
             notices.push(finding);
         } else {
             write_finding(out, finding, if finding.new { "new" } else { "open" });
@@ -718,10 +721,13 @@ fn keeps_lockfile_findings(project: &ProjectLedger) -> bool {
         return false;
     }
     let kept = |finding: &LedgerFinding| {
-        finding.kind != "eol"
-            && finding.kind != "eol_soon"
-            && finding.kind != "platform_deadline"
-            && finding.kind != "platform_deadline_soon"
+        !matches!(
+            finding.kind,
+            FindingKind::Eol
+                | FindingKind::EolSoon
+                | FindingKind::PlatformDeadline
+                | FindingKind::PlatformDeadlineSoon
+        )
     };
     project.open.iter().any(kept) || project.ignored.iter().any(kept)
 }
@@ -908,8 +914,8 @@ fn hit_json(finding: &LedgerFinding) -> HitJson<'_> {
         version: &finding.version,
         id: &finding.vulnerability_id,
         aliases: &finding.aliases,
-        severity: &finding.severity,
-        kind: &finding.kind,
+        severity: finding.severity.as_str(),
+        kind: finding.kind.as_str(),
         summary: &finding.summary,
         fixed_versions: &finding.fixed_versions,
         url: &finding.url,
@@ -925,8 +931,8 @@ fn finding_json(finding: &StoredFinding) -> FindingJson<'_> {
         version: &finding.version,
         vulnerability: &finding.vulnerability_id,
         aliases: &finding.aliases,
-        severity: &finding.severity,
-        kind: &finding.kind,
+        severity: finding.severity.as_str(),
+        kind: finding.kind.as_str(),
         summary: &finding.summary,
         fixed_versions: &finding.fixed_versions,
         state: finding.state.as_str(),

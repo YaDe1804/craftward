@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::fs_atomic::write_atomic;
 use crate::lockfile::PackageQuery;
 use crate::osv::Advisory;
+use crate::store::{FindingKind, Severity};
 
 /// A stored package query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,19 +39,15 @@ pub struct StoredAdvisory {
     /// Short description.
     pub summary: String,
     /// Radar severity word.
-    pub severity: String,
+    pub severity: Severity,
     /// Affected packages and fixed versions.
     pub affected: Vec<StoredAffected>,
     /// Whether the record was withdrawn. Absent in caches written before this field.
     #[serde(default)]
     pub withdrawn: bool,
     /// Advisory kind. Absent caches are read as `vulnerability`.
-    #[serde(default = "vulnerability_kind")]
-    pub kind: String,
-}
-
-fn vulnerability_kind() -> String {
-    "vulnerability".to_owned()
+    #[serde(default)]
+    pub kind: FindingKind,
 }
 
 /// One affected package in the cache.
@@ -70,9 +67,9 @@ impl From<&Advisory> for StoredAdvisory {
             id: advisory.id.clone(),
             aliases: advisory.aliases.clone(),
             summary: advisory.summary.clone(),
-            severity: advisory.severity.clone(),
+            severity: advisory.severity,
             withdrawn: advisory.withdrawn,
-            kind: advisory.kind.clone(),
+            kind: advisory.kind,
             affected: advisory
                 .affected
                 .iter()
@@ -171,4 +168,63 @@ fn encode(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::store::{FindingKind, Severity};
+
+    use super::read_advisory;
+
+    #[test]
+    fn an_old_advisory_cache_keeps_its_words_and_an_unknown_word_is_dropped() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let root = std::env::temp_dir().join(format!("craftward-cache-{nanos}"));
+        let dir = root.join("advisories");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("GHSA-1.json"),
+            r#"{
+  "stored_at": 1,
+  "advisory": {
+    "id": "GHSA-1",
+    "aliases": ["CVE-1"],
+    "summary": "hole",
+    "severity": "high",
+    "affected": [{"ecosystem": "crates.io", "name": "demo", "fixed": ["1.2.3"]}],
+    "withdrawn": false,
+    "kind": "vulnerability"
+  }
+}
+"#,
+        )
+        .unwrap();
+        let cached = read_advisory(&root, "GHSA-1").unwrap();
+        assert_eq!(cached.advisory.severity, Severity::High);
+        assert_eq!(cached.advisory.kind, FindingKind::Vulnerability);
+        assert_eq!(cached.advisory.aliases, ["CVE-1"]);
+        fs::write(
+            dir.join("GHSA-2.json"),
+            r#"{
+  "stored_at": 1,
+  "advisory": {
+    "id": "GHSA-2",
+    "aliases": [],
+    "summary": "hole",
+    "severity": "high",
+    "affected": [],
+    "kind": "not-a-kind"
+  }
+}
+"#,
+        )
+        .unwrap();
+        assert!(read_advisory(&root, "GHSA-2").is_none());
+        let _ = fs::remove_dir_all(root);
+    }
 }

@@ -9,8 +9,9 @@ use std::fmt::Write as _;
 
 use serde_json::{Map, Value};
 
-use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
+use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method};
 use crate::lockfile::PackageQuery;
+use crate::store::{FindingKind, Severity};
 
 /// Queries in one `querybatch` request.
 pub const BATCH_LIMIT: usize = 1000;
@@ -33,14 +34,14 @@ pub struct Advisory {
     pub aliases: Vec<String>,
     /// Short description. Empty when OSV omitted `summary`.
     pub summary: String,
-    /// `low`, `medium`, `high`, `critical`, or `unknown`.
-    pub severity: String,
+    /// How severe the record is.
+    pub severity: Severity,
     /// Packages named by the record, with the versions that fix the issue.
     pub affected: Vec<AffectedPackage>,
     /// The record has a non-empty `withdrawn` timestamp.
     pub withdrawn: bool,
-    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, or `notice`.
-    pub kind: String,
+    /// Advisory kind.
+    pub kind: FindingKind,
 }
 
 /// One affected package inside an [`Advisory`].
@@ -84,7 +85,7 @@ pub fn query_ids(
 pub fn fetch_advisory(client: &impl HttpClient, id: &str) -> Result<Advisory, HttpError> {
     let url = format!("{VULN_URL}{}", encode_path(id));
     let response = client.execute(&HttpRequest {
-        method: "GET",
+        method: Method::Get,
         url: &url,
         body: None,
     })?;
@@ -114,7 +115,7 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
         .and_then(Value::as_object)
         .and_then(|specific| specific.get("severity"))
         .and_then(Value::as_str)
-        .map_or_else(|| "unknown".to_owned(), map_severity);
+        .map_or(Severity::Unknown, map_severity);
     let affected = object
         .get("affected")
         .and_then(Value::as_array)
@@ -124,8 +125,8 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
         .and_then(Value::as_str)
         .is_some_and(|text| !text.is_empty());
     let kind = classify_kind(&id, object);
-    let severity = if kind == "malicious" {
-        "critical".to_owned()
+    let severity = if kind == FindingKind::Malicious {
+        Severity::Critical
     } else {
         severity
     };
@@ -140,15 +141,15 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
     })
 }
 
-fn classify_kind(id: &str, object: &Map<String, Value>) -> String {
+fn classify_kind(id: &str, object: &Map<String, Value>) -> FindingKind {
     if id.starts_with("MAL-") || has_malicious_category(object) {
-        return "malicious".to_owned();
+        return FindingKind::Malicious;
     }
     match informational(object) {
-        Some("unmaintained") => "unmaintained".to_owned(),
-        Some("unsound") => "unsound".to_owned(),
-        Some("notice" | _) => "notice".to_owned(),
-        None => "vulnerability".to_owned(),
+        Some("unmaintained") => FindingKind::Unmaintained,
+        Some("unsound") => FindingKind::Unsound,
+        Some("notice" | _) => FindingKind::Notice,
+        None => FindingKind::Vulnerability,
     }
 }
 
@@ -220,18 +221,6 @@ pub fn fixed_versions(advisory: &Advisory, package: &PackageQuery) -> Vec<String
     versions
 }
 
-/// Sort key. Smaller values are more severe.
-#[must_use]
-pub fn severity_rank(severity: &str) -> u8 {
-    match severity {
-        "critical" => 0,
-        "high" => 1,
-        "medium" => 2,
-        "low" => 3,
-        _ => 4,
-    }
-}
-
 fn query_chunk(
     client: &impl HttpClient,
     packages: &[PackageQuery],
@@ -254,7 +243,7 @@ fn query_chunk(
         }
         let body = batch_body(packages, &selected, &tokens)?;
         let response = client.execute(&HttpRequest {
-            method: "POST",
+            method: Method::Post,
             url: QUERY_URL,
             body: Some(&body),
         })?;
@@ -393,13 +382,13 @@ fn affected_package(value: &Value) -> Option<AffectedPackage> {
     })
 }
 
-fn map_severity(value: &str) -> String {
+fn map_severity(value: &str) -> Severity {
     match value.to_ascii_uppercase().as_str() {
-        "LOW" => "low".to_owned(),
-        "MODERATE" => "medium".to_owned(),
-        "HIGH" => "high".to_owned(),
-        "CRITICAL" => "critical".to_owned(),
-        _ => "unknown".to_owned(),
+        "LOW" => Severity::Low,
+        "MODERATE" => Severity::Medium,
+        "HIGH" => Severity::High,
+        "CRITICAL" => Severity::Critical,
+        _ => Severity::Unknown,
     }
 }
 
@@ -457,6 +446,8 @@ fn encode_path(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::store::{FindingKind, Severity};
+
     use super::parse_advisory;
 
     fn body(value: &serde_json::Value) -> Vec<u8> {
@@ -471,9 +462,9 @@ mod tests {
             "affected": [{"package": {"ecosystem": "crates.io", "name": "demo"}}]
         })))
         .unwrap();
-        assert_eq!(vulnerability.kind, "vulnerability");
+        assert_eq!(vulnerability.kind, FindingKind::Vulnerability);
         assert!(!vulnerability.withdrawn);
-        assert_eq!(vulnerability.severity, "unknown");
+        assert_eq!(vulnerability.severity, Severity::Unknown);
 
         let malicious = parse_advisory(&body(&serde_json::json!({
             "id": "MAL-2024-1",
@@ -481,8 +472,8 @@ mod tests {
             "affected": []
         })))
         .unwrap();
-        assert_eq!(malicious.kind, "malicious");
-        assert_eq!(malicious.severity, "critical");
+        assert_eq!(malicious.kind, FindingKind::Malicious);
+        assert_eq!(malicious.severity, Severity::Critical);
 
         let category = parse_advisory(&body(&serde_json::json!({
             "id": "RUSTSEC-2022-1",
@@ -491,14 +482,14 @@ mod tests {
             }]
         })))
         .unwrap();
-        assert_eq!(category.kind, "malicious");
-        assert_eq!(category.severity, "critical");
+        assert_eq!(category.kind, FindingKind::Malicious);
+        assert_eq!(category.severity, Severity::Critical);
 
         for (word, kind) in [
-            ("unmaintained", "unmaintained"),
-            ("unsound", "unsound"),
-            ("notice", "notice"),
-            ("other-note", "notice"),
+            ("unmaintained", FindingKind::Unmaintained),
+            ("unsound", FindingKind::Unsound),
+            ("notice", FindingKind::Notice),
+            ("other-note", FindingKind::Notice),
         ] {
             let advisory = parse_advisory(&body(&serde_json::json!({
                 "id": "RUSTSEC-1",

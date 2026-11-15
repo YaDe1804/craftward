@@ -3,15 +3,17 @@
 //! The command-line tool and, later, a team server implement [`StateStore`].
 //! This module does not open a database.
 
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// File name of the SQLite database inside the data directory.
 pub const DATABASE_FILE: &str = "craftward.db";
 
 /// Schema version this build knows how to write.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Lifecycle state of one finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,23 +36,96 @@ impl FindingState {
             Self::Resolved => "resolved",
         }
     }
+}
 
-    /// Parses a stored word.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
+impl FromStr for FindingState {
+    type Err = UnknownDomainValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
         match text {
-            "open" => Some(Self::Open),
-            "ignored" => Some(Self::Ignored),
-            "resolved" => Some(Self::Resolved),
-            _ => None,
+            "open" => Ok(Self::Open),
+            "ignored" => Ok(Self::Ignored),
+            "resolved" => Ok(Self::Resolved),
+            _ => Err(UnknownDomainValue::new(text)),
         }
     }
 }
 
+impl fmt::Display for FindingState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// How severe a finding is. More severe values sort first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    /// The highest severity.
+    Critical,
+    /// Higher than medium.
+    High,
+    /// The middle severity.
+    Medium,
+    /// Lower than medium.
+    Low,
+    /// No recognized severity word.
+    Unknown,
+}
+
+impl Severity {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Every value, from most severe to least.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Critical,
+            Self::High,
+            Self::Medium,
+            Self::Low,
+            Self::Unknown,
+        ]
+    }
+}
+
+impl FromStr for Severity {
+    type Err = UnknownDomainValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "critical" => Ok(Self::Critical),
+            "high" => Ok(Self::High),
+            "medium" => Ok(Self::Medium),
+            "low" => Ok(Self::Low),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(UnknownDomainValue::new(text)),
+        }
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Kind of a stored advisory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FindingKind {
     /// A vulnerability that is not one of the more specific kinds.
+    #[default]
     Vulnerability,
     /// A malicious package, including OSV ids that start with `MAL-`.
     Malicious,
@@ -87,21 +162,20 @@ impl FindingKind {
         }
     }
 
-    /// Parses a stored word.
+    /// Every stored kind.
     #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "vulnerability" => Some(Self::Vulnerability),
-            "malicious" => Some(Self::Malicious),
-            "unmaintained" => Some(Self::Unmaintained),
-            "unsound" => Some(Self::Unsound),
-            "notice" => Some(Self::Notice),
-            "eol" => Some(Self::Eol),
-            "eol_soon" => Some(Self::EolSoon),
-            "platform_deadline" => Some(Self::PlatformDeadline),
-            "platform_deadline_soon" => Some(Self::PlatformDeadlineSoon),
-            _ => None,
-        }
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Vulnerability,
+            Self::Malicious,
+            Self::Unmaintained,
+            Self::Unsound,
+            Self::Notice,
+            Self::Eol,
+            Self::EolSoon,
+            Self::PlatformDeadline,
+            Self::PlatformDeadlineSoon,
+        ]
     }
 
     /// Whether an open finding of this kind selects exit status 3.
@@ -131,6 +205,132 @@ impl FindingKind {
     }
 }
 
+impl FromStr for FindingKind {
+    type Err = UnknownDomainValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "vulnerability" => Ok(Self::Vulnerability),
+            "malicious" => Ok(Self::Malicious),
+            "unmaintained" => Ok(Self::Unmaintained),
+            "unsound" => Ok(Self::Unsound),
+            "notice" => Ok(Self::Notice),
+            "eol" => Ok(Self::Eol),
+            "eol_soon" => Ok(Self::EolSoon),
+            "platform_deadline" => Ok(Self::PlatformDeadline),
+            "platform_deadline_soon" => Ok(Self::PlatformDeadlineSoon),
+            _ => Err(UnknownDomainValue::new(text)),
+        }
+    }
+}
+
+impl fmt::Display for FindingKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// One row in a finding's history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventKind {
+    /// The finding was stored for the first time.
+    Discovered,
+    /// A person ignored the finding.
+    Ignored,
+    /// An ignore ended, or a person reopened the finding.
+    Reopened,
+    /// The finding was absent from a check that could have seen it.
+    Resolved,
+    /// A resolved finding was seen again.
+    Reappeared,
+    /// The advisory record was withdrawn.
+    Withdrawn,
+    /// A Play warning became a missed deadline.
+    DeadlinePassed,
+}
+
+impl EventKind {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovered => "discovered",
+            Self::Ignored => "ignored",
+            Self::Reopened => "reopened",
+            Self::Resolved => "resolved",
+            Self::Reappeared => "reappeared",
+            Self::Withdrawn => "withdrawn",
+            Self::DeadlinePassed => "deadline_passed",
+        }
+    }
+
+    /// Every stored event kind.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Discovered,
+            Self::Ignored,
+            Self::Reopened,
+            Self::Resolved,
+            Self::Reappeared,
+            Self::Withdrawn,
+            Self::DeadlinePassed,
+        ]
+    }
+}
+
+impl FromStr for EventKind {
+    type Err = UnknownDomainValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "discovered" => Ok(Self::Discovered),
+            "ignored" => Ok(Self::Ignored),
+            "reopened" => Ok(Self::Reopened),
+            "resolved" => Ok(Self::Resolved),
+            "reappeared" => Ok(Self::Reappeared),
+            "withdrawn" => Ok(Self::Withdrawn),
+            "deadline_passed" => Ok(Self::DeadlinePassed),
+            _ => Err(UnknownDomainValue::new(text)),
+        }
+    }
+}
+
+impl fmt::Display for EventKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Text that is not one of the words a domain enum accepts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownDomainValue {
+    value: String,
+}
+
+impl UnknownDomainValue {
+    fn new(value: &str) -> Self {
+        Self {
+            value: value.to_owned(),
+        }
+    }
+
+    /// The rejected text.
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Display for UnknownDomainValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown value: {}", self.value)
+    }
+}
+
+impl std::error::Error for UnknownDomainValue {}
+
 /// Which findings a list command asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateFilter {
@@ -159,8 +359,8 @@ pub struct StoredFinding {
     pub vulnerability_id: String,
     /// Last version that was still affected.
     pub version: String,
-    /// `low`, `medium`, `high`, `critical`, or `unknown`.
-    pub severity: String,
+    /// How severe the finding is.
+    pub severity: Severity,
     /// Short description.
     pub summary: String,
     /// Other ids, such as CVE ids.
@@ -169,9 +369,8 @@ pub struct StoredFinding {
     pub fixed_versions: Vec<String>,
     /// Current state.
     pub state: FindingState,
-    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, `notice`,
-    /// `eol`, or `eol_soon`.
-    pub kind: String,
+    /// Advisory kind.
+    pub kind: FindingKind,
     /// When the finding was first stored, `YYYY-MM-DDTHH:MM:SSZ`.
     pub first_seen: String,
     /// When a scan last observed it.
@@ -197,16 +396,16 @@ pub struct NewFinding {
     pub vulnerability_id: String,
     /// Affected version.
     pub version: String,
-    /// Severity word.
-    pub severity: String,
+    /// How severe the finding is.
+    pub severity: Severity,
     /// Short description.
     pub summary: String,
     /// Aliases.
     pub aliases: Vec<String>,
     /// Fixed versions.
     pub fixed_versions: Vec<String>,
-    /// Advisory kind. See [`StoredFinding::kind`].
-    pub kind: String,
+    /// Advisory kind.
+    pub kind: FindingKind,
     /// `first_seen` and `last_seen`.
     pub seen_at: String,
 }
@@ -214,9 +413,8 @@ pub struct NewFinding {
 /// One row of a finding's history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoredEvent {
-    /// `discovered`, `ignored`, `reopened`, `resolved`, `reappeared`,
-    /// `withdrawn`, or `deadline_passed`.
-    pub kind: String,
+    /// What changed.
+    pub kind: EventKind,
     /// When the event was recorded.
     pub at: String,
     /// User text, or an empty string when the event has none.
@@ -318,7 +516,7 @@ pub trait StoreSession {
     fn insert_event(
         &mut self,
         finding_id: i64,
-        kind: &str,
+        kind: EventKind,
         at: &str,
         reason: &str,
     ) -> Result<(), StoreError>;
@@ -368,4 +566,59 @@ pub trait StateStore {
         &mut self,
         body: impl FnOnce(&mut dyn StoreSession) -> Result<T, StoreError>,
     ) -> Result<T, StoreError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventKind, FindingKind, FindingState, Severity};
+
+    #[test]
+    fn severity_words_round_trip_and_sort_most_severe_first() {
+        assert_words::<Severity>(Severity::all());
+        let mut ordered = Severity::all().to_vec();
+        ordered.sort();
+        assert_eq!(ordered.as_slice(), Severity::all());
+    }
+
+    #[test]
+    fn finding_kind_words_round_trip() {
+        assert_words::<FindingKind>(FindingKind::all());
+    }
+
+    #[test]
+    fn event_kind_words_round_trip() {
+        assert_words::<EventKind>(EventKind::all());
+    }
+
+    #[test]
+    fn finding_state_words_round_trip() {
+        for state in [
+            FindingState::Open,
+            FindingState::Ignored,
+            FindingState::Resolved,
+        ] {
+            assert_eq!(state.as_str().parse::<FindingState>().unwrap(), state);
+        }
+        assert!("hidden".parse::<FindingState>().is_err());
+    }
+
+    fn assert_words<T>(values: &[T])
+    where
+        T: Copy
+            + PartialEq
+            + std::fmt::Debug
+            + std::str::FromStr
+            + serde::Serialize
+            + serde::de::DeserializeOwned,
+        T::Err: std::fmt::Debug,
+    {
+        for value in values {
+            let word = serde_json::to_value(value).unwrap();
+            let text = word.as_str().unwrap();
+            assert_eq!(text.parse::<T>().unwrap(), *value);
+            assert_eq!(serde_json::from_value::<T>(word).unwrap(), *value);
+        }
+        assert!("not-a-value".parse::<T>().is_err());
+        assert!(serde_json::from_str::<T>("\"not-a-value\"").is_err());
+    }
 }

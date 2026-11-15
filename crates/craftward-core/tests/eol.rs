@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    Component, ComponentKind, HttpClient, HttpError, HttpRequest, HttpResponse, check_components,
+    Component, ComponentKind, FindingKind, HttpClient, HttpError, HttpRequest, HttpResponse,
+    Severity, check_components,
 };
 
 const TODAY: &str = "2026-11-15";
@@ -106,13 +107,13 @@ fn product_and_cycle_rules() {
     assert!(unique.error.is_none(), "{:?}", unique.error);
     assert_eq!(unique.hits.len(), 1);
     assert_eq!(unique.hits[0].id, "EOL:postgresql:9");
-    assert_eq!(unique.hits[0].kind, "eol");
-    assert_eq!(unique.hits[0].severity, "high");
+    assert_eq!(unique.hits[0].kind, FindingKind::Eol);
+    assert_eq!(unique.hits[0].severity, Severity::High);
 
     let prefix = check(&[component("postgres", Some("9.3.0"), None)], 90);
     assert_eq!(prefix.hits[0].id, "EOL:postgresql:9.3");
-    assert_eq!(prefix.hits[0].kind, "eol_soon");
-    assert_eq!(prefix.hits[0].severity, "medium");
+    assert_eq!(prefix.hits[0].kind, FindingKind::EolSoon);
+    assert_eq!(prefix.hits[0].severity, Severity::Medium);
     assert_eq!(prefix.hits[0].url, "https://endoflife.date/postgresql");
 
     let missing_cycle = check(&[component("PostgreSQL", Some("8.0.0"), None)], 90);
@@ -143,7 +144,7 @@ fn product_and_cycle_rules() {
 
     let explicit = check(&[component("Linux", Some("22.04.5"), Some("ubuntu"))], 90);
     assert_eq!(explicit.hits[0].id, "EOL:ubuntu:22.04");
-    assert_eq!(explicit.hits[0].kind, "eol_soon");
+    assert_eq!(explicit.hits[0].kind, FindingKind::EolSoon);
 
     let soon_window = check(&[component("Linux", Some("22.04.5"), Some("ubuntu"))], 30);
     assert_eq!(soon_window.hits.len(), 0, "{:?}", soon_window.hits);
@@ -168,20 +169,20 @@ fn product_and_cycle_rules() {
 fn support_flags_none_and_a_newer_version() {
     let ended = check(&[component("Old", Some("1.2.0"), Some("flags"))], 90);
     assert_eq!(ended.hits.len(), 1);
-    assert_eq!(ended.hits[0].kind, "eol");
+    assert_eq!(ended.hits[0].kind, FindingKind::Eol);
     assert_eq!(ended.hits[0].summary, "support ended on 2020-01-01");
     assert_eq!(ended.warnings.len(), 0, "{:?}", ended.warnings);
 
     let unknown = check(&[component("Old", Some("2.0"), Some("flags"))], 90);
     assert_eq!(unknown.hits.len(), 1);
-    assert_eq!(unknown.hits[0].kind, "eol");
-    assert_eq!(unknown.hits[0].severity, "high");
+    assert_eq!(unknown.hits[0].kind, FindingKind::Eol);
+    assert_eq!(unknown.hits[0].severity, Severity::High);
     assert_eq!(unknown.hits[0].summary, "support ended on unknown");
     assert_eq!(unknown.warnings.len(), 0, "{:?}", unknown.warnings);
 
     let soon = check(&[component("Current", Some("3.1"), Some("flags"))], 90);
     assert_eq!(soon.hits.len(), 1);
-    assert_eq!(soon.hits[0].kind, "eol_soon");
+    assert_eq!(soon.hits[0].kind, FindingKind::EolSoon);
     assert_eq!(soon.hits[0].summary, "support ends on 2027-01-14");
     let outside = check(&[component("Current", Some("3.1"), Some("flags"))], 30);
     assert_eq!(outside.hits.len(), 0);

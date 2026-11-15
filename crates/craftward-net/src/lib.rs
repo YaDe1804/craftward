@@ -7,7 +7,9 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
-use craftward_core::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
+use craftward_core::{
+    HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method,
+};
 use ureq::Agent;
 use ureq::tls::{Certificate, RootCerts, TlsConfig, TlsProvider};
 
@@ -68,12 +70,12 @@ impl HttpClient for UreqClient {
             });
         }
         let response = match request.method {
-            "POST" => self
+            Method::Post => self
                 .agent
                 .post(request.url)
                 .header("content-type", "application/json")
                 .send(request.body.unwrap_or_default()),
-            _ => self.agent.get(request.url).call(),
+            Method::Get => self.agent.get(request.url).call(),
         };
         let response = response.map_err(|error| HttpError {
             message: error.to_string(),
@@ -103,7 +105,7 @@ impl HttpClient for UreqClient {
 #[cfg(test)]
 mod tests {
     use super::UreqClient;
-    use craftward_core::{HttpClient, HttpRequest};
+    use craftward_core::{HttpClient, HttpRequest, Method};
 
     #[test]
     #[ignore = "contacts osv.dev"]
@@ -112,7 +114,7 @@ mod tests {
         let body = br#"{"package":{"ecosystem":"crates.io","name":"libc"},"version":"0.2.0"}"#;
         let response = client
             .execute(&HttpRequest {
-                method: "POST",
+                method: Method::Post,
                 url: "https://api.osv.dev/v1/query",
                 body: Some(body),
             })

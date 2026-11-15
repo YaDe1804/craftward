@@ -47,7 +47,7 @@ pub use eol::{
     CatalogProduct, Cycle, EolHit, EolOptions, EolReport, check_components, normalize_name,
 };
 pub use error::{LoadError, ValidationError};
-pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
+pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method};
 pub use i18n::{LABELS, Label, Language, fill, text};
 pub use lifecycle::{
     LedgerFinding, ProjectLedger, apply_reports, ignore_finding, list_findings,
@@ -80,8 +80,8 @@ pub use roadmap::{
 #[cfg(feature = "schema")]
 pub use schema::project_schema_json;
 pub use store::{
-    DATABASE_FILE, FindingKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter,
-    StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,
+    DATABASE_FILE, EventKind, FindingKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION,
+    Severity, StateFilter, StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,
 };
 pub use target_sdk::{Detection, detect as detect_target_sdk};
 pub use workspace::{

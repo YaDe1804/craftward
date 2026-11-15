@@ -5,11 +5,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use craftward_core::{
-    FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore, StoreError,
-    StoreSession, StoredEvent, StoredFinding,
+    EventKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore,
+    StoreError, StoreSession, StoredEvent, StoredFinding,
 };
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
@@ -162,6 +163,53 @@ ALTER TABLE finding_events_next RENAME TO finding_events;
 CREATE INDEX finding_events_finding ON finding_events(finding_id);
 ";
 
+const MIGRATION_V6: &str = "
+CREATE TABLE findings_next (
+    id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    vulnerability_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    aliases TEXT NOT NULL,
+    fixed_versions TEXT NOT NULL,
+    state TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    resolved_at TEXT,
+    ignore_reason TEXT,
+    ignore_until TEXT,
+    UNIQUE (project_id, ecosystem, package_name, vulnerability_id)
+);
+INSERT INTO findings_next (
+    id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
+    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+    resolved_at, ignore_reason, ignore_until
+)
+SELECT
+    id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
+    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+    resolved_at, ignore_reason, ignore_until
+FROM findings;
+CREATE TABLE finding_events_next (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL REFERENCES findings_next(id),
+    kind TEXT NOT NULL,
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+INSERT INTO finding_events_next (id, finding_id, kind, at, reason)
+    SELECT id, finding_id, kind, at, reason FROM finding_events;
+DROP TABLE finding_events;
+DROP TABLE findings;
+ALTER TABLE findings_next RENAME TO findings;
+ALTER TABLE finding_events_next RENAME TO finding_events;
+CREATE INDEX finding_events_finding ON finding_events(finding_id);
+";
+
 const FINDING_COLUMNS: &str = "
 id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
 summary, aliases, fixed_versions, state, kind, first_seen, last_seen, resolved_at,
@@ -210,7 +258,7 @@ impl SqliteStore {
         Ok(Self { conn })
     }
 
-    /// Opens a private in-memory database at schema version 1.
+    /// Opens a private in-memory database and migrates it to the current schema.
     ///
     /// # Errors
     ///
@@ -269,11 +317,11 @@ impl StoreSession for Session<'_> {
                     &finding.package,
                     &finding.vulnerability_id,
                     &finding.version,
-                    &finding.severity,
+                    finding.severity.as_str(),
                     &finding.summary,
                     encode_list(&finding.aliases)?,
                     encode_list(&finding.fixed_versions)?,
-                    &finding.kind,
+                    finding.kind.as_str(),
                     &finding.seen_at,
                 ),
             )
@@ -291,12 +339,12 @@ impl StoreSession for Session<'_> {
                  WHERE id = ?12",
                 (
                     &finding.version,
-                    &finding.severity,
+                    finding.severity.as_str(),
                     &finding.summary,
                     encode_list(&finding.aliases)?,
                     encode_list(&finding.fixed_versions)?,
                     finding.state.as_str(),
-                    &finding.kind,
+                    finding.kind.as_str(),
                     &finding.last_seen,
                     &finding.resolved_at,
                     &finding.ignore_reason,
@@ -311,14 +359,14 @@ impl StoreSession for Session<'_> {
     fn insert_event(
         &mut self,
         finding_id: i64,
-        kind: &str,
+        kind: EventKind,
         at: &str,
         reason: &str,
     ) -> Result<(), StoreError> {
         self.transaction
             .execute(
                 "INSERT INTO finding_events (finding_id, kind, at, reason) VALUES (?1, ?2, ?3, ?4)",
-                (finding_id, kind, at, reason),
+                (finding_id, kind.as_str(), at, reason),
             )
             .map_err(|error| failed(&error))?;
         Ok(())
@@ -353,18 +401,19 @@ impl StoreSession for Session<'_> {
         projects: &[String],
         filter: StateFilter,
     ) -> Result<Vec<StoredFinding>, StoreError> {
-        let mut rows = query_findings(
-            self.transaction,
-            &format!("SELECT {FINDING_COLUMNS} FROM findings ORDER BY id"),
-            None,
-        )?;
-        if let Some(state) = filter_state(filter) {
-            rows.retain(|row| row.state == state);
+        let (sql, args) = list_sql(filter, projects);
+        let mut statement = self
+            .transaction
+            .prepare(&sql)
+            .map_err(|error| failed(&error))?;
+        let mut rows = statement
+            .query(rusqlite::params_from_iter(args.iter()))
+            .map_err(|error| failed(&error))?;
+        let mut findings = Vec::new();
+        while let Some(row) = rows.next().map_err(|error| failed(&error))? {
+            findings.push(read_finding(row)?);
         }
-        if !projects.is_empty() {
-            rows.retain(|row| projects.iter().any(|project| project == &row.project_id));
-        }
-        Ok(rows)
+        Ok(findings)
     }
 
     fn finding(&mut self, id: i64) -> Result<Option<StoredFinding>, StoreError> {
@@ -392,8 +441,9 @@ impl StoreSession for Session<'_> {
             .map_err(|error| failed(&error))?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().map_err(|error| failed(&error))? {
+            let kind_text: String = row.get(0).map_err(|error| failed(&error))?;
             events.push(StoredEvent {
-                kind: row.get(0).map_err(|error| failed(&error))?,
+                kind: domain_value("finding_events.kind", &kind_text)?,
                 at: row.get(1).map_err(|error| failed(&error))?,
                 reason: row.get(2).map_err(|error| failed(&error))?,
             });
@@ -423,11 +473,11 @@ fn query_findings(
 }
 
 fn read_finding(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
-    let state_text: String = row.get(10).map_err(|error| failed(&error))?;
-    let state = FindingState::parse(&state_text)
-        .ok_or_else(|| StoreError::Failed(format!("unknown finding state: {state_text}")))?;
     let aliases: String = row.get(8).map_err(|error| failed(&error))?;
     let fixed: String = row.get(9).map_err(|error| failed(&error))?;
+    let state_text: String = row.get(10).map_err(|error| failed(&error))?;
+    let severity_text: String = row.get(6).map_err(|error| failed(&error))?;
+    let kind_text: String = row.get(11).map_err(|error| failed(&error))?;
     Ok(StoredFinding {
         id: row.get(0).map_err(|error| failed(&error))?,
         project_id: row.get(1).map_err(|error| failed(&error))?,
@@ -435,18 +485,44 @@ fn read_finding(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
         package: row.get(3).map_err(|error| failed(&error))?,
         vulnerability_id: row.get(4).map_err(|error| failed(&error))?,
         version: row.get(5).map_err(|error| failed(&error))?,
-        severity: row.get(6).map_err(|error| failed(&error))?,
+        severity: domain_value("findings.severity", &severity_text)?,
         summary: row.get(7).map_err(|error| failed(&error))?,
         aliases: decode_list(&aliases)?,
         fixed_versions: decode_list(&fixed)?,
-        state,
-        kind: row.get(11).map_err(|error| failed(&error))?,
+        state: domain_value("findings.state", &state_text)?,
+        kind: domain_value("findings.kind", &kind_text)?,
         first_seen: row.get(12).map_err(|error| failed(&error))?,
         last_seen: row.get(13).map_err(|error| failed(&error))?,
         resolved_at: row.get(14).map_err(|error| failed(&error))?,
         ignore_reason: row.get(15).map_err(|error| failed(&error))?,
         ignore_until: row.get(16).map_err(|error| failed(&error))?,
     })
+}
+
+fn domain_value<T: FromStr>(column: &str, text: &str) -> Result<T, StoreError> {
+    text.parse()
+        .map_err(|_| StoreError::Failed(format!("unknown value in column {column}: {text}")))
+}
+
+fn list_sql(filter: StateFilter, projects: &[String]) -> (String, Vec<String>) {
+    let mut sql = format!("SELECT {FINDING_COLUMNS} FROM findings");
+    let mut clauses = Vec::new();
+    let mut args = Vec::new();
+    if let Some(state) = filter_state(filter) {
+        clauses.push("state = ?".to_owned());
+        args.push(state.as_str().to_owned());
+    }
+    if !projects.is_empty() {
+        let marks = vec!["?"; projects.len()].join(", ");
+        clauses.push(format!("project_id IN ({marks})"));
+        args.extend(projects.iter().cloned());
+    }
+    if !clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
+    }
+    sql.push_str(" ORDER BY id");
+    (sql, args)
 }
 
 fn filter_state(filter: StateFilter) -> Option<FindingState> {
@@ -464,13 +540,6 @@ fn configure(connection: &Connection, require_wal: bool) -> Result<(), StoreErro
         .map_err(|error| failed(&error))?;
     connection
         .busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))
-        .map_err(|error| failed(&error))?;
-    connection
-        .pragma_update(
-            None,
-            "busy_timeout",
-            i64::try_from(BUSY_TIMEOUT_MS).unwrap_or(5000),
-        )
         .map_err(|error| failed(&error))?;
     let mode: String = connection
         .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
@@ -572,6 +641,45 @@ fn migrate(connection: &mut Connection, from: i64) -> Result<(), StoreError> {
     if from < 5 {
         apply_migration(connection, MIGRATION_V5, 5)?;
     }
+    if from < 6 {
+        migrate_v6(connection)?;
+    }
+    Ok(())
+}
+
+fn migrate_v6(connection: &mut Connection) -> Result<(), StoreError> {
+    connection
+        .pragma_update(None, "foreign_keys", "OFF")
+        .map_err(|error| failed(&error))?;
+    let rebuilt = rebuild_findings(connection);
+    let restored = connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .map_err(|error| failed(&error));
+    rebuilt?;
+    restored
+}
+
+fn rebuild_findings(connection: &mut Connection) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| failed(&error))?;
+    transaction
+        .execute_batch(MIGRATION_V6)
+        .map_err(|error| failed(&error))?;
+    let broken = transaction
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| failed(&error))?;
+    if broken != 0 {
+        return Err(StoreError::Failed(
+            "foreign_key_check failed after rebuilding findings".to_owned(),
+        ));
+    }
+    transaction
+        .pragma_update(None, "user_version", 6)
+        .map_err(|error| failed(&error))?;
+    transaction.commit().map_err(|error| failed(&error))?;
     Ok(())
 }
 

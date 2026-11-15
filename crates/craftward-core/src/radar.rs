@@ -68,7 +68,7 @@ pub struct LockfileReport {
     /// Lockfile path.
     pub path: String,
     /// `cargo`, `npm`, or `unknown`.
-    pub kind: String,
+    pub kind: crate::lockfile::LockKind,
     /// Packages sent to OSV.
     pub queried: usize,
     /// Packages that were not sent.
@@ -88,17 +88,16 @@ pub struct Finding {
     pub id: String,
     /// Other ids, such as CVE ids.
     pub aliases: Vec<String>,
-    /// `low`, `medium`, `high`, `critical`, or `unknown`.
-    pub severity: String,
+    /// How severe the finding is.
+    pub severity: crate::store::Severity,
     /// Short description.
     pub summary: String,
     /// Versions in which this package is fixed.
     pub fixed_versions: Vec<String>,
     /// Page on osv.dev or endoflife.date.
     pub url: String,
-    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, `notice`,
-    /// `eol`, `eol_soon`, `platform_deadline`, or `platform_deadline_soon`.
-    pub kind: String,
+    /// Advisory kind.
+    pub kind: crate::store::FindingKind,
 }
 
 /// Checks each project file. A failure is stored on that project.
@@ -433,11 +432,11 @@ fn check_android(projects: &mut [Prepared], data_dir: &Path, today: &str, warnin
                 version: level.to_string(),
                 id: hit.id,
                 aliases: Vec::new(),
-                severity: hit.severity.to_owned(),
+                severity: hit.severity,
                 summary: hit.summary,
                 fixed_versions: Vec::new(),
                 url: hit.url,
-                kind: hit.kind.to_owned(),
+                kind: hit.kind,
             });
         }
     }
@@ -470,7 +469,7 @@ fn android_catalog(projects: &mut [Prepared], data_dir: &Path) -> Option<deadlin
 fn lockfile_report(path: &Path, parsed: &ParsedLock) -> LockfileReport {
     LockfileReport {
         path: path.display().to_string(),
-        kind: parsed.kind.to_owned(),
+        kind: parsed.kind,
         queried: parsed.queried.len(),
         skipped: parsed.skipped,
     }
@@ -747,8 +746,8 @@ fn fill_project(
         }
     }
     findings.sort_by(|left, right| {
-        osv::severity_rank(&left.severity)
-            .cmp(&osv::severity_rank(&right.severity))
+        left.severity
+            .cmp(&right.severity)
             .then(left.package.cmp(&right.package))
             .then(left.version.cmp(&right.version))
             .then(left.id.cmp(&right.id))
@@ -801,11 +800,11 @@ fn finding(package: &PackageQuery, advisory: &Advisory) -> Finding {
         version: package.version.clone(),
         id: advisory.id.clone(),
         aliases: advisory.aliases.clone(),
-        severity: advisory.severity.clone(),
+        severity: advisory.severity,
         summary: advisory.summary.clone(),
         fixed_versions: osv::fixed_versions(advisory, package),
         url: format!("https://osv.dev/vulnerability/{}", advisory.id),
-        kind: advisory.kind.clone(),
+        kind: advisory.kind,
     }
 }
 
@@ -816,10 +815,10 @@ fn eol_finding(hit: &EolHit) -> Finding {
         version: hit.version.clone(),
         id: hit.id.clone(),
         aliases: Vec::new(),
-        severity: hit.severity.clone(),
+        severity: hit.severity,
         summary: hit.summary.clone(),
         fixed_versions: Vec::new(),
         url: hit.url.clone(),
-        kind: hit.kind.clone(),
+        kind: hit.kind,
     }
 }

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, RadarOptions, scan,
+    HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method, RadarOptions,
+    Severity, scan,
 };
 
 const NOW: i64 = 1_700_000_000;
@@ -32,7 +33,7 @@ impl HttpClient for Fake {
                 body: vec![0; MAX_RESPONSE_BYTES + 1],
             });
         }
-        if request.method == "POST" {
+        if request.method == Method::Post {
             let value: serde_json::Value =
                 serde_json::from_slice(request.body.unwrap_or_default()).expect("batch json");
             let queries = value["queries"].as_array().expect("queries");
@@ -190,7 +191,7 @@ fn findings_use_batch_details_and_map_severity() {
     assert_eq!(finding.version, "1.0.0");
     assert_eq!(finding.id, "GHSA-1111");
     assert_eq!(finding.aliases, ["CVE-2026-1".to_owned()]);
-    assert_eq!(finding.severity, "high");
+    assert_eq!(finding.severity, Severity::High);
     assert_eq!(finding.summary, "Example hole");
     assert_eq!(finding.fixed_versions, ["1.2.3".to_owned()]);
     assert_eq!(finding.url, "https://osv.dev/vulnerability/GHSA-1111");
@@ -269,7 +270,7 @@ source = \"registry+https://github.com/rust-lang/crates.io-index\"
         Path::new("."),
         &options(false, false, NOW),
     );
-    assert_eq!(reports[0].findings[0].severity, "unknown");
+    assert_eq!(reports[0].findings[0].severity, Severity::Unknown);
     let huge = Fake {
         batches: RefCell::new(Vec::new()),
         fail: false,

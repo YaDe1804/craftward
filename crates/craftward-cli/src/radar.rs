@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use craftward_core::{
-    DATABASE_FILE, FindingKind, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost,
-    RadarOptions, apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
+    DATABASE_FILE, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost, RadarOptions,
+    apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
     render_ledger_text, scan, unix_now,
 };
 use craftward_store::SqliteStore;
@@ -245,10 +245,7 @@ pub(crate) fn run(
         ledger
             .open
             .iter()
-            .any(|finding| match FindingKind::parse(&finding.kind) {
-                Some(kind) => kind.affects_exit(request.strict),
-                None => request.strict,
-            })
+            .any(|finding| finding.kind.affects_exit(request.strict))
     }) {
         return Ok(ExitCode::from(3));
     }
