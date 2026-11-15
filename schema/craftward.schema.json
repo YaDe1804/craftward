@@ -1,0 +1,543 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project",
+  "description": "A project described by one `craftward.json` file.",
+  "type": "object",
+  "properties": {
+    "current_version": {
+      "description": "Version the maintainer currently ships or is working on.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "description": "Longer description of the project.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Stable short name used in paths and cross-references.\n\nOne to 64 characters from `a-z`, `0-9`, and `-`. It does not start or\nend with `-`.",
+      "type": "string"
+    },
+    "issues": {
+      "description": "Bugs and other tracked problems.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/Issue"
+      }
+    },
+    "links": {
+      "description": "Links a person would open for this project.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/Link"
+      }
+    },
+    "name": {
+      "description": "Human-readable project name. It must contain a non-whitespace character.",
+      "type": "string"
+    },
+    "plan": {
+      "description": "Planned phases and their tasks.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "description": "Format generation. Version 1 readers accept only the integer `1`.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "stack": {
+      "description": "Languages, tools, and lockfiles that make up the project.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Stack"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "description": "Where the project is in its lifecycle.",
+      "$ref": "#/$defs/ProjectStatus"
+    },
+    "tags": {
+      "description": "Labels used to group projects. Exact duplicates are rejected.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "updated": {
+      "description": "Day the file was last updated, as `YYYY-MM-DD`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "watch_items": {
+      "description": "Dates the maintainer wants to be reminded about.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/WatchItem"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "status"
+  ],
+  "$defs": {
+    "Component": {
+      "description": "One piece of a project's stack.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What role this component plays.",
+          "$ref": "#/$defs/ComponentKind"
+        },
+        "name": {
+          "description": "Component name, such as `Rust` or `PostgreSQL`.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Free-form note about how the component is used.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Version the project uses, when that is known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "ComponentKind": {
+      "description": "Role of a stack component.",
+      "oneOf": [
+        {
+          "description": "An operating system or app store platform.",
+          "type": "string",
+          "const": "platform"
+        },
+        {
+          "description": "A programming language.",
+          "type": "string",
+          "const": "language"
+        },
+        {
+          "description": "A framework or application library that shapes the program.",
+          "type": "string",
+          "const": "framework"
+        },
+        {
+          "description": "A runtime the program executes on.",
+          "type": "string",
+          "const": "runtime"
+        },
+        {
+          "description": "A vendor SDK.",
+          "type": "string",
+          "const": "sdk"
+        },
+        {
+          "description": "A hosted or local service the program depends on.",
+          "type": "string",
+          "const": "service"
+        },
+        {
+          "description": "A development or build tool.",
+          "type": "string",
+          "const": "tool"
+        },
+        {
+          "description": "A component that does not fit the other roles.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "Issue": {
+      "description": "A bug or other tracked problem.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Short name of the issue, unique among issues in this file.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Free-form note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "severity": {
+          "description": "How severe the issue is.",
+          "$ref": "#/$defs/IssueSeverity"
+        },
+        "status": {
+          "description": "Whether the issue is still open.",
+          "$ref": "#/$defs/IssueStatus"
+        },
+        "title": {
+          "description": "Human-readable issue title.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Tracker address. It must start with `http://` or `https://` when present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "status"
+      ]
+    },
+    "IssueSeverity": {
+      "description": "Severity of an issue.",
+      "oneOf": [
+        {
+          "description": "Small impact.",
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "description": "Noticeable impact.",
+          "type": "string",
+          "const": "medium"
+        },
+        {
+          "description": "Should be handled soon.",
+          "type": "string",
+          "const": "high"
+        },
+        {
+          "description": "Needs attention before other work.",
+          "type": "string",
+          "const": "critical"
+        }
+      ]
+    },
+    "IssueStatus": {
+      "description": "Progress of an issue.",
+      "oneOf": [
+        {
+          "description": "The issue is not being worked on.",
+          "type": "string",
+          "const": "open"
+        },
+        {
+          "description": "Someone is working on the issue.",
+          "type": "string",
+          "const": "in_progress"
+        },
+        {
+          "description": "The issue is fixed.",
+          "type": "string",
+          "const": "resolved"
+        },
+        {
+          "description": "The issue will not be fixed.",
+          "type": "string",
+          "const": "wont_fix"
+        }
+      ]
+    },
+    "Link": {
+      "description": "A labeled web address.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Text shown for the link.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Address. It must start with `http://` or `https://`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "url"
+      ]
+    },
+    "Phase": {
+      "description": "One phase of a plan.",
+      "type": "object",
+      "properties": {
+        "goal": {
+          "description": "What this phase is meant to achieve.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Short name of the phase, unique among phases in this file.",
+          "type": "string"
+        },
+        "tasks": {
+          "description": "Tasks in this phase. Task ids are unique within the phase.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Task"
+          }
+        },
+        "title": {
+          "description": "Human-readable phase title.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "tasks"
+      ]
+    },
+    "Plan": {
+      "description": "Phased plan for the work that remains.",
+      "type": "object",
+      "properties": {
+        "phases": {
+          "description": "Ordered phases. Phase ids are unique within the file.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Phase"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "phases"
+      ]
+    },
+    "ProjectStatus": {
+      "description": "Lifecycle status of a project.",
+      "oneOf": [
+        {
+          "description": "The project has not been started.",
+          "type": "string",
+          "const": "idea"
+        },
+        {
+          "description": "The project is being built.",
+          "type": "string",
+          "const": "in_development"
+        },
+        {
+          "description": "A version has been published.",
+          "type": "string",
+          "const": "released"
+        },
+        {
+          "description": "The project is kept working, without major new work.",
+          "type": "string",
+          "const": "maintenance"
+        },
+        {
+          "description": "Work has stopped for now and may resume.",
+          "type": "string",
+          "const": "paused"
+        },
+        {
+          "description": "The project will not be continued.",
+          "type": "string",
+          "const": "discontinued"
+        }
+      ]
+    },
+    "Stack": {
+      "description": "The technical stack recorded for a project.",
+      "type": "object",
+      "properties": {
+        "components": {
+          "description": "Named pieces of the stack, such as a language or a hosted service.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Component"
+          }
+        },
+        "lockfiles": {
+          "description": "Lockfiles or other dependency manifests, as paths relative to the project file.\n\nPaths are relative. Absolute paths and `..` segments are rejected.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "components",
+        "lockfiles"
+      ]
+    },
+    "Task": {
+      "description": "One task inside a phase.",
+      "type": "object",
+      "properties": {
+        "due": {
+          "description": "Day the task is due, as `YYYY-MM-DD`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Short name of the task, unique among tasks in its phase.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Free-form note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Whether the task is still open.",
+          "$ref": "#/$defs/TaskStatus"
+        },
+        "title": {
+          "description": "Human-readable task title.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "status"
+      ]
+    },
+    "TaskStatus": {
+      "description": "Progress of a task.",
+      "oneOf": [
+        {
+          "description": "Nobody has started the task.",
+          "type": "string",
+          "const": "open"
+        },
+        {
+          "description": "The task is underway.",
+          "type": "string",
+          "const": "in_progress"
+        },
+        {
+          "description": "The task is finished.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The task will not be done.",
+          "type": "string",
+          "const": "dropped"
+        }
+      ]
+    },
+    "WatchItem": {
+      "description": "A dated reminder that is not a task or an issue.",
+      "type": "object",
+      "properties": {
+        "due": {
+          "description": "The day this reminder is about, as `YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Short name of the reminder, unique among watch items in this file.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of date this is.",
+          "$ref": "#/$defs/WatchKind"
+        },
+        "note": {
+          "description": "Free-form note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Human-readable reminder title.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "due"
+      ]
+    },
+    "WatchKind": {
+      "description": "Kind of dated reminder.",
+      "oneOf": [
+        {
+          "description": "A date by which something must happen.",
+          "type": "string",
+          "const": "deadline"
+        },
+        {
+          "description": "A date on which something stops being valid.",
+          "type": "string",
+          "const": "expiry"
+        },
+        {
+          "description": "A date on which the project should be reviewed.",
+          "type": "string",
+          "const": "review"
+        },
+        {
+          "description": "A dated reminder of another kind.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    }
+  }
+}

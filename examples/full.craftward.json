@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "id": "harbor-light",
+  "name": "Harbor Light",
+  "status": "in_development",
+  "description": "A local-first notebook for planning small software releases.",
+  "current_version": "0.4.0",
+  "tags": ["desktop", "rust"],
+  "updated": "2026-11-14",
+  "links": [
+    {
+      "label": "Repository",
+      "url": "https://example.com/harbor-light"
+    },
+    {
+      "label": "Issues",
+      "url": "http://example.com/harbor-light/issues"
+    }
+  ],
+  "stack": {
+    "components": [
+      {
+        "kind": "language",
+        "name": "Rust",
+        "version": "1.100.0"
+      },
+      {
+        "kind": "framework",
+        "name": "egui",
+        "version": "0.29.0",
+        "note": "Custom theme planned."
+      },
+      {
+        "kind": "service",
+        "name": "Example CI"
+      }
+    ],
+    "lockfiles": ["Cargo.lock", "npm/package-lock.json"]
+  },
+  "plan": {
+    "phases": [
+      {
+        "id": "foundation",
+        "title": "Foundation",
+        "goal": "Ship a file format the tools can trust.",
+        "tasks": [
+          {
+            "id": "schema",
+            "title": "Write the project file schema",
+            "status": "done",
+            "due": "2026-11-14"
+          },
+          {
+            "id": "validate",
+            "title": "Check files from the command line",
+            "status": "in_progress",
+            "note": "Cover every schema rule with a test."
+          }
+        ]
+      },
+      {
+        "id": "release",
+        "title": "First release",
+        "tasks": [
+          {
+            "id": "schema",
+            "title": "Tag the release",
+            "status": "open",
+            "due": "2027-03-31"
+          }
+        ]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "id": "theme-contrast",
+      "title": "Status colors fail on a light background",
+      "severity": "medium",
+      "status": "open",
+      "url": "https://example.com/harbor-light/issues/12",
+      "note": "Check the paused and discontinued states."
+    },
+    {
+      "id": "stale-lockfile",
+      "title": "Document how lockfiles are found",
+      "severity": "low",
+      "status": "wont_fix"
+    }
+  ],
+  "watch_items": [
+    {
+      "id": "domain-renewal",
+      "kind": "expiry",
+      "title": "Renew the example domain",
+      "due": "2027-06-30"
+    },
+    {
+      "id": "quarterly-review",
+      "kind": "review",
+      "title": "Review open issues",
+      "due": "2027-01-15",
+      "note": "Drop anything that has been paused for two quarters."
+    }
+  ]
+}

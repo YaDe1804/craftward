@@ -1,7 +1,6 @@
 # Contributing to Craftward
 
-Thank you for contributing. Craftward is pre-alpha. The repository currently
-contains the project skeleton only.
+Thank you for contributing. Craftward is pre-alpha.
 
 ## Language
 
@@ -26,17 +25,28 @@ Run these before opening a pull request:
 
 ```console
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 cargo deny check
 ```
 
-Formatting can be applied with `cargo fmt --all`.
+CI runs Clippy and the tests with `--all-features` so the checked-in JSON
+Schema is compared with the schema generated from the Rust types. Formatting
+can be applied with `cargo fmt --all`.
 
-The workspace has no third-party runtime dependencies. Application code stays
-in this repository. Add a third-party library only when it is necessary,
-reviewed, and licensed under a license allowed by `deny.toml`. CI enforces that
-policy.
+`serde` and `serde_json` are normal dependencies of `craftward-core`.
+`schemars` is optional. The `schema` feature enables it, and that feature is
+not a default feature. The command-line tool and the desktop app leave it
+off, because they validate project files and do not generate a JSON Schema.
+Regenerate `schema/craftward.schema.json` after a change to the project types:
+
+```console
+cargo run -p craftward-core --features schema --example generate-schema
+```
+
+Application code stays in this repository. Add a third-party library only when
+it is necessary, reviewed, and licensed under a license allowed by `deny.toml`.
+CI enforces that policy.
 
 ## Pull requests
 
