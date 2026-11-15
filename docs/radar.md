@@ -2,8 +2,9 @@
 
 `craftward radar` reads the lockfiles named by a project's `stack.lockfiles`
 and asks [OSV](https://osv.dev/) which of those packages have a known
-vulnerability. It does not store findings in a database and it does not
-mark anything done.
+vulnerability. Each successful check is stored in the local database
+described in [storage.md](storage.md). `craftward findings` reads that
+database and does not use the network.
 
 ## What is read
 
@@ -80,20 +81,64 @@ fail the project.
 `--offline` with an expired record also names the stored time. It does not
 describe that as a network error, because no request was made.
 
+## Lifecycle
+
+A finding is one project, one ecosystem, one package name, and one
+vulnerability id. The version is not part of that identity. A later scan
+that still affects the package updates the stored version and keeps the
+same id.
+
+On a successful check, in one transaction:
+
+- A finding that is not stored yet is inserted as `open`, with a
+  `discovered` event.
+- A stored finding is updated. If it was `resolved`, it becomes `open`
+  again and gains a `reappeared` event.
+- An `ignored` finding whose `ignore_until` is a date before today (UTC)
+  becomes `open` and gains a `reopened` event. The `until` day itself is
+  still ignored. An ignore without `until` does not expire.
+- A finding that this check did not see, and that is not already
+  `resolved`, becomes `resolved`. That includes an ignored finding that
+  disappeared.
+- The run is appended, including how many packages were checked and how
+  many findings are open, new, or newly resolved.
+
+A failed check (the lockfile cannot be read, or there is no network and no
+cache) does not change that project's findings. The run is still appended,
+with `error` set and the counters at zero.
+
+A project with no lockfiles in `stack.lockfiles` is not a check. Its
+findings stay as they are, including open and ignored ones. The run is
+appended with `evaluated` 0 and `error` null. `open_count` is how many
+findings were already open. The other counters are zero. `error` stays
+empty because nothing failed: there was nothing to compare.
+
+`findings ignore` stores the reason and an optional last day. `findings
+reopen` makes the finding `open` and clears the ignore. Reopening a
+finding that is already open is an error.
+
 ## Text report
 
 Each project starts with its id. Each lockfile that was read is one line,
 `lockfile <path>: queried N, skipped M`. Warnings and errors are indented
 under the project. A project with an empty lockfile list and no warning or
-error prints `no lockfiles configured`. A checked project with no
-vulnerabilities prints `no findings`. An empty workspace prints
-`no projects`.
+error prints `no lockfiles configured`. When that project still has an
+open or ignored finding, the report adds `existing findings are unchanged
+until lockfiles are configured` and still lists the open findings. An empty
+workspace prints `no projects`.
 
-Findings are ordered by severity (`critical`, `high`, `medium`, `low`,
-`unknown`), then by package, version, and id. Each finding prints the
-package and version, the vulnerability id, aliases in parentheses when
-there are any, the severity, the summary, `fixed in` when fixed versions
-were recorded, and `https://osv.dev/vulnerability/<id>`.
+Open findings are ordered by severity (`critical`, `high`, `medium`,
+`low`, `unknown`), then by package, version, and vulnerability id. A
+finding inserted by this run is marked `new`. Each one prints the package
+and version, `#` and the database id, the vulnerability id, aliases in
+parentheses when there are any, the severity, the summary, `fixed in` when
+fixed versions were recorded, and `https://osv.dev/vulnerability/<id>`.
+
+Ignored findings are not listed unless `--all` is set. The report always
+prints `ignored: N` and `resolved: N` for a successful check. `N` for
+ignored is how many ignored findings were still present. `N` for resolved
+is how many this run marked resolved. When all three are zero, the report
+also prints `no open findings`.
 
 ## JSON report
 
@@ -112,6 +157,9 @@ stream and produce no JSON document.
       ],
       "findings": [
         {
+          "record_id": 1,
+          "new": true,
+          "state": "open",
           "ecosystem": "crates.io",
           "package": "example",
           "version": "1.0.0",
@@ -123,6 +171,9 @@ stream and produce no JSON document.
           "url": "https://osv.dev/vulnerability/RUSTSEC-2024-0001"
         }
       ],
+      "ignored": 0,
+      "resolved": 0,
+      "evaluated": true,
       "warnings": [],
       "error": null,
       "stale_cache_from": null
@@ -131,18 +182,30 @@ stream and produce no JSON document.
 }
 ```
 
-`kind` is `cargo` or `npm`. `error` is a string when that project could not
-be checked, and null otherwise. `stale_cache_from` is `YYYY-MM-DD HH:MM:SS UTC`
-when a network failure was answered from the cache, and null otherwise.
-Field names and this nesting are stable.
+`id` inside a finding is the OSV id. `record_id` is the database id used
+by `findings`. Without `--all`, `findings` lists only open findings.
+`--all` appends the ignored ones. `ignored` and `resolved` are the same
+counts as in the text report. `evaluated` is false when no lockfiles were
+configured or the check failed. `error` is a string only when the check
+failed, and null when nothing was evaluated. `stale_cache_from` is
+`YYYY-MM-DD HH:MM:SS UTC` when a network failure was answered from the cache.
+
+`findings --json` prints `{ "findings": [ ... ] }`. Each object uses `id`
+for the database id and `vulnerability` for the OSV id, plus `project_id`,
+`state`, `first_seen`, `last_seen`, `resolved_at`, `ignore_reason`, and
+`ignore_until`. `findings show --json` prints `{ "finding": { ... },
+"events": [ { "kind": "discovered", "at": "YYYY-MM-DDTHH:MM:SSZ", "reason": "" } ] }`.
+Event kinds are `discovered`, `ignored`, `reopened`, `resolved`, and
+`reappeared`.
 
 ## Exit status
 
 | Status | Meaning |
 | --- | --- |
-| 0 | No vulnerability was found. |
-| 1 | A project could not be checked, or the cache directory could not be chosen. |
+| 0 | No finding is open. |
+| 1 | A project could not be checked, or the cache or data directory could not be chosen. |
 | 2 | The command line is wrong. |
-| 3 | At least one vulnerability was found. |
+| 3 | At least one finding is open. |
 
-Status 1 wins over status 3.
+Status 1 wins over status 3. A project with no lockfiles still exits 3 when
+one of its stored findings is open. `findings` does not use status 3.

@@ -41,11 +41,12 @@ every file is valid, 1 when a file is invalid or cannot be read, and 2 when
 the command line is wrong. A missing source directory or lockfile is a
 warning and does not change that status. `init`, `add`, `remove`, `list`,
 `roadmap`, `workspace path`, `show`, the `project`, `phase`, `task`,
-`issue`, and `watch` edits, and `radar` are described in
+`issue`, and `watch` edits, `radar`, and `findings` are described in
 [docs/cli.md](docs/cli.md). An edit is written only when the project file
 is still valid. `radar` asks [OSV](https://osv.dev/) about the packages in
-the project's lockfiles. It exits 3 when it finds a vulnerability. See
-[docs/radar.md](docs/radar.md).
+the project's lockfiles and stores the findings in a local database. It
+exits 3 when a finding is open. See [docs/radar.md](docs/radar.md) and
+[docs/storage.md](docs/storage.md).
 
 ```console
 cargo run -p craftward-cli -- validate examples/minimal.craftward.json examples/full.craftward.json
@@ -81,4 +82,5 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Workspace file](docs/workspace-format.md)
 - [Command-line interface](docs/cli.md)
 - [Vulnerability radar](docs/radar.md)
+- [Local database](docs/storage.md)
 - [Roadmap](docs/roadmap/)

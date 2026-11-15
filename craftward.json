@@ -195,17 +195,17 @@
           {
             "id": "t04",
             "title": "Speicher-Schnittstelle entwerfen: lokal jetzt, Server später ohne Umbau",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t05",
             "title": "Lokale Datenbank (SQLite) für Radar-Zustand, Cache und Verlauf",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t06",
             "title": "Tabellen automatisch anlegen und bei neuen Versionen migrieren",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t07",
@@ -282,12 +282,12 @@
           {
             "id": "t07",
             "title": "Cache in der lokalen Datenbank, funktioniert auch offline",
-            "status": "in_progress"
+            "status": "done"
           },
           {
             "id": "t08",
             "title": "Meldungen als erledigt / ignoriert markieren",
-            "status": "open"
+            "status": "done"
           }
         ]
       },

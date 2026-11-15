@@ -1,6 +1,7 @@
 //! Command-line interface for Craftward.
 
 mod editing;
+mod findings;
 mod radar;
 
 use std::env;
@@ -96,6 +97,7 @@ enum Command {
     },
     Edit(editing::Request),
     Radar(radar::Request),
+    Findings(findings::Request),
     HelpText(&'static str),
     Usage(Topic),
 }
@@ -195,6 +197,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         ),
         Command::Edit(request) => editing::run(request, invocation.workspace.as_deref()),
         Command::Radar(request) => radar::run(&request, invocation.workspace.as_deref()),
+        Command::Findings(request) => findings::run(&request, invocation.workspace.as_deref()),
         Command::HelpText(text) => {
             println!("{text}");
             Ok(ExitCode::SUCCESS)
@@ -584,6 +587,12 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
                 radar::Parsed::Run(request) => Ok(Command::Radar(request)),
             };
         }
+        "findings" => {
+            return match findings::parse(args)? {
+                findings::Parsed::Help(text) => Ok(Command::HelpText(text)),
+                findings::Parsed::Run(request) => Ok(Command::Findings(request)),
+            };
+        }
         "show" | "project" | "phase" | "task" | "issue" | "watch" => {
             return match editing::parse(name, args)? {
                 editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
@@ -836,8 +845,11 @@ Commands:
   task add|status|done|remove
   issue add|status|remove
   watch add|remove
-  radar [PROJECT...] [--refresh] [--offline] [--json] [--cache-dir DIR]
-      Look up known vulnerabilities in the project's lockfiles.
+  radar [PROJECT...] [--refresh] [--offline] [--json] [--all]
+      [--cache-dir DIR] [--data-dir DIR]
+      Look up known vulnerabilities and store them.
+  findings [PROJECT...] [--state ..] [--json] [--data-dir DIR]
+      List, show, ignore, or reopen stored findings.
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.
@@ -849,7 +861,7 @@ Exit status:
   0  success, or radar found nothing
   1  a file or request failed
   2  the command line is wrong
-  3  radar found a vulnerability"
+  3  radar has an open finding"
     );
 }
 

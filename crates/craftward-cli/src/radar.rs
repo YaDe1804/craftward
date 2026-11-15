@@ -4,9 +4,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use craftward_core::{
-    HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost, RadarOptions, list_projects,
-    locate_cache, render_json, render_text, scan, unix_now,
+    DATABASE_FILE, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost, RadarOptions,
+    apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
+    render_ledger_text, scan, unix_now,
 };
+use craftward_store::SqliteStore;
 
 use crate::{Failure, resolve_project};
 
@@ -18,18 +20,31 @@ pub(crate) enum Parsed {
     Run(Request),
 }
 
+/// Whether a scan may use the network.
+#[derive(Clone, Copy)]
+pub(crate) enum ScanMode {
+    /// Use the cache, then the network.
+    Normal,
+    /// Ignore fresh cache entries and ask again.
+    Refresh,
+    /// Never contact OSV.
+    Offline,
+}
+
 /// Arguments of one radar run.
 pub(crate) struct Request {
     /// Workspace ids or project paths. Empty means every workspace project.
     pub projects: Vec<String>,
-    /// Ignore fresh cache entries.
-    pub refresh: bool,
-    /// Do not contact OSV.
-    pub offline: bool,
+    /// Whether the scan may use the network.
+    pub mode: ScanMode,
     /// Print JSON instead of the text report.
     pub json: bool,
+    /// Include ignored findings in the list.
+    pub show_all: bool,
     /// Cache directory from `--cache-dir`.
     pub cache_dir: Option<PathBuf>,
+    /// Data directory from `--data-dir`.
+    pub data_dir: Option<PathBuf>,
 }
 
 pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
@@ -40,31 +55,48 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
         return Err("too many arguments".to_owned());
     }
     let mut projects = Vec::new();
-    let mut refresh = false;
-    let mut offline = false;
+    let mut mode = ScanMode::Normal;
     let mut json = false;
+    let mut show_all = false;
     let mut cache_dir = None;
+    let mut data_dir = None;
     let mut index = 0;
     while index < args.len() {
         let rendered = args[index].to_string_lossy();
         match rendered.as_ref() {
             "--refresh" => {
-                if refresh {
-                    return Err("duplicate option: --refresh".to_owned());
-                }
-                refresh = true;
+                mode = match mode {
+                    ScanMode::Normal => ScanMode::Refresh,
+                    ScanMode::Refresh => {
+                        return Err("duplicate option: --refresh".to_owned());
+                    }
+                    ScanMode::Offline => {
+                        return Err("use either --refresh or --offline".to_owned());
+                    }
+                };
             }
             "--offline" => {
-                if offline {
-                    return Err("duplicate option: --offline".to_owned());
-                }
-                offline = true;
+                mode = match mode {
+                    ScanMode::Normal => ScanMode::Offline,
+                    ScanMode::Offline => {
+                        return Err("duplicate option: --offline".to_owned());
+                    }
+                    ScanMode::Refresh => {
+                        return Err("use either --refresh or --offline".to_owned());
+                    }
+                };
             }
             "--json" => {
                 if json {
                     return Err("duplicate option: --json".to_owned());
                 }
                 json = true;
+            }
+            "--all" => {
+                if show_all {
+                    return Err("duplicate option: --all".to_owned());
+                }
+                show_all = true;
             }
             "--cache-dir" => {
                 let Some(value) = args.get(index + 1) else {
@@ -79,6 +111,19 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
                 cache_dir = Some(PathBuf::from(value));
                 index += 1;
             }
+            "--data-dir" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("--data-dir needs a directory".to_owned());
+                };
+                if value.to_string_lossy().starts_with('-') {
+                    return Err("--data-dir needs a directory".to_owned());
+                }
+                if data_dir.is_some() {
+                    return Err("duplicate option: --data-dir".to_owned());
+                }
+                data_dir = Some(PathBuf::from(value));
+                index += 1;
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unrecognized argument: {other}"));
             }
@@ -86,15 +131,13 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
         }
         index += 1;
     }
-    if refresh && offline {
-        return Err("use either --refresh or --offline".to_owned());
-    }
     Ok(Parsed::Run(Request {
         projects,
-        refresh,
-        offline,
+        mode,
         json,
+        show_all,
         cache_dir,
+        data_dir,
     }))
 }
 
@@ -105,12 +148,15 @@ pub(crate) fn run(
     let cache_dir = locate_cache(&ProcessHost, request.cache_dir.as_deref())
         .map_err(|error| Failure::Data(error.to_string()))?;
     let files = project_files(&request.projects, workspace)?;
+    let started = unix_now();
+    let refresh = matches!(request.mode, ScanMode::Refresh);
+    let offline = matches!(request.mode, ScanMode::Offline);
     let options = RadarOptions {
-        refresh: request.refresh,
-        offline: request.offline,
-        now: unix_now(),
+        refresh,
+        offline,
+        now: started,
     };
-    let reports = if request.offline {
+    let reports = if offline {
         scan(&files, &OfflineClient, &cache_dir, &options)
     } else {
         let client =
@@ -118,15 +164,24 @@ pub(crate) fn run(
                 .map_err(Failure::Data)?;
         scan(&files, &client, &cache_dir, &options)
     };
+    let data_dir = locate_data(&ProcessHost, request.data_dir.as_deref())
+        .map_err(|error| Failure::Data(error.to_string()))?;
+    let mut store = SqliteStore::open(&data_dir.join(DATABASE_FILE))
+        .map_err(|error| Failure::Data(error.to_string()))?;
+    let ledgers = apply_reports(&mut store, &reports, started, unix_now(), offline)
+        .map_err(|error| Failure::Data(error.to_string()))?;
     if request.json {
-        println!("{}", render_json(&reports).map_err(Failure::Data)?);
+        println!(
+            "{}",
+            render_ledger_json(&ledgers, request.show_all).map_err(Failure::Data)?
+        );
     } else {
-        print!("{}", render_text(&reports));
+        print!("{}", render_ledger_text(&ledgers, request.show_all));
     }
-    if reports.iter().any(|report| report.error.is_some()) {
+    if ledgers.iter().any(|ledger| ledger.error.is_some()) {
         return Ok(ExitCode::from(1));
     }
-    if reports.iter().any(|report| !report.findings.is_empty()) {
+    if ledgers.iter().any(|ledger| !ledger.open.is_empty()) {
         return Ok(ExitCode::from(3));
     }
     Ok(ExitCode::SUCCESS)
@@ -163,17 +218,19 @@ const HELP: &str = "\
 Look up known vulnerabilities for the packages in project lockfiles.
 
 Usage:
-  craftward radar [PROJECT...] [--refresh] [--offline] [--json]
-      [--cache-dir DIR]
+  craftward radar [PROJECT...] [--refresh] [--offline] [--json] [--all]
+      [--cache-dir DIR] [--data-dir DIR]
 
 With no PROJECT, every project in the workspace is checked. PROJECT is a
 workspace id or a project path, with the same rules as roadmap. --refresh
-ignores cached answers. --offline never contacts OSV. --json prints the
-same report as JSON.
+ignores cached answers. --offline never contacts OSV. --all includes
+ignored findings in the list. --json prints the same report as JSON.
+Findings are stored in the data directory.
 
-Exit status is 0 when nothing was found, 3 when a vulnerability was found,
+Exit status is 0 when no finding is open, 3 when a finding is open,
 1 when a project could not be checked, and 2 when the command line is wrong.
-An error takes priority over a finding.
+An error takes priority over an open finding. Ignored findings do not
+change the status.
 
 Example:
   craftward radar harbor-light

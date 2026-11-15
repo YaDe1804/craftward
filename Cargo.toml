@@ -5,6 +5,7 @@ members = [
     "crates/craftward-cli",
     "crates/craftward-app",
     "crates/craftward-net",
+    "crates/craftward-store",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ rust-version = "1.100.0"
 [workspace.dependencies]
 craftward-core = { path = "crates/craftward-core" }
 craftward-net = { path = "crates/craftward-net" }
+craftward-store = { path = "crates/craftward-store" }
 schemars = { version = "=1.2.3", default-features = false, features = ["derive", "std"] }
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["std"] }
