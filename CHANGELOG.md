@@ -40,3 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stores each run. `findings` lists, shows, ignores, and reopens findings.
   A finding that disappears is marked resolved. Exit status 3 means a
   finding is open.
+- Advisory kinds for OSV records: `vulnerability`, `malicious`,
+  `unmaintained`, `unsound`, and `notice`. A withdrawn record is not stored.
+  A finding whose record was withdrawn is resolved with a `withdrawn` event.
+  Exit status 3 is reserved for vulnerabilities, malicious packages, and a
+  support end that has passed. Notices and an approaching support end count
+  with `--strict`.
+- End-of-support checks through the endoflife.date API v1. A component may
+  set `eol_product`. Findings use the ids `EOL:<product>:<cycle>` and the
+  same lifecycle as OSV findings. The data is under the MIT License.
+- `stack add`, `stack set`, `stack remove`, and `stack lockfile add` /
+  `remove`, which edit components and lockfile paths. The database schema
+  is version 3 and adds `kind` on findings.

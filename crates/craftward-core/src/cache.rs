@@ -41,6 +41,16 @@ pub struct StoredAdvisory {
     pub severity: String,
     /// Affected packages and fixed versions.
     pub affected: Vec<StoredAffected>,
+    /// Whether the record was withdrawn. Absent in caches written before this field.
+    #[serde(default)]
+    pub withdrawn: bool,
+    /// Advisory kind. Absent caches are read as `vulnerability`.
+    #[serde(default = "vulnerability_kind")]
+    pub kind: String,
+}
+
+fn vulnerability_kind() -> String {
+    "vulnerability".to_owned()
 }
 
 /// One affected package in the cache.
@@ -61,6 +71,8 @@ impl From<&Advisory> for StoredAdvisory {
             aliases: advisory.aliases.clone(),
             summary: advisory.summary.clone(),
             severity: advisory.severity.clone(),
+            withdrawn: advisory.withdrawn,
+            kind: advisory.kind.clone(),
             affected: advisory
                 .affected
                 .iter()
@@ -81,6 +93,8 @@ impl From<StoredAdvisory> for Advisory {
             aliases: stored.aliases,
             summary: stored.summary,
             severity: stored.severity,
+            withdrawn: stored.withdrawn,
+            kind: stored.kind,
             affected: stored
                 .affected
                 .into_iter()

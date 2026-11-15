@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use craftward_core::{
-    DATABASE_FILE, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost, RadarOptions,
-    apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
+    DATABASE_FILE, FindingKind, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost,
+    RadarOptions, apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
     render_ledger_text, scan, unix_now,
 };
 use craftward_store::SqliteStore;
@@ -45,6 +45,10 @@ pub(crate) struct Request {
     pub cache_dir: Option<PathBuf>,
     /// Data directory from `--data-dir`.
     pub data_dir: Option<PathBuf>,
+    /// Count notices and `eol_soon` toward exit status 3.
+    pub strict: bool,
+    /// Days ahead that still count as `eol_soon`.
+    pub eol_warning_days: u32,
 }
 
 pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
@@ -60,32 +64,14 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
     let mut show_all = false;
     let mut cache_dir = None;
     let mut data_dir = None;
+    let mut strict = false;
+    let mut eol_warning_days = None;
     let mut index = 0;
     while index < args.len() {
         let rendered = args[index].to_string_lossy();
         match rendered.as_ref() {
-            "--refresh" => {
-                mode = match mode {
-                    ScanMode::Normal => ScanMode::Refresh,
-                    ScanMode::Refresh => {
-                        return Err("duplicate option: --refresh".to_owned());
-                    }
-                    ScanMode::Offline => {
-                        return Err("use either --refresh or --offline".to_owned());
-                    }
-                };
-            }
-            "--offline" => {
-                mode = match mode {
-                    ScanMode::Normal => ScanMode::Offline,
-                    ScanMode::Offline => {
-                        return Err("duplicate option: --offline".to_owned());
-                    }
-                    ScanMode::Refresh => {
-                        return Err("use either --refresh or --offline".to_owned());
-                    }
-                };
-            }
+            "--refresh" => mode = exclusive_mode(mode, ScanMode::Refresh, "--refresh")?,
+            "--offline" => mode = exclusive_mode(mode, ScanMode::Offline, "--offline")?,
             "--json" => {
                 if json {
                     return Err("duplicate option: --json".to_owned());
@@ -99,30 +85,30 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
                 show_all = true;
             }
             "--cache-dir" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err("--cache-dir needs a directory".to_owned());
-                };
-                if value.to_string_lossy().starts_with('-') {
-                    return Err("--cache-dir needs a directory".to_owned());
-                }
-                if cache_dir.is_some() {
-                    return Err("duplicate option: --cache-dir".to_owned());
-                }
-                cache_dir = Some(PathBuf::from(value));
-                index += 1;
+                cache_dir = Some(one_directory(
+                    args,
+                    &mut index,
+                    cache_dir.is_some(),
+                    "--cache-dir",
+                )?);
             }
             "--data-dir" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err("--data-dir needs a directory".to_owned());
-                };
-                if value.to_string_lossy().starts_with('-') {
-                    return Err("--data-dir needs a directory".to_owned());
+                data_dir = Some(one_directory(
+                    args,
+                    &mut index,
+                    data_dir.is_some(),
+                    "--data-dir",
+                )?);
+            }
+            "--strict" => {
+                if strict {
+                    return Err("duplicate option: --strict".to_owned());
                 }
-                if data_dir.is_some() {
-                    return Err("duplicate option: --data-dir".to_owned());
-                }
-                data_dir = Some(PathBuf::from(value));
-                index += 1;
+                strict = true;
+            }
+            "--eol-warning-days" => {
+                eol_warning_days =
+                    Some(warning_days(args, &mut index, eol_warning_days.is_some())?);
             }
             other if other.starts_with('-') => {
                 return Err(format!("unrecognized argument: {other}"));
@@ -138,7 +124,62 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
         show_all,
         cache_dir,
         data_dir,
+        strict,
+        eol_warning_days: eol_warning_days.unwrap_or(90),
     }))
+}
+
+fn exclusive_mode(current: ScanMode, next: ScanMode, name: &str) -> Result<ScanMode, String> {
+    match (current, next) {
+        (ScanMode::Normal, chosen) => Ok(chosen),
+        (ScanMode::Refresh, ScanMode::Refresh) | (ScanMode::Offline, ScanMode::Offline) => {
+            Err(format!("duplicate option: {name}"))
+        }
+        (ScanMode::Refresh | ScanMode::Offline, _) => {
+            Err("use either --refresh or --offline".to_owned())
+        }
+    }
+}
+
+fn one_directory(
+    args: &[std::ffi::OsString],
+    index: &mut usize,
+    present: bool,
+    name: &str,
+) -> Result<PathBuf, String> {
+    if present {
+        return Err(format!("duplicate option: {name}"));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(format!("{name} needs a directory"));
+    };
+    if value.to_string_lossy().starts_with('-') {
+        return Err(format!("{name} needs a directory"));
+    }
+    *index += 1;
+    Ok(PathBuf::from(value))
+}
+
+fn warning_days(
+    args: &[std::ffi::OsString],
+    index: &mut usize,
+    present: bool,
+) -> Result<u32, String> {
+    if present {
+        return Err("duplicate option: --eol-warning-days".to_owned());
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err("--eol-warning-days needs a number".to_owned());
+    };
+    let text = value.to_string_lossy();
+    if text.starts_with('-') {
+        return Err("--eol-warning-days needs a number".to_owned());
+    }
+    let days = text
+        .parse::<u32>()
+        .map_err(|_| "--eol-warning-days needs a non-negative number".to_owned())?;
+    *index += 1;
+    Ok(days)
 }
 
 pub(crate) fn run(
@@ -155,6 +196,7 @@ pub(crate) fn run(
         refresh,
         offline,
         now: started,
+        eol_warning_days: request.eol_warning_days,
     };
     let reports = if offline {
         scan(&files, &OfflineClient, &cache_dir, &options)
@@ -181,7 +223,15 @@ pub(crate) fn run(
     if ledgers.iter().any(|ledger| ledger.error.is_some()) {
         return Ok(ExitCode::from(1));
     }
-    if ledgers.iter().any(|ledger| !ledger.open.is_empty()) {
+    if ledgers.iter().any(|ledger| {
+        ledger
+            .open
+            .iter()
+            .any(|finding| match FindingKind::parse(&finding.kind) {
+                Some(kind) => kind.affects_exit(request.strict),
+                None => request.strict,
+            })
+    }) {
         return Ok(ExitCode::from(3));
     }
     Ok(ExitCode::SUCCESS)
@@ -219,18 +269,21 @@ Look up known vulnerabilities for the packages in project lockfiles.
 
 Usage:
   craftward radar [PROJECT...] [--refresh] [--offline] [--json] [--all]
+      [--strict] [--eol-warning-days N]
       [--cache-dir DIR] [--data-dir DIR]
 
 With no PROJECT, every project in the workspace is checked. PROJECT is a
 workspace id or a project path, with the same rules as roadmap. --refresh
-ignores cached answers. --offline never contacts OSV. --all includes
-ignored findings in the list. --json prints the same report as JSON.
-Findings are stored in the data directory.
+ignores cached answers. --offline never contacts OSV or endoflife.date.
+--all includes ignored findings in the list. --json prints the same report
+as JSON. --eol-warning-days sets how far ahead a support end counts as
+eol_soon. The default is 90. Findings are stored in the data directory.
 
-Exit status is 0 when no finding is open, 3 when a finding is open,
-1 when a project could not be checked, and 2 when the command line is wrong.
-An error takes priority over an open finding. Ignored findings do not
-change the status.
+Exit status is 0 when no actionable finding is open, 3 when a vulnerability,
+malicious package, or past support end is open, 1 when a project could not
+be checked, and 2 when the command line is wrong. Notices and eol_soon
+count toward status 3 only with --strict. An error takes priority over an
+open finding. Ignored findings do not change the status.
 
 Example:
   craftward radar harbor-light

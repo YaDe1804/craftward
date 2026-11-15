@@ -62,9 +62,30 @@ ALTER TABLE runs ADD COLUMN evaluated INTEGER NOT NULL DEFAULT 0 CHECK (evaluate
 UPDATE runs SET evaluated = 1 WHERE error IS NULL;
 ";
 
+const MIGRATION_V3: &str = "
+ALTER TABLE findings ADD COLUMN kind TEXT NOT NULL DEFAULT 'vulnerability'
+    CHECK (kind IN (
+        'vulnerability', 'malicious', 'unmaintained', 'unsound', 'notice', 'eol', 'eol_soon'
+    ));
+CREATE TABLE finding_events_next (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL REFERENCES findings(id),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'discovered', 'ignored', 'reopened', 'resolved', 'reappeared', 'withdrawn'
+    )),
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+INSERT INTO finding_events_next (id, finding_id, kind, at, reason)
+    SELECT id, finding_id, kind, at, reason FROM finding_events;
+DROP TABLE finding_events;
+ALTER TABLE finding_events_next RENAME TO finding_events;
+CREATE INDEX finding_events_finding ON finding_events(finding_id);
+";
+
 const FINDING_COLUMNS: &str = "
 id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
-summary, aliases, fixed_versions, state, first_seen, last_seen, resolved_at,
+summary, aliases, fixed_versions, state, kind, first_seen, last_seen, resolved_at,
 ignore_reason, ignore_until
 ";
 
@@ -158,8 +179,8 @@ impl StoreSession for Session<'_> {
             .execute(
                 "INSERT INTO findings (
                     project_id, ecosystem, package_name, vulnerability_id, version, severity,
-                    summary, aliases, fixed_versions, state, first_seen, last_seen
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', ?10, ?10)",
+                    summary, aliases, fixed_versions, state, kind, first_seen, last_seen
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', ?10, ?11, ?11)",
                 (
                     &finding.project_id,
                     &finding.ecosystem,
@@ -170,6 +191,7 @@ impl StoreSession for Session<'_> {
                     &finding.summary,
                     encode_list(&finding.aliases)?,
                     encode_list(&finding.fixed_versions)?,
+                    &finding.kind,
                     &finding.seen_at,
                 ),
             )
@@ -182,8 +204,9 @@ impl StoreSession for Session<'_> {
             .execute(
                 "UPDATE findings SET
                     version = ?1, severity = ?2, summary = ?3, aliases = ?4, fixed_versions = ?5,
-                    state = ?6, last_seen = ?7, resolved_at = ?8, ignore_reason = ?9, ignore_until = ?10
-                 WHERE id = ?11",
+                    state = ?6, kind = ?7, last_seen = ?8, resolved_at = ?9, ignore_reason = ?10,
+                    ignore_until = ?11
+                 WHERE id = ?12",
                 (
                     &finding.version,
                     &finding.severity,
@@ -191,6 +214,7 @@ impl StoreSession for Session<'_> {
                     encode_list(&finding.aliases)?,
                     encode_list(&finding.fixed_versions)?,
                     finding.state.as_str(),
+                    &finding.kind,
                     &finding.last_seen,
                     &finding.resolved_at,
                     &finding.ignore_reason,
@@ -334,11 +358,12 @@ fn read_finding(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
         aliases: decode_list(&aliases)?,
         fixed_versions: decode_list(&fixed)?,
         state,
-        first_seen: row.get(11).map_err(|error| failed(&error))?,
-        last_seen: row.get(12).map_err(|error| failed(&error))?,
-        resolved_at: row.get(13).map_err(|error| failed(&error))?,
-        ignore_reason: row.get(14).map_err(|error| failed(&error))?,
-        ignore_until: row.get(15).map_err(|error| failed(&error))?,
+        kind: row.get(11).map_err(|error| failed(&error))?,
+        first_seen: row.get(12).map_err(|error| failed(&error))?,
+        last_seen: row.get(13).map_err(|error| failed(&error))?,
+        resolved_at: row.get(14).map_err(|error| failed(&error))?,
+        ignore_reason: row.get(15).map_err(|error| failed(&error))?,
+        ignore_until: row.get(16).map_err(|error| failed(&error))?,
     })
 }
 
@@ -420,6 +445,9 @@ fn migrate(connection: &mut Connection, from: i64) -> Result<(), StoreError> {
     }
     if from < 2 {
         apply_migration(connection, MIGRATION_V2, 2)?;
+    }
+    if from < 3 {
+        apply_migration(connection, MIGRATION_V3, 3)?;
     }
     Ok(())
 }

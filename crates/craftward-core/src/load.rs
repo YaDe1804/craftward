@@ -56,7 +56,7 @@ const WATCH_KINDS: &[&str] = &["deadline", "expiry", "review", "other"];
 
 const LINK_FIELDS: &[&str] = &["label", "url"];
 const STACK_FIELDS: &[&str] = &["components", "lockfiles"];
-const COMPONENT_FIELDS: &[&str] = &["kind", "name", "version", "note"];
+const COMPONENT_FIELDS: &[&str] = &["kind", "name", "version", "note", "eol_product"];
 const PLAN_FIELDS: &[&str] = &["phases"];
 const PHASE_FIELDS: &[&str] = &["id", "title", "goal", "tasks"];
 const TASK_FIELDS: &[&str] = &["id", "title", "status", "due", "note"];
@@ -233,6 +233,7 @@ fn validate_components(value: &Value, errors: &mut Vec<ValidationError>) {
         require_text(component, "name", &path, errors);
         optional_string(component, "version", &path, errors);
         optional_string(component, "note", &path, errors);
+        optional_text(component, "eol_product", &path, errors);
     }
 }
 
@@ -471,6 +472,24 @@ fn optional_string(
         return;
     };
     let _ = expect_string(value, &join(parent, key), errors);
+}
+
+fn optional_text(
+    object: &Map<String, Value>,
+    key: &str,
+    parent: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let path = join(parent, key);
+    let Some(value) = optional(object, key) else {
+        return;
+    };
+    let Some(text) = expect_string(value, &path, errors) else {
+        return;
+    };
+    if text.trim().is_empty() {
+        push(errors, path, "must not be empty or whitespace");
+    }
 }
 
 fn require_choice(

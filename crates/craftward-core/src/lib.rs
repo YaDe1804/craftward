@@ -7,6 +7,7 @@
 mod cache;
 mod date;
 mod edit;
+mod eol;
 mod error;
 mod http;
 mod i18n;
@@ -25,13 +26,18 @@ mod store;
 mod workspace;
 
 pub use date::{
-    format_iso8601, format_unix_timestamp, is_calendar_date, unix_now, utc_date, utc_day,
+    days_between, format_iso8601, format_unix_timestamp, is_calendar_date, unix_now, utc_date,
+    utc_day,
 };
 pub use edit::{
-    EditError, EditOutcome, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate,
-    add_issue, add_phase, add_task, add_watch, edit_file, id_from_title, remove_issue,
-    remove_phase, remove_task, remove_watch, render_project, set_issue_status, set_project,
-    set_task_status,
+    ComponentChanges, EditError, EditOutcome, NewComponent, NewIssue, NewPhase, NewTask, NewWatch,
+    ProjectChanges, ProjectUpdate, add_component, add_issue, add_lockfile, add_phase, add_task,
+    add_watch, edit_file, id_from_title, remove_component, remove_issue, remove_lockfile,
+    remove_phase, remove_task, remove_watch, render_project, set_component, set_issue_status,
+    set_project, set_task_status,
+};
+pub use eol::{
+    CatalogProduct, Cycle, EolHit, EolOptions, EolReport, check_components, normalize_name,
 };
 pub use error::{LoadError, ValidationError};
 pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
@@ -66,8 +72,8 @@ pub use roadmap::{
 #[cfg(feature = "schema")]
 pub use schema::project_schema_json;
 pub use store::{
-    DATABASE_FILE, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore,
-    StoreError, StoreSession, StoredEvent, StoredFinding,
+    DATABASE_FILE, FindingKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter,
+    StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,
 };
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,

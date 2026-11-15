@@ -153,6 +153,7 @@ fn options(refresh: bool, offline: bool, now: i64) -> RadarOptions {
         refresh,
         offline,
         now,
+        eol_warning_days: 90,
     }
 }
 

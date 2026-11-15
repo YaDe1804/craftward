@@ -5,8 +5,10 @@
 version.
 
 Exit status is `0` for success, `1` when a file or request fails, and `2` when
-the command line is wrong. `radar` also exits `3` when a stored finding is
-open; an error still exits `1`. Ignored findings do not change that status.
+the command line is wrong. `radar` also exits `3` when an actionable
+finding is open. Notices and a support end that is only approaching count
+with `--strict`. An error still exits `1`. Ignored findings do not change
+that status.
 `--help` after a command prints that command's help and exits `0`.
 
 `--workspace <FILE>` selects the workspace file for that invocation. Otherwise
@@ -239,6 +241,39 @@ craftward watch add harbor-light --kind expiry --title "Renew domain" --due 2027
 craftward watch remove harbor-light domain-renewal
 ```
 
+## stack
+
+Changes `stack` in a project file. The file is written only when the result
+is still valid, and `updated` is set to the UTC date. A component is
+addressed by `name`, without regard to letter case. Two components with
+the same name are an error that says so.
+
+`stack add` needs `--kind` and `--name`. Kind is `platform`, `language`,
+`framework`, `runtime`, `sdk`, `service`, `tool`, or `other`. `--version`,
+`--note`, and `--eol-product` are optional. The stack is created when the
+project has none. A name that is already used exits 1.
+
+`stack set` changes those optional fields on the one matching component.
+An empty value removes the field. An unknown name exits 1 and lists the
+component names.
+
+`stack remove` deletes that component.
+
+`stack lockfile add` appends a path. `stack lockfile remove` deletes one.
+The path is compared exactly. An absolute path or a `..` segment is
+rejected and the file is not written.
+
+Exit status is `0` on success, `1` when the name, path, or file is wrong,
+and `2` when the command line is wrong. An unknown kind exits 2.
+
+```console
+craftward stack add harbor-light --kind runtime --name Node.js --version 22 --eol-product nodejs
+craftward stack set harbor-light Node.js --version ""
+craftward stack remove harbor-light Node.js
+craftward stack lockfile add harbor-light package-lock.json
+craftward stack lockfile remove harbor-light package-lock.json
+```
+
 ## radar
 
 Looks up known vulnerabilities for the packages in the lockfiles named by
@@ -246,17 +281,22 @@ Looks up known vulnerabilities for the packages in the lockfiles named by
 checked. A project argument is an id or a path, with the same ambiguity
 rule as `roadmap`.
 
-`--refresh` ignores cached answers and asks OSV again. `--offline` never
-contacts OSV. The two options cannot be combined. `--cache-dir` selects the
+`--refresh` ignores cached answers and asks again. `--offline` never
+contacts OSV or endoflife.date. The two options cannot be combined.
+`--strict` makes notices and `eol_soon` count toward exit status 3.
+`--eol-warning-days` is how many days ahead a support end still counts as
+`eol_soon`. The default is 90. `--cache-dir` selects the
 cache directory; otherwise `CRAFTWARD_CACHE_DIR` is used, then the default
 described in [radar.md](radar.md). `--data-dir` selects the database
 directory; otherwise `CRAFTWARD_DATA_DIR` is used, then the default
 described in [storage.md](storage.md). `--json` prints the same report as
 JSON. `--all` includes ignored findings in the list. They are always counted.
 
-Exit status is `0` when no finding is open, `3` when at least one finding
-is open, `1` when a project could not be checked, and `2` when the command
-line is wrong. An error takes priority over an open finding. The text
+Exit status is `0` when no actionable finding is open, `3` when a
+vulnerability, a malicious package, or a past support end is open, `1`
+when a project could not be checked, and `2` when the command line is
+wrong. Notices and `eol_soon` count toward status 3 only with `--strict`.
+An error takes priority over an open finding. The text
 report, the JSON fields, the lifecycle, and what is sent to OSV are
 described in [radar.md](radar.md).
 
@@ -264,6 +304,7 @@ described in [radar.md](radar.md).
 craftward radar
 craftward radar harbor-light --json
 craftward radar --offline --cache-dir ./cache --data-dir ./data
+craftward radar --strict --eol-warning-days 30
 ```
 
 ## findings
@@ -271,7 +312,10 @@ craftward radar --offline --cache-dir ./cache --data-dir ./data
 Reads the findings stored by `radar`. It does not contact OSV. With no
 project, every stored finding is listed. A project argument is an id or a
 path, with the same ambiguity rule as `roadmap`. `--state` is `open`,
-`ignored`, `resolved`, or `all`. The default is `open`.
+`ignored`, `resolved`, or `all`. The default is `open`. `--kind` limits
+the list to one kind: `vulnerability`, `malicious`, `unmaintained`,
+`unsound`, `notice`, `eol`, or `eol_soon`. The list and `show` print the
+kind.
 
 `show` prints one finding and its history. `ignore` requires `--reason`.
 The reason must not be empty or only whitespace. `--until` is the last UTC
@@ -288,7 +332,7 @@ empty, and `2` when the command line is wrong.
 
 ```console
 craftward findings
-craftward findings harbor-light --state all --json
+craftward findings harbor-light --state all --kind vulnerability --json
 craftward findings show 1
 craftward findings ignore 1 --reason "not affected" --until 2026-12-31
 craftward findings reopen 1

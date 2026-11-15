@@ -45,7 +45,8 @@
       {
         "kind": "tool",
         "name": "cargo-deny",
-        "version": "0.20.2"
+        "version": "0.20.2",
+        "eol_product": "none"
       },
       {
         "kind": "service",
@@ -241,6 +242,11 @@
             "id": "t13",
             "title": "Bearbeitungsbefehle: show, project set, phase/task/issue/watch",
             "status": "done"
+          },
+          {
+            "id": "t14",
+            "title": "Stack-Befehle: Komponenten und Lockdateien",
+            "status": "done"
           }
         ]
       },
@@ -262,7 +268,7 @@
           {
             "id": "t03",
             "title": "Quelle: Support-Ende (endoflife.date)",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t04",
@@ -277,7 +283,7 @@
           {
             "id": "t06",
             "title": "Abgleich Meldung ↔ Stack jedes Projekts, mit Dringlichkeit",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t07",

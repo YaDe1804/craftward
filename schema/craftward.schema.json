@@ -125,6 +125,13 @@
       "description": "One piece of a project's stack.",
       "type": "object",
       "properties": {
+        "eol_product": {
+          "description": "Product id on endoflife.date, when the name is not a unique match.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "kind": {
           "description": "What role this component plays.",
           "$ref": "#/$defs/ComponentKind"
