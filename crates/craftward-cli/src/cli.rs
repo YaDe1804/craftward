@@ -9,9 +9,9 @@ use craftward_core::{FindingKind, Language, ProjectStatus, StateFilter};
 #[derive(Debug, Parser)]
 #[command(
     name = "craftward",
+    bin_name = "craftward",
     version,
     about = "Track project files and print a summary of the workspace.",
-    long_about = LONG_ABOUT,
     after_help = AFTER_HELP,
     disable_help_subcommand = true,
     infer_subcommands = false
@@ -68,7 +68,7 @@ pub(crate) enum Command {
     /// Show every project in the workspace.
     #[command(long_about = LIST_ABOUT)]
     List,
-    /// Check project files. craftward validate [PATH]... An error names its location, for example plan.phases[0].tasks[1].due.
+    /// Check project files.
     #[command(long_about = VALIDATE_ABOUT)]
     Validate {
         /// Project files to check. Empty means every workspace project.
@@ -217,6 +217,7 @@ pub(crate) enum ProjectCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PhaseCommand {
+    /// Append a phase.
     #[command(long_about = PHASE_ADD_ABOUT)]
     Add {
         #[arg(value_name = "PROJECT")]
@@ -228,6 +229,7 @@ pub(crate) enum PhaseCommand {
         #[arg(long)]
         goal: Option<String>,
     },
+    /// Remove a phase.
     #[command(long_about = PHASE_REMOVE_ABOUT)]
     Remove {
         #[arg(value_name = "PROJECT")]
@@ -241,6 +243,7 @@ pub(crate) enum PhaseCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskCommand {
+    /// Append a task to a phase.
     #[command(long_about = TASK_ADD_ABOUT)]
     Add {
         #[arg(value_name = "PROJECT")]
@@ -258,6 +261,7 @@ pub(crate) enum TaskCommand {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Set a task's status.
     #[command(long_about = TASK_STATUS_ABOUT)]
     Status {
         #[arg(value_name = "PROJECT")]
@@ -269,6 +273,7 @@ pub(crate) enum TaskCommand {
         #[arg(value_name = "STATUS")]
         status: String,
     },
+    /// Mark a task done.
     #[command(long_about = TASK_DONE_ABOUT)]
     Done {
         #[arg(value_name = "PROJECT")]
@@ -278,6 +283,7 @@ pub(crate) enum TaskCommand {
         #[arg(value_name = "TASK")]
         task: String,
     },
+    /// Remove a task from a phase.
     #[command(long_about = TASK_REMOVE_ABOUT)]
     Remove {
         #[arg(value_name = "PROJECT")]
@@ -291,6 +297,7 @@ pub(crate) enum TaskCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum IssueCommand {
+    /// Append an issue.
     #[command(long_about = ISSUE_ADD_ABOUT)]
     Add {
         #[arg(value_name = "PROJECT")]
@@ -306,6 +313,7 @@ pub(crate) enum IssueCommand {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Set an issue's status.
     #[command(long_about = ISSUE_STATUS_ABOUT)]
     Status {
         #[arg(value_name = "PROJECT")]
@@ -315,6 +323,7 @@ pub(crate) enum IssueCommand {
         #[arg(value_name = "STATUS")]
         status: String,
     },
+    /// Remove an issue.
     #[command(long_about = ISSUE_REMOVE_ABOUT)]
     Remove {
         #[arg(value_name = "PROJECT")]
@@ -326,6 +335,7 @@ pub(crate) enum IssueCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum WatchCommand {
+    /// Append a watch item.
     #[command(long_about = WATCH_ADD_ABOUT)]
     Add {
         #[arg(value_name = "PROJECT")]
@@ -341,6 +351,7 @@ pub(crate) enum WatchCommand {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Remove a watch item.
     #[command(long_about = WATCH_REMOVE_ABOUT)]
     Remove {
         #[arg(value_name = "PROJECT")]
@@ -352,6 +363,7 @@ pub(crate) enum WatchCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum FindingsCommand {
+    /// Print one finding and its history.
     #[command(long_about = FINDINGS_SHOW_ABOUT)]
     Show {
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
@@ -359,6 +371,7 @@ pub(crate) enum FindingsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Ignore a finding.
     #[command(long_about = FINDINGS_IGNORE_ABOUT)]
     Ignore {
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
@@ -368,6 +381,7 @@ pub(crate) enum FindingsCommand {
         #[arg(long)]
         until: Option<String>,
     },
+    /// Mark a finding open again.
     #[command(long_about = FINDINGS_REOPEN_ABOUT)]
     Reopen {
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
@@ -377,6 +391,7 @@ pub(crate) enum FindingsCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum StackCommand {
+    /// Append a stack component.
     #[command(long_about = STACK_ADD_ABOUT)]
     Add {
         #[arg(value_name = "PROJECT")]
@@ -392,6 +407,7 @@ pub(crate) enum StackCommand {
         #[arg(long = "eol-product")]
         eol_product: Option<String>,
     },
+    /// Change one stack component.
     #[command(long_about = STACK_SET_ABOUT)]
     Set {
         #[arg(value_name = "PROJECT")]
@@ -405,6 +421,7 @@ pub(crate) enum StackCommand {
         #[arg(long = "eol-product")]
         eol_product: Option<String>,
     },
+    /// Remove one stack component.
     #[command(long_about = STACK_REMOVE_ABOUT)]
     Remove {
         #[arg(value_name = "PROJECT")]
@@ -412,11 +429,13 @@ pub(crate) enum StackCommand {
         #[arg(value_name = "NAME")]
         name: String,
     },
+    /// Add or remove a lockfile path.
     #[command(long_about = STACK_LOCKFILE_ABOUT)]
     Lockfile {
         #[command(subcommand)]
         command: StackLockfileCommand,
     },
+    /// Create or change stack.android.
     #[command(long_about = STACK_ANDROID_ABOUT)]
     Android {
         #[arg(value_name = "PROJECT")]
@@ -438,12 +457,14 @@ pub(crate) enum StackCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum StackLockfileCommand {
+    /// Append a lockfile path.
     Add {
         #[arg(value_name = "PROJECT")]
         project: String,
         #[arg(value_name = "PATH")]
         path: String,
     },
+    /// Remove a lockfile path.
     Remove {
         #[arg(value_name = "PROJECT")]
         project: String,
@@ -505,20 +526,6 @@ fn parse_finding_id(text: &str) -> Result<i64, String> {
     Ok(id)
 }
 
-const LONG_ABOUT: &str = "\
-Track project files and print a summary of the workspace.
-
-Usage:
-  craftward
-  craftward --help
-  craftward --version
-  craftward [--workspace <FILE>] <COMMAND> [--help]
-
-Commands include init, add, remove, list, craftward validate [PATH]...,
-roadmap, show, project, phase, task, issue, watch, radar, findings, stack,
-deadlines, and workspace path. An error names its location, for example
-plan.phases[0].tasks[1].due.";
-
 const AFTER_HELP: &str = "\
 --workspace selects the workspace file. Otherwise CRAFTWARD_WORKSPACE is used,
 then the default directory for this system.
@@ -531,179 +538,179 @@ Exit status:
      or past Play deadline. Notices count only with --strict";
 
 const INIT_ABOUT: &str = "\
-Create a project file with the required fields.
-
 STATUS is idea, in_development, released, maintenance, paused, or
 discontinued. The default is idea. DIR defaults to the current directory.
 An existing craftward.json is not overwritten. The workspace list is not
 changed.";
 
 const ADD_ABOUT: &str = "\
-Add a project file to the workspace.
-
 PATH is a craftward.json file or a directory that contains one. The file
 must be valid. A path or project id that is already listed is rejected.";
 
 const REMOVE_ABOUT: &str = "\
-Remove a project from the workspace. The project file is not deleted.";
+The project file is not deleted.";
 
 const LIST_ABOUT: &str = "\
-Show every project in the workspace.
-
 Open tasks and open issues are those marked open or in_progress. The next
 due date is the earliest task or watch-item date still outstanding. Done
 and dropped tasks are left out. A missing or invalid project file is shown
 with a note, and the command exits 1.";
 
 const VALIDATE_ABOUT: &str = "\
-Check project files.
-
-Usage form: craftward validate [PATH]...
-
 With no paths, every project in the workspace is checked. Each file is
 reported as \"ok\" or as a list of errors. An error names its location, for
 example plan.phases[0].tasks[1].due. A missing source directory or
 lockfile is reported as a warning and does not change the exit status.";
 
 const WORKSPACE_ABOUT: &str = "\
-Show which workspace file is in use.";
+The path subcommand prints which workspace file is in use.";
 
 const WORKSPACE_PATH_ABOUT: &str = "\
-Print the workspace file in use and whether it came from --workspace,
-CRAFTWARD_WORKSPACE, or the default location.";
+Prints whether the file came from --workspace, CRAFTWARD_WORKSPACE, or the
+default location.";
 
 const ROADMAP_ABOUT: &str = "\
-Write a versioned HTML roadmap for one project.
-
 ID selects a project from the workspace. PATH is a craftward.json file or
 a directory that contains one. DIR defaults to the current directory.
 --lang is en or de, and defaults to en. An existing file is never
 overwritten.";
 
 const SHOW_ABOUT: &str = "\
-Print one project, including the ids used by later commands.
-
 PROJECT is a workspace project id, a craftward.json file, or a directory
 that contains one.";
 
 const PROJECT_ABOUT: &str = "\
-Change header fields of a project file.";
+Use the set subcommand to change name, status, version, description, or
+source_dir.";
 
 const PROJECT_SET_ABOUT: &str = "\
-Change header fields of a project file.
-
 At least one option is required. An empty --version or --description
 removes that field.";
 
 const PHASE_ABOUT: &str = "\
-Add or remove a phase.";
+Use add or remove.";
 
 const PHASE_ADD_ABOUT: &str = "\
-Append a phase. The plan is created when the project has none.
-
-Without --id, the id is formed from the title.";
+The plan is created when the project has none. Without --id, the id is
+formed from the title.";
 
 const PHASE_REMOVE_ABOUT: &str = "\
-Remove a phase. The phase must have no tasks. --force removes the phase
-and its tasks.";
+The phase must have no tasks. --force removes the phase and its tasks.";
 
 const TASK_ABOUT: &str = "\
-Add, update, or remove a task.";
+Use add, status, done, or remove.";
 
 const TASK_ADD_ABOUT: &str = "\
-Append a task to a phase. Without --id, the id is formed from the title.
-STATUS defaults to open.";
+Without --id, the id is formed from the title. STATUS defaults to open.";
 
 const TASK_STATUS_ABOUT: &str = "\
-Set a task's status. STATUS is open, in_progress, done, or dropped.";
+STATUS is open, in_progress, done, or dropped.";
 
 const TASK_DONE_ABOUT: &str = "\
-Mark a task done. This is task status with status done.";
+This is the same as task status with status done.";
 
 const TASK_REMOVE_ABOUT: &str = "\
-Remove a task from a phase.";
+Removes the task from its phase.";
 
 const ISSUE_ABOUT: &str = "\
-Add, update, or remove an issue.";
+Use add, status, or remove.";
 
 const ISSUE_ADD_ABOUT: &str = "\
-Append an issue. Its status is open. SEVERITY is low, medium, high, or
-critical.";
+Its status is open. SEVERITY is low, medium, high, or critical.";
 
 const ISSUE_STATUS_ABOUT: &str = "\
-Set an issue's status. STATUS is open, in_progress, resolved, or wont_fix.";
+STATUS is open, in_progress, resolved, or wont_fix.";
 
 const ISSUE_REMOVE_ABOUT: &str = "\
-Remove an issue.";
+Removes the issue from the project.";
 
 const WATCH_ABOUT: &str = "\
-Add or remove a watch item.";
+Use add or remove.";
 
 const WATCH_ADD_ABOUT: &str = "\
-Append a watch item. KIND is deadline, expiry, review, or other.";
+KIND is deadline, expiry, review, or other.";
 
 const WATCH_REMOVE_ABOUT: &str = "\
-Remove a watch item.";
+Removes the watch item from the project.";
 
 const RADAR_ABOUT: &str = "\
-Look up known vulnerabilities for the packages in project lockfiles.
-
 With no PROJECT, every project in the workspace is checked. --refresh
 ignores cached answers. --offline never contacts OSV or endoflife.date.
 --all includes ignored findings. --eol-warning-days defaults to 90.
 --deadline-warning-days defaults to 180.";
 
 const FINDINGS_ABOUT: &str = "\
-List and change stored vulnerability findings.
-
-With no PROJECT, every stored finding is listed. The default state is open.";
+With no PROJECT, every stored finding is listed. The default state is open.
+Use show, ignore, or reopen for one finding.";
 
 const FINDINGS_SHOW_ABOUT: &str = "\
-Print one finding and its history.";
+Includes the finding's event history.";
 
 const FINDINGS_IGNORE_ABOUT: &str = "\
-Ignore a finding. --reason is required. --until is the last UTC day the
-ignore stays in force.";
+--reason is required. --until is the last UTC day the ignore stays in
+force.";
 
 const FINDINGS_REOPEN_ABOUT: &str = "\
-Mark a finding open again.";
+Clears an ignore so the finding is open again.";
 
 const STACK_ABOUT: &str = "\
-Change the stack recorded in a project file.
-
 Components are matched by name, ignoring letter case. An empty --version,
 --note, --eol-product, --target-sdk, or --min-sdk removes that field.";
 
 const STACK_ADD_ABOUT: &str = "\
-Append a stack component.";
+Requires --kind and --name.";
 
 const STACK_SET_ABOUT: &str = "\
-Change one stack component. An empty optional flag clears that field.";
+An empty optional flag clears that field.";
 
 const STACK_REMOVE_ABOUT: &str = "\
-Remove one stack component.";
+Removes the component with that name.";
 
 const STACK_LOCKFILE_ABOUT: &str = "\
-Add or remove a lockfile path.";
+Use add or remove with a project and a relative path.";
 
 const STACK_ANDROID_ABOUT: &str = "\
-Create or change stack.android. --detect-from may be repeated.
---clear-detect-from drops the current list first.";
+--detect-from may be repeated. --clear-detect-from drops the current list
+first.";
 
 const DEADLINES_ABOUT: &str = "\
-Show the Google Play target-API deadlines Craftward will use.
-
 The built-in file is used unless the data directory contains
 platform-deadlines.json with a newer data_version.";
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use clap::{Command, CommandFactory};
 
     use super::Cli;
 
     #[test]
     fn clap_definition_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn help_uses_craftward_once_per_usage_and_never_exe() {
+        assert_help_clean(Cli::command());
+    }
+
+    fn assert_help_clean(mut command: Command) {
+        for help in [command.render_help(), command.render_long_help()] {
+            let text = help.to_string();
+            assert_eq!(
+                text.matches("Usage:").count(),
+                1,
+                "expected one Usage: in help for `{}`:\n{text}",
+                command.get_name()
+            );
+            assert!(
+                !text.contains("craftward.exe"),
+                "help for `{}` must not contain craftward.exe:\n{text}",
+                command.get_name()
+            );
+        }
+        let children: Vec<Command> = command.get_subcommands().cloned().collect();
+        for child in children {
+            assert_help_clean(child);
+        }
     }
 }
