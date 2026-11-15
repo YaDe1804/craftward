@@ -1,0 +1,21 @@
+[package]
+name = "craftward-cli"
+description = "Command-line interface for Craftward."
+authors.workspace = true
+autobins = false
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "craftward"
+path = "src/main.rs"
+
+[dependencies]
+craftward-core.workspace = true
+
+[lints]
+workspace = true

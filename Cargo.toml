@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/craftward-core",
+    "crates/craftward-cli",
+    "crates/craftward-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Deniz Yayvan"]
+edition = "2024"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/YaDe1804/craftward"
+rust-version = "1.100.0"
+
+[workspace.dependencies]
+craftward-core = { path = "crates/craftward-core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

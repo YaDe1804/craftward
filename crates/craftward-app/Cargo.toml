@@ -1,0 +1,21 @@
+[package]
+name = "craftward-app"
+description = "Desktop application for Craftward."
+authors.workspace = true
+autobins = false
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "craftward-app"
+path = "src/main.rs"
+
+[dependencies]
+craftward-core.workspace = true
+
+[lints]
+workspace = true

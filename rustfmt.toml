@@ -1,0 +1,2 @@
+# The edition comes from each package manifest. Keep source files on LF.
+newline_style = "Unix"
