@@ -32,7 +32,7 @@ The file database does not.
 
 ## Schema
 
-The schema version is `PRAGMA user_version`. This build writes version 2.
+The schema version is `PRAGMA user_version`. This build writes version 3.
 Migrations only move forward, one version at a time, each in a transaction.
 If the file's version is newer, Craftward stops and says that a newer
 Craftward version created the database.
@@ -48,7 +48,10 @@ check that compared lockfiles leaves `error` null and `evaluated` 1. A
 project with no lockfiles also leaves `error` null, and sets `evaluated`
 to 0: nothing failed, and nothing was compared. Version 2 adds
 `evaluated`. A version 1 row whose `error` is null is marked evaluated.
-A version 1 row with `error` set stays unevaluated.
+A version 1 row with `error` set stays unevaluated. Version 3 adds `kind`
+on `findings`. Existing rows become `vulnerability`. The event table is
+rebuilt in the same migration so `withdrawn` is allowed. The copy is still
+named for the version the file had before the migration started.
 
 ### runs
 
@@ -60,8 +63,8 @@ A version 1 row with `error` set stays unevaluated.
 | `offline` | `1` when the check was not allowed to use the network. |
 | `packages_checked` | Packages sent to OSV. Zero when the check failed. |
 | `open_count`, `new_count`, `resolved_count` | Counts after a check that compared lockfiles. On a failed check every counter is zero. When nothing was evaluated, `open_count` is the number of findings already open and the other two counters are zero. |
-| `evaluated` | `1` when lockfile results were compared with stored findings. `0` when they were not. |
-| `error` | Why the check failed, or null. Null together with `evaluated` 0 means no lockfiles were configured. |
+| `evaluated` | `1` when lockfile results or end-of-life data were compared with stored findings. `0` when neither was. |
+| `error` | Why the check failed, or null. Null together with `evaluated` 0 means nothing was compared. |
 
 ### findings
 
@@ -69,12 +72,14 @@ One row is unique on project id, ecosystem, package name, and vulnerability
 id. The version is the last version that was still affected. It is not part
 of the identity, so a new affected version updates the same row.
 
-`state` is `open`, `ignored`, or `resolved`. `aliases` and `fixed_versions`
+`state` is `open`, `ignored`, or `resolved`. `kind` is `vulnerability`,
+`malicious`, `unmaintained`, `unsound`, `notice`, `eol`, or `eol_soon`.
+`aliases` and `fixed_versions`
 are JSON arrays of strings. `ignore_until` is `YYYY-MM-DD` or null. The
 other times use the same UTC timestamp as `runs`.
 
 ### finding_events
 
-One row per change: `discovered`, `ignored`, `reopened`, `resolved`, or
-`reappeared`. `reason` is the ignore text, `ignore expired on YYYY-MM-DD`
+One row per change: `discovered`, `ignored`, `reopened`, `resolved`,
+`reappeared`, or `withdrawn`. `reason` is the ignore text, `ignore expired on YYYY-MM-DD`
 when an ignore lapses, or an empty string.

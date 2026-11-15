@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::cache::{self, CachedAdvisory, CachedQuery};
-use crate::date::format_unix_timestamp;
+use crate::date::{format_unix_timestamp, utc_day};
+use crate::eol::{self, EolHit};
 use crate::http::HttpClient;
 use crate::load::load_from_path;
 use crate::lockfile::{self, LockKind, PackageQuery, ParsedLock, read_lockfile};
+use crate::model::Component;
 use crate::osv::{self, ADVISORY_TTL_SECONDS, Advisory, QUERY_TTL_SECONDS};
 use crate::paths::resolve_project_paths;
 
@@ -23,6 +25,8 @@ pub struct RadarOptions {
     pub offline: bool,
     /// POSIX seconds used for cache expiry.
     pub now: i64,
+    /// Days ahead of today that still count as `eol_soon`.
+    pub eol_warning_days: u32,
 }
 
 /// One project after a radar run.
@@ -42,6 +46,12 @@ pub struct ProjectReport {
     pub error: Option<String>,
     /// Timestamp of cached data used after a network failure.
     pub stale_cache_from: Option<String>,
+    /// Advisory ids this run saw withdrawn.
+    pub withdrawn: Vec<String>,
+    /// Whether configured lockfiles were compared with stored findings.
+    pub lockfiles_checked: bool,
+    /// Whether a component version was compared with endoflife.date.
+    pub eol_checked: bool,
 }
 
 /// Counts for one lockfile.
@@ -76,8 +86,11 @@ pub struct Finding {
     pub summary: String,
     /// Versions in which this package is fixed.
     pub fixed_versions: Vec<String>,
-    /// Page on osv.dev.
+    /// Page on osv.dev or endoflife.date.
     pub url: String,
+    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, `notice`,
+    /// `eol`, or `eol_soon`.
+    pub kind: String,
 }
 
 /// Checks each project file. A failure is stored on that project.
@@ -108,6 +121,33 @@ pub fn scan(
             continue;
         }
         fill_project(project, &looked_up, &advisories);
+    }
+    let today = utc_day(options.now).unwrap_or_default();
+    for project in &mut prepared {
+        if project.error.is_some() {
+            continue;
+        }
+        let eol = eol::check_components(
+            &project.components,
+            client,
+            &eol::EolOptions {
+                cache_dir,
+                refresh: options.refresh,
+                offline: options.offline,
+                now: options.now,
+                today: &today,
+                warning_days: options.eol_warning_days,
+            },
+        );
+        project.eol_checked = eol.checked;
+        project.warnings.extend(eol.warnings);
+        if let Some(error) = eol.error {
+            project.error = Some(error);
+            continue;
+        }
+        for hit in eol.hits {
+            project.findings.push(eol_finding(&hit));
+        }
     }
     prepared.into_iter().map(Prepared::into_report).collect()
 }
@@ -196,6 +236,10 @@ struct Prepared {
     error: Option<String>,
     findings: Vec<Finding>,
     stale_cache_from: Option<String>,
+    components: Vec<Component>,
+    withdrawn: Vec<String>,
+    lockfiles_checked: bool,
+    eol_checked: bool,
 }
 
 impl Prepared {
@@ -208,6 +252,9 @@ impl Prepared {
             warnings: self.warnings,
             error: self.error,
             stale_cache_from: self.stale_cache_from,
+            withdrawn: self.withdrawn,
+            lockfiles_checked: self.lockfiles_checked,
+            eol_checked: self.eol_checked,
         }
     }
 }
@@ -226,9 +273,17 @@ fn prepare(path: &Path) -> Prepared {
                 error: Some(error.to_string()),
                 findings: Vec::new(),
                 stale_cache_from: None,
+                components: Vec::new(),
+                withdrawn: Vec::new(),
+                lockfiles_checked: false,
+                eol_checked: false,
             };
         }
     };
+    let components = project
+        .stack
+        .as_ref()
+        .map_or_default(|stack| stack.components.clone());
     let resolved = resolve_project_paths(path, &project);
     if resolved.lockfiles.is_empty() {
         return Prepared {
@@ -240,6 +295,10 @@ fn prepare(path: &Path) -> Prepared {
             error: None,
             findings: Vec::new(),
             stale_cache_from: None,
+            components,
+            withdrawn: Vec::new(),
+            lockfiles_checked: false,
+            eol_checked: false,
         };
     }
     let mut lockfiles = Vec::new();
@@ -273,6 +332,10 @@ fn prepare(path: &Path) -> Prepared {
         },
         findings: Vec::new(),
         stale_cache_from: None,
+        components,
+        withdrawn: Vec::new(),
+        lockfiles_checked: true,
+        eol_checked: false,
     }
 }
 
@@ -538,7 +601,17 @@ fn fill_project(
                         hit.stale_at,
                         hit.from_network_error,
                     );
-                    findings.push(finding(package, &hit.advisory));
+                    if hit.advisory.withdrawn {
+                        if !project
+                            .withdrawn
+                            .iter()
+                            .any(|existing| existing == &hit.advisory.id)
+                        {
+                            project.withdrawn.push(hit.advisory.id.clone());
+                        }
+                    } else {
+                        findings.push(finding(package, &hit.advisory));
+                    }
                 }
                 Some(Err(message)) => errors.push(message.clone()),
                 None => errors.push(format!("{id} was not loaded")),
@@ -604,5 +677,21 @@ fn finding(package: &PackageQuery, advisory: &Advisory) -> Finding {
         summary: advisory.summary.clone(),
         fixed_versions: osv::fixed_versions(advisory, package),
         url: format!("https://osv.dev/vulnerability/{}", advisory.id),
+        kind: advisory.kind.clone(),
+    }
+}
+
+fn eol_finding(hit: &EolHit) -> Finding {
+    Finding {
+        ecosystem: "endoflife".to_owned(),
+        package: hit.product.clone(),
+        version: hit.version.clone(),
+        id: hit.id.clone(),
+        aliases: Vec::new(),
+        severity: hit.severity.clone(),
+        summary: hit.summary.clone(),
+        fixed_versions: Vec::new(),
+        url: hit.url.clone(),
+        kind: hit.kind.clone(),
     }
 }

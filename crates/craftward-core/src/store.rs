@@ -11,7 +11,7 @@ use serde::Serialize;
 pub const DATABASE_FILE: &str = "craftward.db";
 
 /// Schema version this build knows how to write.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Lifecycle state of one finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,74 @@ impl FindingState {
             "resolved" => Some(Self::Resolved),
             _ => None,
         }
+    }
+}
+
+/// Kind of a stored advisory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingKind {
+    /// A vulnerability that is not one of the more specific kinds.
+    Vulnerability,
+    /// A malicious package, including OSV ids that start with `MAL-`.
+    Malicious,
+    /// The package is no longer maintained.
+    Unmaintained,
+    /// The package can cause undefined behavior from safe code.
+    Unsound,
+    /// An informational notice, including an unrecognized notice kind.
+    Notice,
+    /// The release cycle's support end is in the past.
+    Eol,
+    /// The release cycle's support end is inside the warning window.
+    EolSoon,
+}
+
+impl FindingKind {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vulnerability => "vulnerability",
+            Self::Malicious => "malicious",
+            Self::Unmaintained => "unmaintained",
+            Self::Unsound => "unsound",
+            Self::Notice => "notice",
+            Self::Eol => "eol",
+            Self::EolSoon => "eol_soon",
+        }
+    }
+
+    /// Parses a stored word.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "vulnerability" => Some(Self::Vulnerability),
+            "malicious" => Some(Self::Malicious),
+            "unmaintained" => Some(Self::Unmaintained),
+            "unsound" => Some(Self::Unsound),
+            "notice" => Some(Self::Notice),
+            "eol" => Some(Self::Eol),
+            "eol_soon" => Some(Self::EolSoon),
+            _ => None,
+        }
+    }
+
+    /// Whether an open finding of this kind selects exit status 3.
+    #[must_use]
+    pub const fn affects_exit(self, strict: bool) -> bool {
+        match self {
+            Self::Vulnerability | Self::Malicious | Self::Eol => true,
+            Self::Unmaintained | Self::Unsound | Self::Notice | Self::EolSoon => strict,
+        }
+    }
+
+    /// Whether the text report lists this kind under notices.
+    #[must_use]
+    pub const fn is_notice(self) -> bool {
+        matches!(
+            self,
+            Self::Unmaintained | Self::Unsound | Self::Notice | Self::EolSoon
+        )
     }
 }
 
@@ -85,6 +153,9 @@ pub struct StoredFinding {
     pub fixed_versions: Vec<String>,
     /// Current state.
     pub state: FindingState,
+    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, `notice`,
+    /// `eol`, or `eol_soon`.
+    pub kind: String,
     /// When the finding was first stored, `YYYY-MM-DDTHH:MM:SSZ`.
     pub first_seen: String,
     /// When a scan last observed it.
@@ -118,6 +189,8 @@ pub struct NewFinding {
     pub aliases: Vec<String>,
     /// Fixed versions.
     pub fixed_versions: Vec<String>,
+    /// Advisory kind. See [`StoredFinding::kind`].
+    pub kind: String,
     /// `first_seen` and `last_seen`.
     pub seen_at: String,
 }
@@ -125,7 +198,7 @@ pub struct NewFinding {
 /// One row of a finding's history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoredEvent {
-    /// `discovered`, `ignored`, `reopened`, `resolved`, or `reappeared`.
+    /// `discovered`, `ignored`, `reopened`, `resolved`, `reappeared`, or `withdrawn`.
     pub kind: String,
     /// When the event was recorded.
     pub at: String,
@@ -152,9 +225,9 @@ pub struct NewRun {
     pub new_count: i64,
     /// Findings marked resolved by this run.
     pub resolved_count: i64,
-    /// Whether lockfile results were compared with stored findings.
+    /// Whether this run compared lockfiles or end-of-life data with findings.
     ///
-    /// `false` with [`Self::error`] unset means no lockfiles were configured.
+    /// `false` with [`Self::error`] unset means nothing was evaluated.
     pub evaluated: bool,
     /// Why the project could not be checked. Unset when the check did not fail.
     pub error: Option<String>,

@@ -341,6 +341,170 @@ fn ignored_findings_do_not_exit_3_and_show_prints_the_history() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn notices_and_support_ends_follow_strict_and_the_warning_window() {
+    let root = scratch("kinds");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let app = root.join("app");
+    fs::create_dir_all(&app).unwrap();
+    let file = project(&app, "demo", "[\"Cargo.lock\"]");
+    cargo_lock(&app);
+    let cache = root.join("cache");
+    let data = root.join("data");
+    seed_kind(&cache, now, "unmaintained");
+    let cache_flag = flag("--cache-dir", &cache);
+    let data_flag = flag("--data-dir", &data);
+    let file_arg = file.to_str().unwrap();
+    let loose = run(
+        &root,
+        &[
+            "radar",
+            "--offline",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            file_arg,
+        ],
+    );
+    let loose_text = stdout(&loose);
+    assert_eq!(
+        loose.status.code(),
+        Some(0),
+        "{loose_text}{}",
+        stderr(&loose)
+    );
+    assert!(loose_text.contains("notices:"), "{loose_text}");
+    let strict = run(
+        &root,
+        &[
+            "radar",
+            "--offline",
+            "--strict",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            file_arg,
+        ],
+    );
+    assert_eq!(strict.status.code(), Some(3), "{}", stdout(&strict));
+    let listed = run(
+        &root,
+        &[
+            "findings",
+            "--state",
+            "all",
+            "--kind",
+            "unmaintained",
+            data_flag[0],
+            data_flag[1],
+        ],
+    );
+    let listed_text = stdout(&listed);
+    assert!(listed.status.success(), "{listed_text}");
+    assert!(listed_text.contains("unmaintained"), "{listed_text}");
+
+    approaching_support_end(&root, &cache, &data, now);
+    let _ = fs::remove_dir_all(root);
+}
+
+fn approaching_support_end(root: &Path, cache: &Path, data: &Path, now: u64) {
+    let eol_app = root.join("eol");
+    fs::create_dir_all(&eol_app).unwrap();
+    let soon = craftward_core::utc_day(i64::try_from(now).unwrap() + 40 * 86_400).unwrap();
+    let eol_file = eol_app.join("craftward.json");
+    fs::write(
+        &eol_file,
+        "{\n  \"schema_version\": 1,\n  \"id\": \"eol-demo\",\n  \"name\": \"Eol\",\n  \"status\": \"idea\",\n  \"stack\": {\"components\": [{\"kind\": \"runtime\", \"name\": \"PostgreSQL\", \"version\": \"16.1\", \"eol_product\": \"postgresql\"}], \"lockfiles\": []}\n}\n",
+    )
+    .unwrap();
+    seed_eol(cache, now, &soon);
+    let cache_flag = flag("--cache-dir", cache);
+    let data_flag = flag("--data-dir", data);
+    let eol_arg = eol_file.to_str().unwrap();
+    let ended = run(
+        root,
+        &[
+            "radar",
+            "--offline",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            eol_arg,
+        ],
+    );
+    assert_eq!(ended.status.code(), Some(0), "{}", stdout(&ended));
+    assert!(stdout(&ended).contains("notices:"), "{}", stdout(&ended));
+    let strict_eol = run(
+        root,
+        &[
+            "radar",
+            "--offline",
+            "--strict",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            eol_arg,
+        ],
+    );
+    assert_eq!(strict_eol.status.code(), Some(3), "{}", stdout(&strict_eol));
+    let narrow = run(
+        root,
+        &[
+            "radar",
+            "--offline",
+            "--strict",
+            "--eol-warning-days",
+            "10",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            eol_arg,
+        ],
+    );
+    assert_eq!(narrow.status.code(), Some(0), "{}", stdout(&narrow));
+}
+
+fn seed_kind(cache: &Path, now: u64, kind: &str) {
+    seed_hit(cache, now);
+    let advisory = cache.join("advisories").join("RUSTSEC-2024-0001.json");
+    fs::write(
+        advisory,
+        format!(
+            "{{\n  \"stored_at\": {now},\n  \"advisory\": {{\n    \"id\": \"RUSTSEC-2024-0001\",\n    \"aliases\": [],\n    \"summary\": \"Example\",\n    \"severity\": \"unknown\",\n    \"kind\": \"{kind}\",\n    \"withdrawn\": false,\n    \"affected\": [{{\"ecosystem\": \"crates.io\", \"name\": \"serde\", \"fixed\": []}}]\n  }}\n}}\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn seed_eol(cache: &Path, now: u64, soon: &str) {
+    let list = cache.join("eol").join("products.json");
+    fs::create_dir_all(list.parent().unwrap()).unwrap();
+    fs::write(
+        &list,
+        format!(
+            "{{\n  \"stored_at\": {now},\n  \"products\": [{{\"name\": \"postgresql\", \"aliases\": []}}]\n}}\n"
+        ),
+    )
+    .unwrap();
+    let product = cache.join("eol").join("products").join("postgresql.json");
+    fs::create_dir_all(product.parent().unwrap()).unwrap();
+    fs::write(
+        product,
+        format!(
+            "{{\n  \"stored_at\": {now},\n  \"cycles\": [{{\"name\": \"16\", \"is_eol\": false, \"eol_from\": \"{soon}\", \"eol_from_invalid\": false}}]\n}}\n"
+        ),
+    )
+    .unwrap();
+}
+
 fn stdout(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }

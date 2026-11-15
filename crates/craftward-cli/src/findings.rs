@@ -38,6 +38,8 @@ pub(crate) struct ListRequest {
     pub projects: Vec<String>,
     /// Which states to print. The default is open.
     pub state: StateFilter,
+    /// Which kind to print. Absent means every kind.
+    pub kind: Option<String>,
     /// Print JSON.
     pub json: bool,
     /// Data directory from `--data-dir`.
@@ -71,6 +73,7 @@ pub(crate) fn parse(args: &[std::ffi::OsString]) -> Result<Parsed, String> {
         return Ok(Parsed::Run(Request::List(ListRequest {
             projects: Vec::new(),
             state: StateFilter::Open,
+            kind: None,
             json: false,
             data_dir: None,
         })));
@@ -120,7 +123,7 @@ fn list(
         let loaded = load_from_path(&path).map_err(|error| Failure::Data(error.to_string()))?;
         projects.push(loaded.id);
     }
-    let findings = list_findings(store, &projects, request.state)
+    let findings = list_findings(store, &projects, request.state, request.kind.as_deref())
         .map_err(|error| Failure::Data(error.to_string()))?;
     if request.json {
         println!(
@@ -178,6 +181,7 @@ fn data_dir_of(request: &Request) -> Option<&std::path::Path> {
 fn parse_list(args: &[std::ffi::OsString]) -> Result<ListRequest, String> {
     let mut projects = Vec::new();
     let mut state = StateFilter::Open;
+    let mut kind = None;
     let mut json = false;
     let mut data_dir = None;
     let mut index = 0;
@@ -188,6 +192,13 @@ fn parse_list(args: &[std::ffi::OsString]) -> Result<ListRequest, String> {
             "--state" => {
                 let value = required_value(args, &mut index, "--state")?;
                 state = parse_state(&value)?;
+            }
+            "--kind" => {
+                let value = required_value(args, &mut index, "--kind")?;
+                if kind.is_some() {
+                    return Err("duplicate option: --kind".to_owned());
+                }
+                kind = Some(parse_kind(&value)?);
             }
             "--data-dir" => data_dir = Some(directory(args, &mut index, &mut data_dir)?),
             other if other.starts_with('-') => {
@@ -200,6 +211,7 @@ fn parse_list(args: &[std::ffi::OsString]) -> Result<ListRequest, String> {
     Ok(ListRequest {
         projects,
         state,
+        kind,
         json,
         data_dir,
     })
@@ -286,6 +298,17 @@ fn parse_id_command(
     Ok((id, json, data_dir))
 }
 
+fn parse_kind(value: &str) -> Result<String, String> {
+    match value {
+        "vulnerability" | "malicious" | "unmaintained" | "unsound" | "notice" | "eol"
+        | "eol_soon" => Ok(value.to_owned()),
+        _ => Err(
+            "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, or eol_soon"
+                .to_owned(),
+        ),
+    }
+}
+
 fn parse_state(value: &str) -> Result<StateFilter, String> {
     match value {
         "open" => Ok(StateFilter::Open),
@@ -346,7 +369,7 @@ List and change stored vulnerability findings.
 
 Usage:
   craftward findings [PROJECT...] [--state open|ignored|resolved|all]
-      [--json] [--data-dir DIR]
+      [--kind KIND] [--json] [--data-dir DIR]
   craftward findings show <ID> [--json] [--data-dir DIR]
   craftward findings ignore <ID> --reason TEXT [--until YYYY-MM-DD]
       [--data-dir DIR]

@@ -437,6 +437,7 @@ fn each_command_has_help() {
         "watch",
         "radar",
         "findings",
+        "stack",
     ] {
         let output = run(&root, &[command, "--help"]);
         let stdout = String::from_utf8(output.stdout).unwrap();

@@ -11,8 +11,8 @@ use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
 use crate::load::{load_from_path, load_from_str};
 use crate::model::{
-    Issue, IssueSeverity, IssueStatus, Phase, Plan, Project, ProjectStatus, Task, TaskStatus,
-    WatchItem, WatchKind,
+    Component, ComponentKind, Issue, IssueSeverity, IssueStatus, Phase, Plan, Project,
+    ProjectStatus, Stack, Task, TaskStatus, WatchItem, WatchKind,
 };
 use crate::workspace::{format_project, write_atomic};
 
@@ -30,6 +30,16 @@ const SEVERITIES: &[&str] = &["low", "medium", "high", "critical"];
 const WATCH_KINDS: &[&str] = &["deadline", "expiry", "review", "other"];
 const DATE_FORMS: &[&str] = &["YYYY-MM-DD"];
 const URL_FORMS: &[&str] = &["http://", "https://"];
+const COMPONENT_KINDS: &[&str] = &[
+    "platform",
+    "language",
+    "framework",
+    "runtime",
+    "sdk",
+    "service",
+    "tool",
+    "other",
+];
 
 /// A value that can stay, be replaced, or be removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +125,32 @@ pub struct NewWatch<'a> {
     pub note: Option<&'a str>,
 }
 
+/// A component to append.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewComponent<'a> {
+    /// Role word.
+    pub kind: &'a str,
+    /// Component name.
+    pub name: &'a str,
+    /// Version, when one was given.
+    pub version: Option<&'a str>,
+    /// Note, when one was given.
+    pub note: Option<&'a str>,
+    /// endoflife.date product id, when one was given.
+    pub eol_product: Option<&'a str>,
+}
+
+/// Optional fields of one component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentChanges<'a> {
+    /// Version. [`ProjectUpdate::Clear`] removes it.
+    pub version: ProjectUpdate<'a>,
+    /// Note. [`ProjectUpdate::Clear`] removes it.
+    pub note: ProjectUpdate<'a>,
+    /// endoflife.date product id. [`ProjectUpdate::Clear`] removes it.
+    pub eol_product: ProjectUpdate<'a>,
+}
+
 /// The project produced by a successful change, and the id created by an add.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditOutcome {
@@ -155,6 +191,18 @@ pub enum EditError {
     },
     /// The changed project failed validation. The file was not written.
     InvalidFile(Vec<ValidationError>),
+    /// The name is already used by a component or lockfile path.
+    Duplicate {
+        /// `component` or `lockfile`.
+        kind: &'static str,
+        /// The name or path that already exists.
+        value: String,
+    },
+    /// More than one component has this name.
+    Ambiguous {
+        /// The name that matched more than once.
+        name: String,
+    },
     /// The file could not be read or is already invalid.
     Load(LoadError),
     /// The validated text could not be written.
@@ -174,6 +222,8 @@ impl std::fmt::Display for EditError {
                     "task" => "tasks",
                     "issue" => "issues",
                     "watch" => "watch items",
+                    "component" => "components",
+                    "lockfile" => "lockfiles",
                     _ => kind,
                 };
                 let list = if available.is_empty() {
@@ -197,6 +247,10 @@ impl std::fmt::Display for EditError {
                 formatter,
                 "phase {id} still has tasks; pass --force to remove it"
             ),
+            Self::Duplicate { kind, value } => write!(formatter, "duplicate {kind}: {value}"),
+            Self::Ambiguous { name } => {
+                write!(formatter, "more than one component is named {name}")
+            }
             Self::InvalidFile(errors) | Self::Load(LoadError::Validation(errors)) => {
                 write!(formatter, "invalid project file")?;
                 for error in errors {
@@ -682,6 +736,212 @@ pub fn id_from_title(title: &str) -> Option<String> {
     } else {
         Some(limited)
     }
+}
+
+/// Appends a component. The stack is created when the project has none.
+///
+/// # Errors
+///
+/// Returns [`EditError::Invalid`] for an unknown kind, [`EditError::Duplicate`]
+/// when the name is already used, or [`EditError::InvalidFile`] when the
+/// result breaks a project rule.
+pub fn add_component(
+    project: &Project,
+    component: NewComponent<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let stack = next.stack.get_or_insert_with(|| Stack {
+        components: Vec::new(),
+        lockfiles: Vec::new(),
+    });
+    if stack
+        .components
+        .iter()
+        .any(|existing| existing.name.eq_ignore_ascii_case(component.name))
+    {
+        return Err(EditError::Duplicate {
+            kind: "component",
+            value: component.name.to_owned(),
+        });
+    }
+    stack.components.push(Component {
+        kind: parse_component_kind(component.kind)?,
+        name: component.name.to_owned(),
+        version: owned_text(component.version),
+        note: owned_text(component.note),
+        eol_product: owned_text(component.eol_product),
+    });
+    commit(next, updated_on, None)
+}
+
+/// Changes optional fields of the one component with this name.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the name is unknown and
+/// [`EditError::Ambiguous`] when more than one component has it.
+pub fn set_component(
+    project: &Project,
+    name: &str,
+    changes: ComponentChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let component = require_component(&mut next, name)?;
+    apply_text(&mut component.version, changes.version);
+    apply_text(&mut component.note, changes.note);
+    apply_text(&mut component.eol_product, changes.eol_product);
+    commit(next, updated_on, None)
+}
+
+/// Removes the one component with this name.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] or [`EditError::Ambiguous`].
+pub fn remove_component(
+    project: &Project,
+    name: &str,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let index = component_index(&next, name)?;
+    if let Some(stack) = next.stack.as_mut() {
+        stack.components.remove(index);
+    }
+    commit(next, updated_on, None)
+}
+
+/// Appends a lockfile path. The stack is created when the project has none.
+///
+/// # Errors
+///
+/// Returns [`EditError::Duplicate`] when the path is already listed, or
+/// [`EditError::InvalidFile`] when the path is not a relative project path.
+pub fn add_lockfile(
+    project: &Project,
+    path: &str,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let stack = next.stack.get_or_insert_with(|| Stack {
+        components: Vec::new(),
+        lockfiles: Vec::new(),
+    });
+    if stack.lockfiles.iter().any(|existing| existing == path) {
+        return Err(EditError::Duplicate {
+            kind: "lockfile",
+            value: path.to_owned(),
+        });
+    }
+    stack.lockfiles.push(path.to_owned());
+    commit(next, updated_on, None)
+}
+
+/// Removes one lockfile path.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the path is not listed.
+pub fn remove_lockfile(
+    project: &Project,
+    path: &str,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let Some(stack) = next.stack.as_mut() else {
+        return Err(missing_lockfile(&next, path));
+    };
+    let Some(index) = stack.lockfiles.iter().position(|existing| existing == path) else {
+        return Err(missing_lockfile(&next, path));
+    };
+    stack.lockfiles.remove(index);
+    commit(next, updated_on, None)
+}
+
+fn require_component<'a>(
+    project: &'a mut Project,
+    name: &str,
+) -> Result<&'a mut Component, EditError> {
+    let index = component_index(project, name)?;
+    let stack = project.stack.as_mut().ok_or_else(|| EditError::NotFound {
+        kind: "component",
+        id: name.to_owned(),
+        available: Vec::new(),
+    })?;
+    Ok(&mut stack.components[index])
+}
+
+fn component_index(project: &Project, name: &str) -> Result<usize, EditError> {
+    let components = project
+        .stack
+        .as_ref()
+        .map_or(&[][..], |stack| stack.components.as_slice());
+    let matches: Vec<usize> = components
+        .iter()
+        .enumerate()
+        .filter(|(_, component)| component.name.eq_ignore_ascii_case(name))
+        .map(|(index, _)| index)
+        .collect();
+    match matches.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(EditError::NotFound {
+            kind: "component",
+            id: name.to_owned(),
+            available: components
+                .iter()
+                .map(|component| component.name.clone())
+                .collect(),
+        }),
+        _ => Err(EditError::Ambiguous {
+            name: name.to_owned(),
+        }),
+    }
+}
+
+fn missing_lockfile(project: &Project, path: &str) -> EditError {
+    EditError::NotFound {
+        kind: "lockfile",
+        id: path.to_owned(),
+        available: project
+            .stack
+            .as_ref()
+            .map_or_default(|stack| stack.lockfiles.clone()),
+    }
+}
+
+fn apply_text(slot: &mut Option<String>, update: ProjectUpdate<'_>) {
+    match update {
+        ProjectUpdate::Keep => {}
+        ProjectUpdate::Set(text) => *slot = Some(text.to_owned()),
+        ProjectUpdate::Clear => *slot = None,
+    }
+}
+
+fn owned_text(value: Option<&str>) -> Option<String> {
+    value.filter(|text| !text.is_empty()).map(str::to_owned)
+}
+
+fn parse_component_kind(value: &str) -> Result<ComponentKind, EditError> {
+    let kind = match value {
+        "platform" => ComponentKind::Platform,
+        "language" => ComponentKind::Language,
+        "framework" => ComponentKind::Framework,
+        "runtime" => ComponentKind::Runtime,
+        "sdk" => ComponentKind::Sdk,
+        "service" => ComponentKind::Service,
+        "tool" => ComponentKind::Tool,
+        "other" => ComponentKind::Other,
+        _ => {
+            return Err(EditError::Invalid {
+                field: "kind",
+                value: value.to_owned(),
+                allowed: COMPONENT_KINDS,
+            });
+        }
+    };
+    Ok(kind)
 }
 
 fn commit(

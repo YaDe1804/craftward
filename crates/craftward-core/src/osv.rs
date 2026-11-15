@@ -37,6 +37,10 @@ pub struct Advisory {
     pub severity: String,
     /// Packages named by the record, with the versions that fix the issue.
     pub affected: Vec<AffectedPackage>,
+    /// The record has a non-empty `withdrawn` timestamp.
+    pub withdrawn: bool,
+    /// `vulnerability`, `malicious`, `unmaintained`, `unsound`, or `notice`.
+    pub kind: String,
 }
 
 /// One affected package inside an [`Advisory`].
@@ -115,13 +119,86 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
         .get("affected")
         .and_then(Value::as_array)
         .map_or_default(|items| items.iter().filter_map(affected_package).collect());
+    let withdrawn = object
+        .get("withdrawn")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty());
+    let kind = classify_kind(&id, object);
+    let severity = if kind == "malicious" {
+        "critical".to_owned()
+    } else {
+        severity
+    };
     Ok(Advisory {
         id,
         aliases,
         summary,
         severity,
         affected,
+        withdrawn,
+        kind,
     })
+}
+
+fn classify_kind(id: &str, object: &Map<String, Value>) -> String {
+    if id.starts_with("MAL-") || has_malicious_category(object) {
+        return "malicious".to_owned();
+    }
+    match informational(object) {
+        Some("unmaintained") => "unmaintained".to_owned(),
+        Some("unsound") => "unsound".to_owned(),
+        Some("notice" | _) => "notice".to_owned(),
+        None => "vulnerability".to_owned(),
+    }
+}
+
+fn has_malicious_category(object: &Map<String, Value>) -> bool {
+    affected_objects(object).any(|affected| {
+        categories(affected).any(|category| category.eq_ignore_ascii_case("malicious"))
+    })
+}
+
+fn informational(object: &Map<String, Value>) -> Option<&str> {
+    affected_objects(object)
+        .find_map(database_text)
+        .or_else(|| {
+            object
+                .get("database_specific")
+                .and_then(database_text_value)
+        })
+}
+
+fn database_text(affected: &Value) -> Option<&str> {
+    affected
+        .get("database_specific")
+        .and_then(database_text_value)
+}
+
+fn database_text_value(value: &Value) -> Option<&str> {
+    value
+        .as_object()
+        .and_then(|specific| specific.get("informational"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn categories(affected: &Value) -> impl Iterator<Item = &str> {
+    affected
+        .get("database_specific")
+        .and_then(Value::as_object)
+        .and_then(|specific| specific.get("categories"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+}
+
+fn affected_objects(object: &Map<String, Value>) -> impl Iterator<Item = &Value> {
+    object
+        .get("affected")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
 }
 
 /// Fixed versions that apply to `package`.
@@ -376,4 +453,77 @@ fn encode_path(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_advisory;
+
+    fn body(value: &serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(value).expect("json")
+    }
+
+    #[test]
+    fn kinds_follow_the_osv_and_rustsec_marks() {
+        let vulnerability = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-1",
+            "summary": "hole",
+            "affected": [{"package": {"ecosystem": "crates.io", "name": "demo"}}]
+        })))
+        .unwrap();
+        assert_eq!(vulnerability.kind, "vulnerability");
+        assert!(!vulnerability.withdrawn);
+        assert_eq!(vulnerability.severity, "unknown");
+
+        let malicious = parse_advisory(&body(&serde_json::json!({
+            "id": "MAL-2024-1",
+            "database_specific": {"severity": "LOW"},
+            "affected": []
+        })))
+        .unwrap();
+        assert_eq!(malicious.kind, "malicious");
+        assert_eq!(malicious.severity, "critical");
+
+        let category = parse_advisory(&body(&serde_json::json!({
+            "id": "RUSTSEC-2022-1",
+            "affected": [{
+                "database_specific": {"categories": ["Malicious"]}
+            }]
+        })))
+        .unwrap();
+        assert_eq!(category.kind, "malicious");
+        assert_eq!(category.severity, "critical");
+
+        for (word, kind) in [
+            ("unmaintained", "unmaintained"),
+            ("unsound", "unsound"),
+            ("notice", "notice"),
+            ("other-note", "notice"),
+        ] {
+            let advisory = parse_advisory(&body(&serde_json::json!({
+                "id": "RUSTSEC-1",
+                "affected": [{"database_specific": {"informational": word}}]
+            })))
+            .unwrap();
+            assert_eq!(advisory.kind, kind, "{word}");
+        }
+    }
+
+    #[test]
+    fn a_withdrawn_timestamp_marks_the_record() {
+        let advisory = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-2",
+            "withdrawn": "2024-01-01T00:00:00Z",
+            "affected": []
+        })))
+        .unwrap();
+        assert!(advisory.withdrawn);
+        let empty = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-3",
+            "withdrawn": "",
+            "affected": []
+        })))
+        .unwrap();
+        assert!(!empty.withdrawn);
+    }
 }

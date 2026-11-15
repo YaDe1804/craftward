@@ -3,6 +3,7 @@
 mod editing;
 mod findings;
 mod radar;
+mod stack;
 
 use std::env;
 use std::fmt::Write;
@@ -98,6 +99,7 @@ enum Command {
     Edit(editing::Request),
     Radar(radar::Request),
     Findings(findings::Request),
+    Stack(stack::Request),
     HelpText(&'static str),
     Usage(Topic),
 }
@@ -121,27 +123,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             id,
             name,
             status,
-        } => {
-            let directory = match directory {
-                Some(path) => absolute_from_cwd(&path)?,
-                None => env::current_dir()
-                    .map_err(|error| format!("cannot read the current directory: {error}"))?,
-            };
-            match init_project(&directory, &id, &name, status) {
-                Ok(path) => {
-                    println!("created {}", path.display());
-                    Ok(ExitCode::SUCCESS)
-                }
-                Err(WorkspaceError::Validation(errors)) => {
-                    let mut message = String::from("invalid project file");
-                    for error in errors {
-                        let _ = write!(message, "\n  {}: {}", error.path, error.message);
-                    }
-                    Err(Failure::Data(message))
-                }
-                Err(error) => Err(Failure::Data(error.to_string())),
-            }
-        }
+        } => run_init(directory.as_deref(), &id, &name, status),
         Command::Add { path } => {
             let workspace = workspace_file(invocation.workspace.as_deref())?;
             let input = absolute_from_cwd(&path)?;
@@ -198,10 +180,38 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
         Command::Edit(request) => editing::run(request, invocation.workspace.as_deref()),
         Command::Radar(request) => radar::run(&request, invocation.workspace.as_deref()),
         Command::Findings(request) => findings::run(&request, invocation.workspace.as_deref()),
+        Command::Stack(request) => stack::run(&request, invocation.workspace.as_deref()),
         Command::HelpText(text) => {
             println!("{text}");
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+fn run_init(
+    directory: Option<&Path>,
+    id: &str,
+    name: &str,
+    status: ProjectStatus,
+) -> Result<ExitCode, Failure> {
+    let directory = match directory {
+        Some(path) => absolute_from_cwd(path)?,
+        None => env::current_dir()
+            .map_err(|error| format!("cannot read the current directory: {error}"))?,
+    };
+    match init_project(&directory, id, name, status) {
+        Ok(path) => {
+            println!("created {}", path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(WorkspaceError::Validation(errors)) => {
+            let mut message = String::from("invalid project file");
+            for error in errors {
+                let _ = write!(message, "\n  {}: {}", error.path, error.message);
+            }
+            Err(Failure::Data(message))
+        }
+        Err(error) => Err(Failure::Data(error.to_string())),
     }
 }
 
@@ -593,6 +603,12 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
                 findings::Parsed::Run(request) => Ok(Command::Findings(request)),
             };
         }
+        "stack" => {
+            return match stack::parse(args)? {
+                stack::Parsed::Help(text) => Ok(Command::HelpText(text)),
+                stack::Parsed::Run(request) => Ok(Command::Stack(request)),
+            };
+        }
         "show" | "project" | "phase" | "task" | "issue" | "watch" => {
             return match editing::parse(name, args)? {
                 editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
@@ -845,11 +861,13 @@ Commands:
   task add|status|done|remove
   issue add|status|remove
   watch add|remove
-  radar [PROJECT...] [--refresh] [--offline] [--json] [--all]
-      [--cache-dir DIR] [--data-dir DIR]
-      Look up known vulnerabilities and store them.
-  findings [PROJECT...] [--state ..] [--json] [--data-dir DIR]
+  radar [PROJECT...] [--refresh] [--offline] [--json] [--all] [--strict]
+      [--eol-warning-days N] [--cache-dir DIR] [--data-dir DIR]
+      Look up known vulnerabilities, support ends, and store them.
+  findings [PROJECT...] [--state ..] [--kind ..] [--json] [--data-dir DIR]
       List, show, ignore, or reopen stored findings.
+  stack add|set|remove | stack lockfile add|remove
+      Change stack components and lockfile paths.
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.

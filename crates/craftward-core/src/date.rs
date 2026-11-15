@@ -99,6 +99,34 @@ pub fn is_calendar_date(text: &str) -> bool {
     validate_date(text).is_ok()
 }
 
+/// Days from `start` to `end`. Negative when `end` is earlier.
+///
+/// Returns [`None`] when either string is not a real `YYYY-MM-DD` day.
+#[must_use]
+pub fn days_between(start: &str, end: &str) -> Option<i64> {
+    Some(i64::from(civil_days(end)?) - i64::from(civil_days(start)?))
+}
+
+fn civil_days(text: &str) -> Option<i32> {
+    validate_date(text).ok()?;
+    let bytes = text.as_bytes();
+    let year = i32::try_from(parse_digits(&bytes[0..4]).ok()?).ok()?;
+    let month = parse_digits(&bytes[5..7]).ok()?;
+    let day = parse_digits(&bytes[8..10]).ok()?;
+    Some(days_from_civil(year, month, day))
+}
+
+/// Days since 1970-01-01 for a Gregorian date. Howard Hinnant's algorithm.
+fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = (year - era * 400).cast_unsigned();
+    let month_prime = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + i32::try_from(day_of_era).unwrap_or(i32::MAX) - 719_468
+}
+
 /// Formats a POSIX timestamp as `YYYY-MM-DD HH:MM:SS UTC`.
 ///
 /// Returns [`None`] when `seconds` is negative or the year does not fit in
@@ -158,7 +186,7 @@ fn format_unix_days(mut remaining: u64) -> Option<String> {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use super::{DateError, utc_date, validate_date};
+    use super::{DateError, days_between, utc_date, validate_date};
 
     #[test]
     fn accepts_leap_day_in_a_leap_year() {
@@ -180,6 +208,14 @@ mod tests {
         assert_eq!(validate_date("2026-00-10"), Err(DateError::Calendar));
         assert_eq!(validate_date("2026-13-01"), Err(DateError::Calendar));
         assert_eq!(validate_date("2026-01-00"), Err(DateError::Calendar));
+    }
+
+    #[test]
+    fn days_between_counts_from_the_unix_epoch() {
+        assert_eq!(days_between("1970-01-01", "1970-01-01"), Some(0));
+        assert_eq!(days_between("1970-01-01", "1970-01-02"), Some(1));
+        assert_eq!(days_between("1970-01-02", "1970-01-01"), Some(-1));
+        assert_eq!(days_between("2026-11-15", "2027-02-13"), Some(90));
     }
 
     #[test]

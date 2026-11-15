@@ -144,6 +144,9 @@ pub struct Component {
     /// Free-form note about how the component is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Product id on endoflife.date, when the name is not a unique match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eol_product: Option<String>,
 }
 
 /// Role of a stack component.

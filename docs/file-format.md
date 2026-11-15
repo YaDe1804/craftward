@@ -120,6 +120,7 @@ A component has:
 | `name` | yes | Component name. |
 | `version` | no | Version the project uses. |
 | `note` | no | How the component is used. |
+| `eol_product` | no | Product id on endoflife.date. The reserved value `none` skips the end-of-life check for this component. When the field is absent, radar matches the name only if exactly one product or alias matches. |
 
 ```json
 {
