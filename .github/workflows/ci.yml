@@ -45,7 +45,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -67,7 +67,7 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Test
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
   deny:
     name: Cargo deny
@@ -80,6 +80,7 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
-          # The action defaults to `--all-features`. An empty value runs `cargo deny check`.
-          arguments: ""
+          # The action defaults to `--all-features`. Pass only `--locked` so the
+          # check uses the committed lockfile and does not enable all features.
+          arguments: "--locked"
           rust-version: "1.100.0"

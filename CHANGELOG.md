@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Relative XDG base directories are ignored. Batch `vulns`, advisory
   `affected`, and EOL fields that raise or suppress findings fail the run
   when present with the wrong shape.
+- SeQu check F5 (SQ-13): dependency manifests use caret version
+  requirements instead of `=`, CI Clippy, tests, and `cargo deny` run with
+  `--locked`, and Dependabot opens weekly grouped update pull requests for
+  Cargo and GitHub Actions.
 
 ### Added
 
