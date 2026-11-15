@@ -10,7 +10,9 @@ use serde::Deserialize;
 use crate::http::{
     HttpClient, HttpError, HttpRequest, MAX_RESPONSE_BYTES, Method, accepted_body_or,
 };
-use crate::json_loose::{lenient_vec, optional_string, string_or_empty};
+use crate::json_loose::{
+    lenient_vec, optional_strict_string, optional_string, strict_vec, string_or_empty,
+};
 use crate::lockfile::PackageQuery;
 use crate::percent::encode;
 use crate::store::{FindingKind, Severity};
@@ -249,6 +251,7 @@ fn query_chunk(
     })
 }
 
+#[derive(Debug)]
 struct BatchItem {
     ids: Vec<String>,
     next: Option<String>,
@@ -279,12 +282,20 @@ fn batch_body(
 }
 
 fn parse_batch(body: &[u8], expected: usize) -> Result<Vec<BatchItem>, HttpError> {
-    let response: BatchResponse = serde_json::from_slice(body).map_err(|error| HttpError {
-        message: if error.is_syntax() || error.is_eof() {
-            format!("OSV batch response is not JSON: {error}")
-        } else {
-            "OSV batch response has no results".to_owned()
-        },
+    let response: BatchResponse = serde_json::from_slice(body).map_err(|error| {
+        let detail = error.to_string();
+        HttpError {
+            message: if error.is_syntax() || error.is_eof() {
+                format!("OSV batch response is not JSON: {error}")
+            } else if detail.contains("expected array")
+                || detail.contains("vulnerability id")
+                || detail.contains("missing field")
+            {
+                format!("OSV batch response is invalid: {error}")
+            } else {
+                "OSV batch response has no results".to_owned()
+            },
+        }
     })?;
     let Some(results) = response.results else {
         return Err(HttpError {
@@ -376,7 +387,7 @@ struct OsvVuln {
     withdrawn: Option<String>,
     #[serde(default)]
     database_specific: Option<DatabaseSpecific>,
-    #[serde(default, deserialize_with = "lenient_vec")]
+    #[serde(default, deserialize_with = "strict_vec")]
     affected: Vec<OsvAffected>,
 }
 
@@ -424,9 +435,9 @@ struct OsvEvent {
 struct DatabaseSpecific {
     #[serde(default, deserialize_with = "optional_string")]
     severity: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
+    #[serde(default, deserialize_with = "optional_strict_string")]
     informational: Option<String>,
-    #[serde(default, deserialize_with = "lenient_vec")]
+    #[serde(default, deserialize_with = "strict_vec")]
     categories: Vec<String>,
 }
 
@@ -457,7 +468,7 @@ struct BatchResponse {
 
 #[derive(Deserialize)]
 struct BatchResult {
-    #[serde(default, deserialize_with = "lenient_vec")]
+    #[serde(default, deserialize_with = "strict_vulns")]
     vulns: Vec<VulnId>,
     #[serde(default, deserialize_with = "optional_string")]
     next_page_token: Option<String>,
@@ -466,6 +477,19 @@ struct BatchResult {
 #[derive(Deserialize)]
 struct VulnId {
     id: String,
+}
+
+fn strict_vulns<'de, D>(deserializer: D) -> Result<Vec<VulnId>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let vulns: Vec<VulnId> = strict_vec(deserializer)?;
+    for vuln in &vulns {
+        if vuln.id.is_empty() {
+            return Err(serde::de::Error::custom("vulnerability id is empty"));
+        }
+    }
+    Ok(vulns)
 }
 
 #[cfg(test)]
@@ -540,5 +564,96 @@ mod tests {
         })))
         .unwrap();
         assert!(!empty.withdrawn);
+    }
+
+    #[test]
+    fn affected_must_be_an_array_when_present() {
+        let error = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-bad",
+            "affected": {"package": {"name": "demo"}}
+        })))
+        .expect_err("affected object");
+        assert!(
+            error.contains("expected array") || error.contains("invalid type"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn categories_and_informational_must_have_their_documented_types() {
+        let categories = parse_advisory(&body(&serde_json::json!({
+            "id": "RUSTSEC-1",
+            "affected": [{"database_specific": {"categories": "Malicious"}}]
+        })))
+        .expect_err("categories string");
+        assert!(
+            categories.contains("expected array") || categories.contains("invalid type"),
+            "{categories}"
+        );
+        let informational = parse_advisory(&body(&serde_json::json!({
+            "id": "RUSTSEC-1",
+            "affected": [{"database_specific": {"informational": 1}}]
+        })))
+        .expect_err("informational number");
+        assert!(
+            informational.contains("expected string") || informational.contains("invalid type"),
+            "{informational}"
+        );
+    }
+
+    #[test]
+    fn batch_vulns_must_be_an_array_of_usable_ids() {
+        use super::parse_batch;
+
+        let ok = parse_batch(
+            &body(&serde_json::json!({
+                "results": [{"vulns": [{"id": "GHSA-1"}]}]
+            })),
+            1,
+        )
+        .unwrap();
+        assert_eq!(ok[0].ids, ["GHSA-1"]);
+
+        let missing = parse_batch(&body(&serde_json::json!({ "results": [{}] })), 1).unwrap();
+        assert_eq!(missing[0].ids, Vec::<String>::new());
+
+        let wrong_type = parse_batch(
+            &body(&serde_json::json!({
+                "results": [{"vulns": {"id": "GHSA-1"}}]
+            })),
+            1,
+        )
+        .expect_err("vulns object");
+        assert!(
+            wrong_type.message.contains("invalid") || wrong_type.message.contains("array"),
+            "{}",
+            wrong_type.message
+        );
+
+        let empty_id = parse_batch(
+            &body(&serde_json::json!({
+                "results": [{"vulns": [{"id": ""}]}]
+            })),
+            1,
+        )
+        .expect_err("empty id");
+        assert!(
+            empty_id.message.contains("invalid") || empty_id.message.contains("empty"),
+            "{}",
+            empty_id.message
+        );
+
+        let no_id = parse_batch(
+            &body(&serde_json::json!({
+                "results": [{"vulns": [{"modified": "2026-01-01T00:00:00Z"}]}]
+            })),
+            1,
+        )
+        .expect_err("missing id");
+        assert!(
+            no_id.message.contains("invalid") || no_id.message.contains("missing"),
+            "{}",
+            no_id.message
+        );
     }
 }

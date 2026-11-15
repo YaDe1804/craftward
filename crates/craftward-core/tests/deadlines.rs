@@ -203,9 +203,9 @@ fn disagreements_unresolved_values_and_a_configured_level() {
     write(&root, "low.gradle", "targetSdk = 33\n");
     write(&root, "high.gradle", "targetSdk = 35\n");
     let mixed = detect_target_sdk("demo", &root, &android(&["low.gradle", "high.gradle"]));
-    assert_eq!(mixed.value, Some(35));
+    assert_eq!(mixed.value, Some(33));
     assert!(
-        mixed.warnings[0].contains("low.gradle:1 is 33"),
+        mixed.warnings[0].contains("high.gradle:1 is 35"),
         "{:?}",
         mixed.warnings
     );
@@ -231,6 +231,56 @@ fn disagreements_unresolved_values_and_a_configured_level() {
     assert_eq!(chosen.value, Some(40));
     assert_eq!(chosen.source.as_deref(), Some("configured"));
     assert_eq!(chosen.warnings.len(), 0);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strings_and_ignored_blocks_do_not_count_as_target_sdk() {
+    let root = scratch("safe-sdk");
+    write(
+        &root,
+        "string.gradle",
+        "val note = \"targetSdk = 99\"\ntargetSdk = 34\n",
+    );
+    let from_string = detect_target_sdk("demo", &root, &android(&["string.gradle"]));
+    assert_eq!(from_string.value, Some(34));
+    assert_eq!(from_string.source.as_deref(), Some("string.gradle:2"));
+    assert!(
+        from_string.warnings.is_empty(),
+        "{:?}",
+        from_string.warnings
+    );
+
+    write(
+        &root,
+        "test.gradle",
+        "targetSdk = 33\ntestOptions {\n  targetSdk = 35\n}\n",
+    );
+    let from_test = detect_target_sdk("demo", &root, &android(&["test.gradle"]));
+    assert_eq!(from_test.value, Some(33));
+    assert!(from_test.warnings.is_empty(), "{:?}", from_test.warnings);
+
+    write(
+        &root,
+        "lint.gradle",
+        "targetSdk = 32\nlint {\n  targetSdk = 35\n}\n",
+    );
+    let from_lint = detect_target_sdk("demo", &root, &android(&["lint.gradle"]));
+    assert_eq!(from_lint.value, Some(32));
+    assert!(from_lint.warnings.is_empty(), "{:?}", from_lint.warnings);
+
+    write(
+        &root,
+        "devices.gradle",
+        "targetSdk = 31\nmanagedDevices {\n  targetSdk = 35\n}\n",
+    );
+    let from_devices = detect_target_sdk("demo", &root, &android(&["devices.gradle"]));
+    assert_eq!(from_devices.value, Some(31));
+    assert!(
+        from_devices.warnings.is_empty(),
+        "{:?}",
+        from_devices.warnings
+    );
     let _ = fs::remove_dir_all(root);
 }
 

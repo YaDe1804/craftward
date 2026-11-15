@@ -35,6 +35,58 @@ source = \"git+https://example.com/other#abcdef\"
 }
 
 #[test]
+fn cargo_lock_accepts_only_official_crates_io_sources() {
+    let text = "\
+version = 3
+
+[[package]]
+name = \"from-git\"
+version = \"1.0.0\"
+source = \"registry+https://github.com/rust-lang/crates.io-index\"
+
+[[package]]
+name = \"from-sparse\"
+version = \"1.0.0\"
+source = \"sparse+https://index.crates.io/\"
+
+[[package]]
+name = \"mirror\"
+version = \"1.0.0\"
+source = \"registry+https://example.com/crates.io-index\"
+";
+    let parsed = parse_lock_text(LockKind::Cargo, text).expect("parse");
+    assert_eq!(parsed.skipped, 1);
+    assert_eq!(parsed.queried.len(), 2);
+    assert!(
+        parsed
+            .queried
+            .iter()
+            .any(|package| package.name == "from-git")
+    );
+    assert!(
+        parsed
+            .queried
+            .iter()
+            .any(|package| package.name == "from-sparse")
+    );
+}
+
+#[test]
+fn cargo_lock_keeps_non_ascii_string_contents() {
+    let text = "\
+version = 3
+
+[[package]]
+name = \"café\"
+version = \"1.0.0\"
+source = \"registry+https://github.com/rust-lang/crates.io-index\"
+";
+    let parsed = parse_lock_text(LockKind::Cargo, text).expect("parse");
+    assert_eq!(parsed.queried.len(), 1);
+    assert_eq!(parsed.queried[0].name, "café");
+}
+
+#[test]
 fn cargo_lock_reports_an_unsupported_version_and_a_broken_line() {
     let unsupported = parse_lock_text(LockKind::Cargo, "version = 2\n").expect_err("version");
     assert_eq!(unsupported.line, Some(1));

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub enum OsFamily {
     /// `%APPDATA%\Craftward`.
     Windows,
-    /// `$XDG_CONFIG_HOME/craftward`, or `~/.config/craftward` when that variable is unset.
+    /// Absolute `$XDG_CONFIG_HOME/craftward`, or `~/.config/craftward` when unset or relative.
     Linux,
     /// `~/Library/Application Support/Craftward`.
     MacOs,
@@ -179,7 +179,7 @@ fn default_workspace_file(host: &impl Host) -> Result<PathBuf, LocateError> {
             PathBuf::from(app_data).join("Craftward")
         }
         OsFamily::Linux => {
-            if let Some(config_home) = non_empty(host.var("XDG_CONFIG_HOME")) {
+            if let Some(config_home) = absolute_xdg(host, "XDG_CONFIG_HOME") {
                 PathBuf::from(config_home).join("craftward")
             } else {
                 host.home_dir()
@@ -224,7 +224,7 @@ fn default_cache_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
             PathBuf::from(local).join("Craftward").join("cache")
         }
         OsFamily::Linux => {
-            if let Some(cache_home) = non_empty(host.var("XDG_CACHE_HOME")) {
+            if let Some(cache_home) = absolute_xdg(host, "XDG_CACHE_HOME") {
                 PathBuf::from(cache_home).join("craftward")
             } else {
                 host.home_dir()
@@ -269,7 +269,7 @@ fn default_data_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
             PathBuf::from(local).join("Craftward")
         }
         OsFamily::Linux => {
-            if let Some(data_home) = non_empty(host.var("XDG_DATA_HOME")) {
+            if let Some(data_home) = absolute_xdg(host, "XDG_DATA_HOME") {
                 PathBuf::from(data_home).join("craftward")
             } else {
                 host.home_dir()
@@ -291,4 +291,14 @@ fn default_data_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
 
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|text| !text.is_empty())
+}
+
+/// XDG Base Directory values must be absolute; a relative value is ignored.
+fn absolute_xdg(host: &impl Host, name: &str) -> Option<String> {
+    let value = non_empty(host.var(name))?;
+    let absolute = match host.os() {
+        OsFamily::Windows => Path::new(&value).is_absolute(),
+        OsFamily::Linux | OsFamily::MacOs => value.starts_with('/'),
+    };
+    absolute.then_some(value)
 }

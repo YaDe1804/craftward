@@ -19,10 +19,12 @@ invalid file does not.
 reads the usual `targetSdk` and `targetSdkVersion` assignments in
 `detect_from`, and resolves `libs.versions.<key>` from the `[versions]`
 table of a listed TOML file with its own reader. Comments are ignored.
-The highest value wins, and the other locations are named. An expression
-that cannot be read is a warning and produces no finding. `min_sdk` is
-stored and is not compared. `store` `none`, and a project with no
-`stack.android`, skip the check.
+Assignments inside `testOptions`, `lint`, and `managedDevices`, and text
+inside strings, are ignored. The lowest value wins, and the other
+locations are named, so a higher test or lint level cannot hide a lower
+production level. An expression that cannot be read is a warning and
+produces no finding. `min_sdk` is stored and is not compared. `store`
+`none`, and a project with no `stack.android`, skip the check.
 
 For one form factor and one requirement, the governing past row is the
 newest whose deadline is today or earlier. Older rows stay in the file so

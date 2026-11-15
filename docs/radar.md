@@ -13,9 +13,9 @@ directory when `source_dir` is absent. The file name selects the reader.
 The comparison is case-insensitive.
 
 `Cargo.lock` format versions 3 and 4 are read. Each `[[package]]` entry
-needs a name and a version. A package is queried only when `source` refers
-to the crates.io registry (`github.com/rust-lang/crates.io-index` or
-`index.crates.io`). A package with no source, a git source, or another
+needs a name and a version. A package is queried only when `source` is
+exactly `registry+https://github.com/rust-lang/crates.io-index` or
+`sparse+https://index.crates.io/`. A package with no source, a git source, or another
 registry is skipped and counted. Any other format version is an error that
 names the version and the supported ones.
 
@@ -164,9 +164,12 @@ without `stack.android` is not checked.
    The reference is resolved from the `[versions]` table of a `*.toml`
    file that is also listed in `detect_from`. Comments in Gradle and TOML
    files are ignored.
-3. When the files disagree, the highest value is used and the report names
+3. Assignments inside `testOptions`, `lint`, and `managedDevices` blocks,
+   and text inside strings, are ignored so a higher test or message value
+   cannot hide a lower production level.
+4. When the files disagree, the lowest value is used and the report names
    the other locations.
-4. When nothing is found, or an expression cannot be resolved (for example
+5. When nothing is found, or an expression cannot be resolved (for example
    `flutter.targetSdkVersion`), the warning is `could not determine
    targetSdk for <project>; set stack.android.target_sdk` and there is no
    finding. Existing Play findings are left as they are.
@@ -201,7 +204,11 @@ Results are JSON files. The directory is `--cache-dir`, then
 | Linux | `$XDG_CACHE_HOME/craftward`, or `~/.cache/craftward` |
 | macOS | `~/Library/Caches/Craftward` |
 
-An empty environment variable is treated as unset.
+An empty environment variable is treated as unset. A relative
+`XDG_CACHE_HOME` is ignored and `~/.cache/craftward` is used instead.
+Cache path segments percent-encode a leading `.` so names such as `.`,
+`..`, and `.hidden` cannot form special or hidden directory entries;
+existing entries for those names are rebuilt on the next fetch.
 
 A query result, one file per ecosystem, name, and version, is fresh for 24
 hours. A vulnerability record is fresh for 7 days. Files are replaced by

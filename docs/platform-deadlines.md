@@ -90,8 +90,10 @@ while a newer reached row is still unmet.
    `libs.versions.targetSdk.get().toInt()` is resolved from the
    `[versions]` table of a `*.toml` file that is also in `detect_from`.
    Only that table is read, and only by Craftward's own reader.
-3. Comments (`//`, `/* */`, and `#` in TOML) are ignored.
-4. Different values: the highest is used, and the report names the others.
+3. Comments (`//`, `/* */`, and `#` in TOML) are ignored. Assignments inside
+   `testOptions`, `lint`, and `managedDevices`, and text inside strings, are
+   ignored.
+4. Different values: the lowest is used, and the report names the others.
 5. No value, or an expression Craftward cannot read: a warning, and no
    finding. Set `target_sdk` for those projects.
 

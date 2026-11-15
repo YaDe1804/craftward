@@ -136,6 +136,41 @@ fn linux_uses_xdg_config_home() {
 }
 
 #[test]
+fn linux_ignores_relative_xdg_paths() {
+    let config = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_CONFIG_HOME", "relative-config")],
+        home: Some(PathBuf::from("/home/ada")),
+    };
+    let location = locate_workspace(&config, None).expect("located");
+    assert_eq!(
+        location.path,
+        PathBuf::from("/home/ada")
+            .join(".config")
+            .join("craftward")
+            .join("workspace.json")
+    );
+    let cache = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_CACHE_HOME", "relative-cache")],
+        home: Some(PathBuf::from("/home/ada")),
+    };
+    assert_eq!(
+        locate_cache(&cache, None).unwrap(),
+        PathBuf::from("/home/ada/.cache/craftward")
+    );
+    let data = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_DATA_HOME", "relative-data")],
+        home: Some(PathBuf::from("/home/ada")),
+    };
+    assert_eq!(
+        locate_data(&data, None).unwrap(),
+        PathBuf::from("/home/ada/.local/share/craftward")
+    );
+}
+
+#[test]
 fn linux_without_xdg_uses_the_home_config_directory() {
     let host = FakeHost {
         os: OsFamily::Linux,
