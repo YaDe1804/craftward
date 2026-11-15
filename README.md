@@ -32,9 +32,20 @@ cargo run -p craftward-cli -- --version
 cargo run -p craftward-app -- --version
 ```
 
-Both executables print their name and version. `--version` prints the same
-line. `craftward --help` describes the commands. The CLI parser is clap
-(Derive API); see [ADR 0022](docs/adr/0022-command-line-parsing-with-clap.md).
+`craftward` prints help with `--help`. The CLI parser is clap (Derive API);
+see [ADR 0022](docs/adr/0022-command-line-parsing-with-clap.md).
+
+### Desktop app
+
+```console
+cargo run -p craftward-app --release
+```
+
+Opens a read-only portfolio window over the same workspace file and
+`craftward.db` as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`,
+platform defaults). `--version` prints the name and version. See
+[docs/desktop.md](docs/desktop.md) and
+[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when
@@ -91,4 +102,5 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Vulnerability radar](docs/radar.md)
 - [Play target-API deadlines](docs/platform-deadlines.md)
 - [Local database](docs/storage.md)
+- [Desktop application](docs/desktop.md)
 - [Roadmap](docs/roadmap/)

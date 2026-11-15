@@ -75,6 +75,19 @@ licensed under a license allowed by `deny.toml`, and recorded in a new or
 updated ADR that names the crate and the reason it was accepted. CI enforces
 the license and ban policy.
 
+### Exceptions in `deny.toml`
+
+Prefer extending `licenses.allow` only for licenses that should apply to
+every future crate. When a single crate needs an extra license, add a
+`[[licenses.exceptions]]` entry for that crate name instead of widening the
+global allow list. For advisories, keep `unmaintained = "all"` (and the
+other hard checks) and ignore only specific RustSec ids under
+`[advisories].ignore`, each with a `reason`. Record both kinds of exception
+in an ADR and remove advisory ignores when the upstream dependency that
+pulled them in is fixed (Dependabot usually surfaces that). See
+[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md) for the egui font and
+accesskit/zbus examples.
+
 ## Adding a CLI command
 
 Command-line parsing lives in `crates/craftward-cli/src/cli.rs` and uses clap
