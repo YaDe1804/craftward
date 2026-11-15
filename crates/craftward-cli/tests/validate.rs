@@ -118,11 +118,18 @@ fn unrecognized_argument_exits_2() {
 
 #[test]
 fn help_describes_validate_and_exits_0() {
-    let output = craftward(&["--help"]);
-    let stdout = String::from_utf8(output.stdout).expect("stdout");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{stderr}");
-    assert!(stderr.is_empty());
-    assert!(stdout.contains("craftward validate [PATH]..."));
-    assert!(stdout.contains("plan.phases[0].tasks[1].due"));
+    let root = craftward(&["--help"]);
+    let root_out = String::from_utf8(root.stdout).expect("stdout");
+    let root_err = String::from_utf8_lossy(&root.stderr);
+    assert!(root.status.success(), "{root_err}");
+    assert!(root_err.is_empty());
+    assert!(root_out.contains("Check project files"));
+    assert!(!root_out.contains("plan.phases[0].tasks[1].due"));
+
+    let detailed = craftward(&["validate", "--help"]);
+    let detailed_out = String::from_utf8(detailed.stdout).expect("stdout");
+    let detailed_err = String::from_utf8_lossy(&detailed.stderr);
+    assert!(detailed.status.success(), "{detailed_err}");
+    assert!(detailed_err.is_empty());
+    assert!(detailed_out.contains("plan.phases[0].tasks[1].due"));
 }
