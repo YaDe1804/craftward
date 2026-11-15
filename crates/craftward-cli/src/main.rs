@@ -1,28 +1,30 @@
 //! Command-line interface for Craftward.
 
 use std::env;
-use std::path::PathBuf;
+use std::fmt::Write;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use craftward_core::LoadError;
+use craftward_core::{
+    LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project, init_project,
+    list_projects, load_from_path, locate_workspace, remove_project,
+};
 
 /// Process exit status for a usage error.
 const USAGE_ERROR: u8 = 2;
 
-/// Process exit status when a file is invalid or unreadable.
+/// Process exit status when a file or request fails.
 const DATA_ERROR: u8 = 1;
 
 fn main() -> ExitCode {
     match parse_args() {
-        Ok(Command::Version) => {
-            println!("{} {}", env!("CARGO_BIN_NAME"), craftward_core::version());
-            ExitCode::SUCCESS
-        }
-        Ok(Command::Help) => {
-            print_help();
-            ExitCode::SUCCESS
-        }
-        Ok(Command::Validate(paths)) => validate_files(&paths),
+        Ok(invocation) => match run(invocation) {
+            Ok(code) => code,
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::from(DATA_ERROR)
+            }
+        },
         Err(message) => {
             eprintln!("error: {message}");
             ExitCode::from(USAGE_ERROR)
@@ -30,100 +32,191 @@ fn main() -> ExitCode {
     }
 }
 
+struct Invocation {
+    workspace: Option<PathBuf>,
+    command: Command,
+}
+
+#[derive(Clone, Copy)]
+enum Topic {
+    Init,
+    Add,
+    Remove,
+    List,
+    Validate,
+    Workspace,
+}
+
 enum Command {
     Version,
     Help,
-    Validate(Vec<PathBuf>),
+    Init {
+        directory: Option<PathBuf>,
+        id: String,
+        name: String,
+        status: ProjectStatus,
+    },
+    Add {
+        path: PathBuf,
+    },
+    Remove {
+        id: String,
+    },
+    List,
+    Validate {
+        paths: Vec<PathBuf>,
+    },
+    WorkspacePath,
+    Usage(Topic),
 }
 
-/// Accepts `--help`, `--version`, or `validate` with one or more file paths.
-///
-/// With no arguments, the program prints its name and version.
-///
-/// # Errors
-///
-/// Returns an error when the command line is not one of those forms.
-fn parse_args() -> Result<Command, String> {
-    let mut arguments = env::args_os().skip(1);
-    let Some(argument) = arguments.next() else {
-        return Ok(Command::Version);
-    };
-    if argument == "--version" {
-        if arguments.next().is_some() {
-            return Err("too many arguments".to_owned());
+fn run(invocation: Invocation) -> Result<ExitCode, String> {
+    match invocation.command {
+        Command::Version => {
+            println!("{} {}", env!("CARGO_BIN_NAME"), craftward_core::version());
+            Ok(ExitCode::SUCCESS)
         }
-        return Ok(Command::Version);
-    }
-    if argument == "--help" {
-        if arguments.next().is_some() {
-            return Err("too many arguments".to_owned());
+        Command::Help => {
+            print_help();
+            Ok(ExitCode::SUCCESS)
         }
-        return Ok(Command::Help);
-    }
-    if argument == "validate" {
-        let mut paths = Vec::new();
-        for argument in arguments {
-            let rendered = argument.to_string_lossy();
-            if rendered.starts_with('-') {
-                return Err(format!("unrecognized argument: {rendered}"));
+        Command::Usage(topic) => {
+            print_command_help(topic);
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Init {
+            directory,
+            id,
+            name,
+            status,
+        } => {
+            let directory = match directory {
+                Some(path) => absolute_from_cwd(&path)?,
+                None => env::current_dir()
+                    .map_err(|error| format!("cannot read the current directory: {error}"))?,
+            };
+            match init_project(&directory, &id, &name, status) {
+                Ok(path) => {
+                    println!("created {}", path.display());
+                    Ok(ExitCode::SUCCESS)
+                }
+                Err(WorkspaceError::Validation(errors)) => {
+                    let mut message = String::from("invalid project file");
+                    for error in errors {
+                        let _ = write!(message, "\n  {}: {}", error.path, error.message);
+                    }
+                    Err(message)
+                }
+                Err(error) => Err(error.to_string()),
             }
-            paths.push(PathBuf::from(argument));
         }
-        if paths.is_empty() {
-            return Err("validate requires at least one file path".to_owned());
+        Command::Add { path } => {
+            let workspace = workspace_file(invocation.workspace.as_deref())?;
+            let input = absolute_from_cwd(&path)?;
+            match add_project(&workspace, &input) {
+                Ok(id) => {
+                    println!("added {id}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                Err(error) => Err(explain_workspace(&error)),
+            }
         }
-        return Ok(Command::Validate(paths));
+        Command::Remove { id } => {
+            let workspace = workspace_file(invocation.workspace.as_deref())?;
+            match remove_project(&workspace, &id) {
+                Ok(()) => {
+                    println!("removed {id}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        Command::List => {
+            let workspace = workspace_file(invocation.workspace.as_deref())?;
+            match list_projects(&workspace) {
+                Ok(rows) => Ok(print_list(&rows)),
+                Err(error) => Err(explain_workspace(&error)),
+            }
+        }
+        Command::Validate { paths } => {
+            if paths.is_empty() {
+                let workspace = workspace_file(invocation.workspace.as_deref())?;
+                validate_workspace(&workspace)
+            } else {
+                Ok(validate_files(&paths))
+            }
+        }
+        Command::WorkspacePath => {
+            let location = locate_workspace(&ProcessHost, invocation.workspace.as_deref())
+                .map_err(|error| error.to_string())?;
+            let path = absolute_from_cwd(&location.path)?;
+            println!("{} ({})", path.display(), location.origin.label());
+            Ok(ExitCode::SUCCESS)
+        }
     }
-    let rendered = argument.to_string_lossy();
-    Err(format!("unrecognized argument: {rendered}"))
 }
 
-fn print_help() {
-    let version = craftward_core::version();
-    println!(
-        "\
-craftward {version}
+fn workspace_file(explicit: Option<&Path>) -> Result<PathBuf, String> {
+    let location = locate_workspace(&ProcessHost, explicit).map_err(|error| error.to_string())?;
+    absolute_from_cwd(&location.path)
+}
 
-Check project files and print this program's version.
+fn absolute_from_cwd(path: &Path) -> Result<PathBuf, String> {
+    let path = platform_path(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        let current = env::current_dir()
+            .map_err(|error| format!("cannot read the current directory: {error}"))?;
+        Ok(platform_path(&current.join(path)))
+    }
+}
 
-Usage:
-  craftward
-  craftward --help
-  craftward --version
-  craftward validate <PATH>...
+/// Rebuilds `path` so every separator is the one this operating system uses.
+///
+/// A `Path` keeps `/` that were already in the text. On Windows, joining such a
+/// path produces a mixed result such as `C:\dir\app/craftward.json`.
+fn platform_path(path: &Path) -> PathBuf {
+    path.components().collect()
+}
 
-Commands:
-  validate <PATH>...
-      Check one or more craftward.json files. Each file is reported as
-      \"ok\" or as a list of errors. An error names its location, for
-      example plan.phases[0].tasks[1].due.
-
-With no arguments, craftward prints its name and version.
-
-Exit status:
-  0  every file is valid
-  1  a file is invalid or cannot be read
-  2  the command line is wrong"
-    );
+fn validate_workspace(path: &Path) -> Result<ExitCode, String> {
+    let rows = list_projects(path).map_err(|error| explain_workspace(&error))?;
+    if rows.is_empty() {
+        println!("no projects");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut failed = false;
+    for row in rows {
+        if !report_project(&row.path) {
+            failed = true;
+        }
+    }
+    Ok(exit_from_failure(failed))
 }
 
 fn validate_files(paths: &[PathBuf]) -> ExitCode {
     let mut failed = false;
     for path in paths {
-        let rendered = path.to_string_lossy();
-        match craftward_core::load_from_path(path) {
-            Ok(_) => println!("{rendered}: ok"),
-            Err(error) => {
-                failed = true;
-                println!("{rendered}:");
-                print_load_error(&error);
-            }
+        if !report_project(path) {
+            failed = true;
         }
     }
-    if failed {
-        ExitCode::from(DATA_ERROR)
-    } else {
-        ExitCode::SUCCESS
+    exit_from_failure(failed)
+}
+
+fn report_project(path: &Path) -> bool {
+    let rendered = path.to_string_lossy();
+    match load_from_path(path) {
+        Ok(_) => {
+            println!("{rendered}: ok");
+            true
+        }
+        Err(error) => {
+            println!("{rendered}:");
+            print_load_error(&error);
+            false
+        }
     }
 }
 
@@ -144,4 +237,501 @@ fn print_load_error(error: &LoadError) {
             }
         }
     }
+}
+
+fn print_list(rows: &[ProjectRow]) -> ExitCode {
+    if rows.is_empty() {
+        println!("no projects");
+        return ExitCode::SUCCESS;
+    }
+    let mut failed = false;
+    let mut lines = Vec::new();
+    for row in rows {
+        lines.push(match &row.detail {
+            Ok(snapshot) => ListLine {
+                id: snapshot.id.clone(),
+                name: snapshot.name.clone(),
+                status: snapshot.status.as_str().to_owned(),
+                version: snapshot
+                    .current_version
+                    .clone()
+                    .unwrap_or_else(|| "-".to_owned()),
+                open_tasks: snapshot.open_tasks.to_string(),
+                open_issues: snapshot.open_issues.to_string(),
+                next_due: snapshot.next_due.clone().unwrap_or_else(|| "-".to_owned()),
+                note: String::new(),
+            },
+            Err(message) => {
+                failed = true;
+                ListLine {
+                    id: "-".to_owned(),
+                    name: "-".to_owned(),
+                    status: "-".to_owned(),
+                    version: "-".to_owned(),
+                    open_tasks: "-".to_owned(),
+                    open_issues: "-".to_owned(),
+                    next_due: "-".to_owned(),
+                    note: format!("{}: {message}", row.path.display()),
+                }
+            }
+        });
+    }
+    print_table(&lines);
+    exit_from_failure(failed)
+}
+
+struct ListLine {
+    id: String,
+    name: String,
+    status: String,
+    version: String,
+    open_tasks: String,
+    open_issues: String,
+    next_due: String,
+    note: String,
+}
+
+fn print_table(lines: &[ListLine]) {
+    let headers = [
+        "ID",
+        "NAME",
+        "STATUS",
+        "VERSION",
+        "OPEN_TASKS",
+        "OPEN_ISSUES",
+        "NEXT_DUE",
+        "NOTE",
+    ];
+    let mut widths = headers.map(str::len);
+    for line in lines {
+        let cells = line.cells();
+        for (width, cell) in widths.iter_mut().zip(cells) {
+            *width = (*width).max(cell.len());
+        }
+    }
+    print_row(&headers, &widths);
+    for line in lines {
+        let cells = line.cells();
+        print_row(&cells, &widths);
+    }
+}
+
+impl ListLine {
+    fn cells(&self) -> [&str; 8] {
+        [
+            &self.id,
+            &self.name,
+            &self.status,
+            &self.version,
+            &self.open_tasks,
+            &self.open_issues,
+            &self.next_due,
+            &self.note,
+        ]
+    }
+}
+
+fn print_row(cells: &[&str], widths: &[usize]) {
+    let mut first = true;
+    for (cell, width) in cells.iter().zip(widths) {
+        if first {
+            first = false;
+        } else {
+            print!("  ");
+        }
+        print!("{cell:<width$}");
+    }
+    println!();
+}
+
+fn exit_from_failure(failed: bool) -> ExitCode {
+    if failed {
+        ExitCode::from(DATA_ERROR)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn explain_workspace(error: &WorkspaceError) -> String {
+    match error {
+        WorkspaceError::InvalidProject { path, source } => {
+            let mut message = format!("invalid project file {}", path.display());
+            match source {
+                LoadError::Validation(errors) => {
+                    for error in errors {
+                        let _ = write!(message, "\n  {}: {}", error.path, error.message);
+                    }
+                }
+                other => {
+                    let _ = write!(message, "\n  {other}");
+                }
+            }
+            message
+        }
+        WorkspaceError::Validation(errors) => {
+            let mut message = String::from("invalid workspace file");
+            for error in errors {
+                let _ = write!(message, "\n  {}: {}", error.path, error.message);
+            }
+            message
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Accepts the global options and one command.
+///
+/// With no arguments, the program prints its name and version.
+///
+/// # Errors
+///
+/// Returns an error when the command line is not a supported form.
+fn parse_args() -> Result<Invocation, String> {
+    let arguments: Vec<_> = env::args_os().skip(1).collect();
+    let (workspace, rest) = extract_workspace(&arguments)?;
+    if rest.is_empty() {
+        if workspace.is_some() {
+            return Err("--workspace needs a command".to_owned());
+        }
+        return Ok(Invocation {
+            workspace: None,
+            command: Command::Version,
+        });
+    }
+    let command_name = rest[0].to_string_lossy();
+    if command_name == "--version" || command_name == "--help" {
+        if rest.len() != 1 || workspace.is_some() {
+            return Err("too many arguments".to_owned());
+        }
+        let command = if command_name == "--version" {
+            Command::Version
+        } else {
+            Command::Help
+        };
+        return Ok(Invocation {
+            workspace: None,
+            command,
+        });
+    }
+    if command_name.starts_with('-') {
+        return Err(format!("unrecognized argument: {command_name}"));
+    }
+    let command_args = &rest[1..];
+    let command = parse_command(&command_name, command_args)?;
+    Ok(Invocation { workspace, command })
+}
+
+fn extract_workspace(
+    arguments: &[std::ffi::OsString],
+) -> Result<(Option<PathBuf>, Vec<std::ffi::OsString>), String> {
+    let mut workspace = None;
+    let mut rest = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        if arguments[index] == "--workspace" {
+            let Some(value) = arguments.get(index + 1) else {
+                return Err("--workspace needs a file path".to_owned());
+            };
+            if value.to_string_lossy().starts_with('-') {
+                return Err("--workspace needs a file path".to_owned());
+            }
+            if workspace.is_some() {
+                return Err("duplicate option: --workspace".to_owned());
+            }
+            workspace = Some(platform_path(Path::new(value)));
+            index += 2;
+        } else {
+            rest.push(arguments[index].clone());
+            index += 1;
+        }
+    }
+    Ok((workspace, rest))
+}
+
+fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, String> {
+    let topic = match name {
+        "init" => Topic::Init,
+        "add" => Topic::Add,
+        "remove" => Topic::Remove,
+        "list" => Topic::List,
+        "validate" => Topic::Validate,
+        "workspace" => Topic::Workspace,
+        _ => return Err(format!("unrecognized command: {name}")),
+    };
+    if help_only(name, args)? {
+        return Ok(Command::Usage(topic));
+    }
+    match name {
+        "init" => parse_init(args),
+        "add" => parse_one_path(args).map(|path| Command::Add { path }),
+        "remove" => parse_one_word(args, "remove").map(|id| Command::Remove { id }),
+        "list" => {
+            if args.is_empty() {
+                Ok(Command::List)
+            } else {
+                Err(unexpected(&args[0]))
+            }
+        }
+        "validate" => {
+            let mut paths = Vec::new();
+            for arg in args {
+                let rendered = arg.to_string_lossy();
+                if rendered.starts_with('-') {
+                    return Err(format!("unrecognized argument: {rendered}"));
+                }
+                paths.push(platform_path(Path::new(arg)));
+            }
+            Ok(Command::Validate { paths })
+        }
+        "workspace" => parse_workspace_command(args),
+        _ => Err(format!("unrecognized command: {name}")),
+    }
+}
+
+fn help_only(name: &str, args: &[std::ffi::OsString]) -> Result<bool, String> {
+    if !args.iter().any(|arg| arg == "--help") {
+        return Ok(false);
+    }
+    let workspace_path_help = name == "workspace"
+        && args.len() == 2
+        && args.iter().any(|arg| arg == "path")
+        && args.iter().any(|arg| arg == "--help");
+    if args.len() == 1 || workspace_path_help {
+        Ok(true)
+    } else {
+        Err("too many arguments".to_owned())
+    }
+}
+
+fn parse_workspace_command(args: &[std::ffi::OsString]) -> Result<Command, String> {
+    if args.len() == 1 && args[0] == "path" {
+        Ok(Command::WorkspacePath)
+    } else if args.is_empty() {
+        Err("workspace requires a subcommand: path".to_owned())
+    } else if args[0] == "path" {
+        Err("too many arguments".to_owned())
+    } else {
+        Err(unexpected(&args[0]))
+    }
+}
+
+fn parse_one_path(args: &[std::ffi::OsString]) -> Result<PathBuf, String> {
+    if args.len() != 1 {
+        return Err("add requires one project file or directory".to_owned());
+    }
+    let rendered = args[0].to_string_lossy();
+    if rendered.starts_with('-') {
+        return Err(format!("unrecognized argument: {rendered}"));
+    }
+    Ok(platform_path(Path::new(&args[0])))
+}
+
+fn parse_one_word(args: &[std::ffi::OsString], command: &str) -> Result<String, String> {
+    if args.len() != 1 {
+        return Err(format!("{command} requires one project id"));
+    }
+    let rendered = args[0].to_string_lossy();
+    if rendered.starts_with('-') {
+        return Err(format!("unrecognized argument: {rendered}"));
+    }
+    Ok(rendered.into_owned())
+}
+
+fn parse_init(args: &[std::ffi::OsString]) -> Result<Command, String> {
+    let mut directory = None;
+    let mut id = None;
+    let mut name = None;
+    let mut status = None;
+    let mut index = 0;
+    while index < args.len() {
+        let rendered = args[index].to_string_lossy();
+        if rendered == "--id" || rendered == "--name" || rendered == "--status" {
+            let Some(value) = args.get(index + 1) else {
+                return Err(format!("{rendered} needs a value"));
+            };
+            if value.to_string_lossy().starts_with('-') {
+                return Err(format!("{rendered} needs a value"));
+            }
+            let text = value.to_string_lossy().into_owned();
+            match rendered.as_ref() {
+                "--id" => assign(&mut id, "--id", text)?,
+                "--name" => assign(&mut name, "--name", text)?,
+                "--status" => assign(&mut status, "--status", text)?,
+                _ => {}
+            }
+            index += 2;
+        } else if rendered.starts_with('-') {
+            return Err(format!("unrecognized argument: {rendered}"));
+        } else if directory.is_some() {
+            return Err("init accepts only one directory".to_owned());
+        } else {
+            directory = Some(platform_path(Path::new(&args[index])));
+            index += 1;
+        }
+    }
+    let Some(id) = id else {
+        return Err("init requires --id".to_owned());
+    };
+    let Some(name) = name else {
+        return Err("init requires --name".to_owned());
+    };
+    let status = match status {
+        None => ProjectStatus::Idea,
+        Some(text) => {
+            ProjectStatus::parse(&text).ok_or_else(|| format!("unknown status: {text}"))?
+        }
+    };
+    Ok(Command::Init {
+        directory,
+        id,
+        name,
+        status,
+    })
+}
+
+fn assign(slot: &mut Option<String>, flag: &str, value: String) -> Result<(), String> {
+    if slot.is_some() {
+        Err(format!("duplicate option: {flag}"))
+    } else {
+        *slot = Some(value);
+        Ok(())
+    }
+}
+
+fn unexpected(argument: &std::ffi::OsString) -> String {
+    format!("unrecognized argument: {}", argument.to_string_lossy())
+}
+
+fn print_help() {
+    let version = craftward_core::version();
+    println!(
+        "\
+craftward {version}
+
+Track project files and print a summary of the workspace.
+
+Usage:
+  craftward
+  craftward --help
+  craftward --version
+  craftward [--workspace <FILE>] <COMMAND> [--help]
+
+Commands:
+  init [DIR] --id <ID> --name <NAME> [--status <STATUS>]
+      Create DIR/craftward.json with the required fields. DIR defaults to
+      the current directory. STATUS defaults to idea. An existing file is
+      left unchanged, and the project is not added to the workspace.
+  add <PATH>
+      Add a craftward.json file, or a directory that contains one. The file
+      must be valid. The same path and the same project id are rejected.
+  remove <ID>
+      Remove a project from the workspace. The project file stays where it is.
+  list
+      Show id, name, status, version, open tasks, open issues, and the next
+      due date. A missing or invalid file is still listed, and the command
+      then exits 1.
+  craftward validate [PATH]...
+      Check the given files, or every project in the workspace when no path
+      is given. An error names its location, for example
+      plan.phases[0].tasks[1].due.
+  workspace path
+      Print the workspace file in use and whether it came from --workspace,
+      CRAFTWARD_WORKSPACE, or the default location.
+
+--workspace selects the workspace file. Otherwise CRAFTWARD_WORKSPACE is used,
+then the default directory for this system.
+
+Exit status:
+  0  success
+  1  a file or request failed
+  2  the command line is wrong"
+    );
+}
+
+fn print_command_help(topic: Topic) {
+    let text = match topic {
+        Topic::Init => {
+            "\
+Create a project file with the required fields.
+
+Usage:
+  craftward init [DIR] --id <ID> --name <NAME> [--status <STATUS>]
+
+STATUS is idea, in_development, released, maintenance, paused, or
+discontinued. The default is idea. DIR defaults to the current directory.
+An existing craftward.json is not overwritten. The workspace list is not
+changed.
+
+Example:
+  craftward init --id harbor-light --name \"Harbor Light\""
+        }
+        Topic::Add => {
+            "\
+Add a project file to the workspace.
+
+Usage:
+  craftward add <PATH>
+
+PATH is a craftward.json file or a directory that contains one. The file
+must be valid. A path or project id that is already listed is rejected.
+
+Example:
+  craftward add ./harbor-light"
+        }
+        Topic::Remove => {
+            "\
+Remove a project from the workspace.
+
+Usage:
+  craftward remove <ID>
+
+The project file is not deleted.
+
+Example:
+  craftward remove harbor-light"
+        }
+        Topic::List => {
+            "\
+Show every project in the workspace.
+
+Usage:
+  craftward list
+
+Open tasks and open issues are those marked open or in_progress. The next
+due date is the earliest task or watch-item date still outstanding. Done
+and dropped tasks are left out. A missing or invalid project file is shown
+with a note, and the command exits 1.
+
+Example:
+  craftward list"
+        }
+        Topic::Validate => {
+            "\
+Check project files.
+
+Usage:
+  craftward validate [PATH]...
+
+With no paths, every project in the workspace is checked. Each file is
+reported as \"ok\" or as a list of errors.
+
+Example:
+  craftward validate
+  craftward validate ./harbor-light/craftward.json"
+        }
+        Topic::Workspace => {
+            "\
+Show which workspace file is in use.
+
+Usage:
+  craftward workspace path
+
+The line names the file and the source: command-line option, environment
+variable CRAFTWARD_WORKSPACE, or default location.
+
+Example:
+  craftward workspace path"
+        }
+    };
+    println!("{text}");
 }

@@ -17,3 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example project files and `docs/file-format.md`.
 - First third-party dependencies: serde 1.0.229, serde_json 1.0.154, and
   schemars 1.2.3.
+- A `workspace.json` registry of project files, with `init`, `add`, `remove`,
+  `list`, and `workspace path` commands. `validate` without paths checks that
+  registry. `cargo deny` checks all Cargo features, including optional
+  `schemars`.
