@@ -163,7 +163,7 @@
           {
             "id": "t07",
             "title": "Projektliste anhand der 28 GitHub-Repos neu aufstellen, aktive Projekte als craftward.json erfassen",
-            "status": "open"
+            "status": "in_progress"
           },
           {
             "id": "t08",
@@ -225,7 +225,7 @@
           {
             "id": "t10",
             "title": "Befehl: Roadmap-HTML aus der craftward.json erzeugen",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t11",
@@ -235,6 +235,11 @@
           {
             "id": "t12",
             "title": "CI: Format, Lints, Tests auf Windows, Linux und macOS, Lizenzprüfung der Abhängigkeiten",
+            "status": "done"
+          },
+          {
+            "id": "t13",
+            "title": "Bearbeitungsbefehle: show, project set, phase/task/issue/watch",
             "status": "done"
           }
         ]
@@ -252,7 +257,7 @@
           {
             "id": "t02",
             "title": "Quelle: Sicherheitslücken (OSV) gegen Lockfiles",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t03",
@@ -277,7 +282,7 @@
           {
             "id": "t07",
             "title": "Cache in der lokalen Datenbank, funktioniert auch offline",
-            "status": "open"
+            "status": "in_progress"
           },
           {
             "id": "t08",

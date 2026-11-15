@@ -1,6 +1,7 @@
 //! Command-line interface for Craftward.
 
 mod editing;
+mod radar;
 
 use std::env;
 use std::fmt::Write;
@@ -94,6 +95,7 @@ enum Command {
         language: Language,
     },
     Edit(editing::Request),
+    Radar(radar::Request),
     HelpText(&'static str),
     Usage(Topic),
 }
@@ -192,6 +194,7 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             invocation.workspace.as_deref(),
         ),
         Command::Edit(request) => editing::run(request, invocation.workspace.as_deref()),
+        Command::Radar(request) => radar::run(&request, invocation.workspace.as_deref()),
         Command::HelpText(text) => {
             println!("{text}");
             Ok(ExitCode::SUCCESS)
@@ -271,7 +274,7 @@ fn is_path_target(raw: &str, path: &Path) -> bool {
         || is_portable_absolute(raw)
 }
 
-fn workspace_file(explicit: Option<&Path>) -> Result<PathBuf, String> {
+pub(crate) fn workspace_file(explicit: Option<&Path>) -> Result<PathBuf, String> {
     let location = locate_workspace(&ProcessHost, explicit).map_err(|error| error.to_string())?;
     absolute_from_cwd(&location.path)
 }
@@ -575,6 +578,12 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
         "validate" => Topic::Validate,
         "workspace" => Topic::Workspace,
         "roadmap" => Topic::Roadmap,
+        "radar" => {
+            return match radar::parse(args)? {
+                radar::Parsed::Help(text) => Ok(Command::HelpText(text)),
+                radar::Parsed::Run(request) => Ok(Command::Radar(request)),
+            };
+        }
         "show" | "project" | "phase" | "task" | "issue" | "watch" => {
             return match editing::parse(name, args)? {
                 editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
@@ -827,6 +836,8 @@ Commands:
   task add|status|done|remove
   issue add|status|remove
   watch add|remove
+  radar [PROJECT...] [--refresh] [--offline] [--json] [--cache-dir DIR]
+      Look up known vulnerabilities in the project's lockfiles.
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.
@@ -835,9 +846,10 @@ Commands:
 then the default directory for this system.
 
 Exit status:
-  0  success
+  0  success, or radar found nothing
   1  a file or request failed
-  2  the command line is wrong"
+  2  the command line is wrong
+  3  radar found a vulnerability"
     );
 }
 

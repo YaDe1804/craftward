@@ -5,8 +5,9 @@
 version.
 
 Exit status is `0` for success, `1` when a file or request fails, and `2` when
-the command line is wrong. `--help` after a command prints that command's
-help and exits `0`.
+the command line is wrong. `radar` also exits `3` when it finds a
+vulnerability; an error still exits `1`. `--help` after a command prints
+that command's help and exits `0`.
 
 `--workspace <FILE>` selects the workspace file for that invocation. Otherwise
 Craftward uses `CRAFTWARD_WORKSPACE`, then the default location described in
@@ -236,4 +237,28 @@ watch ids. A bad kind or date exits 2 and lists the allowed values.
 ```console
 craftward watch add harbor-light --kind expiry --title "Renew domain" --due 2027-06-30
 craftward watch remove harbor-light domain-renewal
+```
+
+## radar
+
+Looks up known vulnerabilities for the packages in the lockfiles named by
+`stack.lockfiles`. With no project, every project in the workspace is
+checked. A project argument is an id or a path, with the same ambiguity
+rule as `roadmap`.
+
+`--refresh` ignores cached answers and asks OSV again. `--offline` never
+contacts OSV. The two options cannot be combined. `--cache-dir` selects the
+cache directory; otherwise `CRAFTWARD_CACHE_DIR` is used, then the default
+described in [radar.md](radar.md). `--json` prints the same report as JSON.
+
+Exit status is `0` when nothing was found, `3` when at least one
+vulnerability was found, `1` when a project could not be checked, and `2`
+when the command line is wrong. An error takes priority over a finding.
+The text report, the JSON fields, and what is sent to OSV are described in
+[radar.md](radar.md).
+
+```console
+craftward radar
+craftward radar harbor-light --json
+craftward radar --offline --cache-dir ./cache
 ```

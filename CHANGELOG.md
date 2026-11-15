@@ -31,3 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project file through `craftward-core`. The file is replaced only when it
   is still valid, in one canonical form. Omitted ids are formed from titles,
   and `updated` is set to the UTC date.
+- `craftward radar`, which reads the lockfiles named by a project and asks
+  OSV which package versions have a known vulnerability. Results are cached
+  as JSON. The HTTP client lives in `craftward-net` (ureq 3.5.2, rustls
+  0.23.46 with the ring provider, and rustls-native-certs 0.8.5).
