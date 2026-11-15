@@ -299,21 +299,10 @@ fn parse_id_command(
 }
 
 fn parse_kind(value: &str) -> Result<String, String> {
-    match value {
-        "vulnerability"
-        | "malicious"
-        | "unmaintained"
-        | "unsound"
-        | "notice"
-        | "eol"
-        | "eol_soon"
-        | "platform_deadline"
-        | "platform_deadline_soon" => Ok(value.to_owned()),
-        _ => Err(
-            "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, eol_soon, platform_deadline, or platform_deadline_soon"
-                .to_owned(),
-        ),
-    }
+    value.parse::<craftward_core::FindingKind>().map(|kind| kind.as_str().to_owned()).map_err(|_| {
+        "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, eol_soon, platform_deadline, or platform_deadline_soon"
+            .to_owned()
+    })
 }
 
 fn parse_state(value: &str) -> Result<StateFilter, String> {

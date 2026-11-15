@@ -25,7 +25,7 @@ source = \"git+https://example.com/other#abcdef\"
 "
         );
         let parsed = parse_lock_text(LockKind::Cargo, &text).expect("parse");
-        assert_eq!(parsed.kind, "cargo");
+        assert_eq!(parsed.kind, LockKind::Cargo);
         assert_eq!(parsed.skipped, 2);
         assert_eq!(parsed.queried.len(), 1);
         assert_eq!(parsed.queried[0].ecosystem, "crates.io");

@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 use crate::date::{days_between, is_calendar_date};
 use crate::model::FormFactor;
+use crate::store::{FindingKind, Severity};
 
 const EMBEDDED: &str = include_str!("../../../data/platform-deadlines.json");
 const FILE_NAME: &str = "platform-deadlines.json";
@@ -71,9 +72,9 @@ pub struct DeadlineHit {
     /// `PLAY:<form factor>:<requirement>`.
     pub id: String,
     /// `platform_deadline` or `platform_deadline_soon`.
-    pub kind: &'static str,
+    pub kind: FindingKind,
     /// `high` or `medium`.
-    pub severity: &'static str,
+    pub severity: Severity,
     /// Required level, current level, deadline, and where targetSdk was found.
     pub summary: String,
     /// Source page for this row.
@@ -230,8 +231,8 @@ fn governing(
             row,
             target_sdk,
             detected_at,
-            "platform_deadline",
-            "high",
+            FindingKind::PlatformDeadline,
+            Severity::High,
         ));
     }
     let row = next_future(entries, today)?;
@@ -241,8 +242,8 @@ fn governing(
             row,
             target_sdk,
             detected_at,
-            "platform_deadline_soon",
-            "medium",
+            FindingKind::PlatformDeadlineSoon,
+            Severity::Medium,
         ));
     }
     None
@@ -268,8 +269,8 @@ fn hit(
     row: &Deadline,
     target_sdk: u32,
     detected_at: &str,
-    kind: &'static str,
-    severity: &'static str,
+    kind: FindingKind,
+    severity: Severity,
 ) -> DeadlineHit {
     let label = row.requirement.replace('_', " ");
     DeadlineHit {

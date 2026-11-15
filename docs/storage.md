@@ -34,7 +34,7 @@ The file database does not.
 
 ## Schema
 
-The schema version is `PRAGMA user_version`. This build writes version 5.
+The schema version is `PRAGMA user_version`. This build writes version 6.
 Migrations only move forward, one version at a time, each in a transaction.
 If the file's version is newer, Craftward stops and says that a newer
 Craftward version created the database.
@@ -64,7 +64,16 @@ rebuilt again with the same event kinds, because a child table cannot stay
 in place while its parent is replaced. Version 5 rebuilds only the event
 table, so `kind` may also be `deadline_passed`. That event is recorded
 when a Play finding changes from `platform_deadline_soon` to
-`platform_deadline`. The copy is still named for the version the file had
+`platform_deadline`. Version 6 rebuilds `findings` and `finding_events`
+again and drops the `CHECK` lists on `state`, finding `kind`, and event
+`kind`. Those words are checked when a row is read: an unknown word is an
+error that names the column and the value. A new word is a change to the
+Rust enums, not a schema change. The rebuild follows SQLite's procedure for
+other kinds of table schema changes. Foreign keys are turned off before the
+transaction, the new tables are filled, the old tables are dropped, and the
+new tables are renamed. `PRAGMA foreign_key_check` must return no rows
+before the commit. Foreign keys are turned on again afterwards, including
+when the rebuild fails. The copy is still named for the version the file had
 before the migration started.
 
 ### runs
@@ -88,7 +97,8 @@ of the identity, so a new affected version updates the same row.
 
 `state` is `open`, `ignored`, or `resolved`. `kind` is `vulnerability`,
 `malicious`, `unmaintained`, `unsound`, `notice`, `eol`, `eol_soon`,
-`platform_deadline`, or `platform_deadline_soon`.
+`platform_deadline`, or `platform_deadline_soon`. The database does not
+enforce those lists. Craftward rejects any other word when it reads the row.
 `aliases` and `fixed_versions`
 are JSON arrays of strings. `ignore_until` is `YYYY-MM-DD` or null. The
 other times use the same UTC timestamp as `runs`.

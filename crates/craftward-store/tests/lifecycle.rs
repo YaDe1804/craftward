@@ -7,9 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    Finding, FindingState, LockfileReport, NewFinding, ProjectReport, SCHEMA_VERSION, StateFilter,
-    StateStore, apply_reports, ignore_finding, list_findings, render_ledger_text, reopen_finding,
-    show_finding,
+    EventKind, Finding, FindingKind, FindingState, LockKind, LockfileReport, NewFinding,
+    ProjectReport, SCHEMA_VERSION, Severity, StateFilter, StateStore, apply_reports,
+    ignore_finding, list_findings, render_ledger_text, reopen_finding, show_finding,
 };
 use craftward_store::SqliteStore;
 use rusqlite::Connection;
@@ -33,11 +33,11 @@ fn finding(version: &str) -> Finding {
         version: version.to_owned(),
         id: "RUSTSEC-2024-0384".to_owned(),
         aliases: vec!["CVE-1".to_owned()],
-        severity: "high".to_owned(),
+        severity: Severity::High,
         summary: "unmaintained".to_owned(),
         fixed_versions: vec!["0.1.13".to_owned()],
         url: "https://osv.dev/vulnerability/RUSTSEC-2024-0384".to_owned(),
-        kind: "vulnerability".to_owned(),
+        kind: FindingKind::Vulnerability,
     }
 }
 
@@ -48,11 +48,11 @@ fn eol_hit(version: &str, cycle: &str) -> Finding {
         version: version.to_owned(),
         id: format!("EOL:postgresql:{cycle}"),
         aliases: Vec::new(),
-        severity: "high".to_owned(),
+        severity: Severity::High,
         summary: "support ended".to_owned(),
         fixed_versions: Vec::new(),
         url: "https://endoflife.date/postgresql".to_owned(),
-        kind: "eol".to_owned(),
+        kind: FindingKind::Eol,
     }
 }
 
@@ -62,7 +62,7 @@ fn report(findings: Vec<Finding>, error: Option<&str>) -> ProjectReport {
         path: "demo/craftward.json".to_owned(),
         lockfiles: vec![LockfileReport {
             path: "Cargo.lock".to_owned(),
-            kind: "cargo".to_owned(),
+            kind: LockKind::Cargo,
             queried: 1,
             skipped: 0,
         }],
@@ -143,7 +143,7 @@ fn ignore_expiry_reopen_and_a_failed_run() {
     assert!(
         events
             .iter()
-            .any(|event| event.kind == "reopened" && event.reason.contains("expired"))
+            .any(|event| event.kind == EventKind::Reopened && event.reason.contains("expired"))
     );
     ignore_finding(&mut store, 1, "later", None, LATER).unwrap();
     reopen_finding(&mut store, 1, LATER).unwrap();
@@ -189,7 +189,7 @@ fn removing_lockfiles_leaves_an_open_finding_unevaluated() {
     assert_eq!(stored.state, FindingState::Open);
     assert_eq!(stored.version, "0.1.12");
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].kind, "discovered");
+    assert_eq!(events[0].kind, EventKind::Discovered);
     let text = render_ledger_text(std::slice::from_ref(&ledger), false);
     assert!(text.contains("no lockfiles configured"), "{text}");
     assert!(
@@ -384,8 +384,8 @@ fn a_withdrawn_advisory_resolves_the_stored_finding() {
     assert_eq!(ledger.resolved_count, 1);
     let (stored, events) = show_finding(&mut store, 1).unwrap();
     assert_eq!(stored.state, FindingState::Resolved);
-    assert_eq!(events.last().unwrap().kind, "withdrawn");
-    assert!(!events.iter().any(|event| event.kind == "resolved"));
+    assert_eq!(events.last().unwrap().kind, EventKind::Withdrawn);
+    assert!(!events.iter().any(|event| event.kind == EventKind::Resolved));
 }
 
 #[test]
@@ -591,23 +591,22 @@ fn a_version_3_file_accepts_platform_deadlines_and_keeps_a_backup() {
     let _ = fs::remove_dir_all(root);
 }
 
-fn play(kind: &str, summary: &str, version: &str) -> Finding {
+fn play(kind: FindingKind, summary: &str, version: &str) -> Finding {
     Finding {
         ecosystem: "platform".to_owned(),
         package: "google-play".to_owned(),
         version: version.to_owned(),
         id: "PLAY:phone:new_apps_and_updates".to_owned(),
         aliases: Vec::new(),
-        severity: if kind == "platform_deadline" {
-            "high"
+        severity: if kind == FindingKind::PlatformDeadline {
+            Severity::High
         } else {
-            "medium"
-        }
-        .to_owned(),
+            Severity::Medium
+        },
         summary: summary.to_owned(),
         fixed_versions: Vec::new(),
         url: "https://example.com/play".to_owned(),
-        kind: kind.to_owned(),
+        kind,
     }
 }
 
@@ -624,7 +623,7 @@ fn a_deadline_that_arrives_keeps_the_same_finding() {
     let root = scratch("passed");
     let mut store = SqliteStore::open(&root.join("craftward.db")).unwrap();
     let soon = play(
-        "platform_deadline_soon",
+        FindingKind::PlatformDeadlineSoon,
         "targetSdk 30 is below required 36 for new apps and updates (deadline 2027-02-01)",
         "30",
     );
@@ -634,7 +633,7 @@ fn a_deadline_that_arrives_keeps_the_same_finding() {
     let id = first.open[0].record_id;
     assert!(first.open[0].new);
     let passed = play(
-        "platform_deadline",
+        FindingKind::PlatformDeadline,
         "targetSdk 30 is below required 36 for new apps and updates (deadline 2027-02-01)",
         "30",
     );
@@ -650,11 +649,13 @@ fn a_deadline_that_arrives_keeps_the_same_finding() {
     assert_eq!(second.open.len(), 1);
     assert_eq!(second.open[0].record_id, id);
     assert!(!second.open[0].new);
-    assert_eq!(second.open[0].kind, "platform_deadline");
-    assert_eq!(second.open[0].severity, "high");
+    assert_eq!(second.open[0].kind, FindingKind::PlatformDeadline);
+    assert_eq!(second.open[0].severity, Severity::High);
     let (_finding, events) = show_finding(&mut store, id).unwrap();
     assert!(
-        events.iter().any(|event| event.kind == "deadline_passed"),
+        events
+            .iter()
+            .any(|event| event.kind == EventKind::DeadlinePassed),
         "{events:?}"
     );
     let _ = fs::remove_dir_all(root);
@@ -667,7 +668,7 @@ fn a_higher_requirement_updates_the_finding_until_the_sdk_meets_it() {
     let first = apply_reports(
         &mut store,
         &[deadline_report(vec![play(
-            "platform_deadline",
+            FindingKind::PlatformDeadline,
             "required 35 (deadline 2025-08-31)",
             "30",
         )])],
@@ -681,7 +682,7 @@ fn a_higher_requirement_updates_the_finding_until_the_sdk_meets_it() {
     let second = apply_reports(
         &mut store,
         &[deadline_report(vec![play(
-            "platform_deadline",
+            FindingKind::PlatformDeadline,
             "required 36 (deadline 2026-08-31)",
             "30",
         )])],
@@ -698,7 +699,7 @@ fn a_higher_requirement_updates_the_finding_until_the_sdk_meets_it() {
     let still = apply_reports(
         &mut store,
         &[deadline_report(vec![play(
-            "platform_deadline",
+            FindingKind::PlatformDeadline,
             "required 36 (deadline 2026-08-31)",
             "35",
         )])],
@@ -849,11 +850,11 @@ fn two_writers_on_one_file_both_finish() {
                     package: "held".to_owned(),
                     vulnerability_id: "RUSTSEC-HELD".to_owned(),
                     version: "1".to_owned(),
-                    severity: "low".to_owned(),
+                    severity: Severity::Low,
                     summary: "held".to_owned(),
                     aliases: Vec::new(),
                     fixed_versions: Vec::new(),
-                    kind: "notice".to_owned(),
+                    kind: FindingKind::Notice,
                     seen_at: "1970-01-01T00:00:00Z".to_owned(),
                 })?;
                 Ok(())
@@ -873,4 +874,316 @@ fn two_writers_on_one_file_both_finish() {
     let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
     assert_eq!(rows.len(), 2, "{rows:?}");
     let _ = fs::remove_dir_all(root);
+}
+
+const VERSION_5: &str = "
+CREATE TABLE findings (
+    id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    vulnerability_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    aliases TEXT NOT NULL,
+    fixed_versions TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('open', 'ignored', 'resolved')),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'vulnerability', 'malicious', 'unmaintained', 'unsound', 'notice',
+        'eol', 'eol_soon', 'platform_deadline', 'platform_deadline_soon'
+    )),
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    resolved_at TEXT,
+    ignore_reason TEXT,
+    ignore_until TEXT,
+    UNIQUE (project_id, ecosystem, package_name, vulnerability_id)
+);
+CREATE TABLE finding_events (
+    id INTEGER PRIMARY KEY,
+    finding_id INTEGER NOT NULL REFERENCES findings(id),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'discovered', 'ignored', 'reopened', 'resolved', 'reappeared', 'withdrawn',
+        'deadline_passed'
+    )),
+    at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+CREATE INDEX finding_events_finding ON finding_events(finding_id);
+";
+
+const KINDS: [&str; 9] = [
+    "vulnerability",
+    "malicious",
+    "unmaintained",
+    "unsound",
+    "notice",
+    "eol",
+    "eol_soon",
+    "platform_deadline",
+    "platform_deadline_soon",
+];
+const SEVERITIES: [&str; 5] = ["critical", "high", "medium", "low", "unknown"];
+const STATES: [&str; 3] = ["open", "ignored", "resolved"];
+const EVENTS: [&str; 7] = [
+    "discovered",
+    "ignored",
+    "reopened",
+    "resolved",
+    "reappeared",
+    "withdrawn",
+    "deadline_passed",
+];
+
+fn fill_version_5(connection: &Connection) {
+    for (index, kind) in KINDS.iter().enumerate() {
+        let state = STATES[index % STATES.len()];
+        connection
+            .execute(
+                "INSERT INTO findings (
+                    project_id, ecosystem, package_name, vulnerability_id, version, severity,
+                    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+                    resolved_at, ignore_reason, ignore_until
+                ) VALUES (
+                    'demo', 'crates.io', 'demo', ?1, '1.0.0', ?2, ?3, ?4, ?5, ?6, ?7,
+                    '1970-01-01T00:00:00Z', '1970-01-02T00:00:00Z', ?8, ?9, ?10
+                )",
+                (
+                    format!("ID-{kind}"),
+                    SEVERITIES[index % SEVERITIES.len()],
+                    format!("summary {kind}"),
+                    format!("[\"alias-{kind}\"]"),
+                    "[\"2.0.0\"]",
+                    state,
+                    kind,
+                    (state == "resolved").then_some("1970-01-03T00:00:00Z"),
+                    (state == "ignored").then_some("because"),
+                    (state == "ignored").then_some("1970-02-01"),
+                ),
+            )
+            .unwrap();
+    }
+    for kind in EVENTS {
+        connection
+            .execute(
+                "INSERT INTO finding_events (finding_id, kind, at, reason)
+                 VALUES (1, ?1, '1970-01-01T00:00:00Z', ?2)",
+                (kind, format!("reason {kind}")),
+            )
+            .unwrap();
+    }
+}
+
+fn assert_migrated_rows(store: &mut SqliteStore) {
+    let rows = list_findings(store, &[], StateFilter::All, None).unwrap();
+    assert_eq!(rows.len(), KINDS.len());
+    for (index, kind) in KINDS.iter().enumerate() {
+        let state = STATES[index % STATES.len()];
+        let row = rows
+            .iter()
+            .find(|row| row.vulnerability_id == format!("ID-{kind}"))
+            .unwrap_or_else(|| panic!("missing {kind}"));
+        assert_eq!(row.kind.as_str(), *kind);
+        assert_eq!(row.severity.as_str(), SEVERITIES[index % SEVERITIES.len()]);
+        assert_eq!(row.state.as_str(), state);
+        assert_eq!(row.summary, format!("summary {kind}"));
+        assert_eq!(row.aliases, vec![format!("alias-{kind}")]);
+        assert_eq!(row.fixed_versions, vec!["2.0.0".to_owned()]);
+        assert_eq!(row.first_seen, "1970-01-01T00:00:00Z");
+        assert_eq!(row.last_seen, "1970-01-02T00:00:00Z");
+        if state == "resolved" {
+            assert_eq!(row.resolved_at.as_deref(), Some("1970-01-03T00:00:00Z"));
+        }
+        if state == "ignored" {
+            assert_eq!(row.ignore_reason.as_deref(), Some("because"));
+            assert_eq!(row.ignore_until.as_deref(), Some("1970-02-01"));
+        }
+    }
+    let (_, stored_events) = show_finding(store, 1).unwrap();
+    assert_eq!(stored_events.len(), EVENTS.len());
+    for (event, kind) in stored_events.iter().zip(EVENTS) {
+        assert_eq!(event.kind.as_str(), kind);
+        assert_eq!(event.reason, format!("reason {kind}"));
+    }
+}
+
+fn assert_version_6_schema(path: &std::path::Path) {
+    let connection = Connection::open(path).unwrap();
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+    for table in ["findings", "finding_events"] {
+        let sql: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !sql.to_ascii_lowercase().contains("check"),
+            "{table}: {sql}"
+        );
+    }
+    let broken: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(broken, 0);
+}
+
+#[test]
+fn version_5_keeps_every_kind_and_event_and_writes_a_backup() {
+    let root = scratch("v6");
+    let path = root.join("craftward.db");
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_5).unwrap();
+    fill_version_5(&connection);
+    connection
+        .pragma_update(None, "user_version", 5_i64)
+        .unwrap();
+    connection.close().unwrap();
+
+    let mut store = SqliteStore::open(&path).unwrap();
+    assert!(root.join("craftward.db.bak-v5").exists());
+    let backup_version: i64 = Connection::open(root.join("craftward.db.bak-v5"))
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(backup_version, 5);
+    assert_migrated_rows(&mut store);
+    drop(store);
+    assert_version_6_schema(&path);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_unknown_stored_word_names_the_column() {
+    let root = scratch("unknown-word");
+    let path = root.join("craftward.db");
+    {
+        let mut store = SqliteStore::open(&path).unwrap();
+        apply(&mut store, vec![finding("0.1.12")], NOW);
+    }
+    for (sql, expected) in [
+        (
+            "UPDATE finding_events SET kind = 'nope' WHERE finding_id = 1",
+            "unknown value in column finding_events.kind: nope",
+        ),
+        (
+            "UPDATE findings SET kind = 'nope' WHERE id = 1",
+            "unknown value in column findings.kind: nope",
+        ),
+        (
+            "UPDATE findings SET severity = 'nope' WHERE id = 1",
+            "unknown value in column findings.severity: nope",
+        ),
+        (
+            "UPDATE findings SET state = 'nope' WHERE id = 1",
+            "unknown value in column findings.state: nope",
+        ),
+    ] {
+        let connection = Connection::open(&path).unwrap();
+        connection.execute(sql, []).unwrap();
+        connection.close().unwrap();
+        let mut store = SqliteStore::open(&path).unwrap();
+        let error = list_findings(&mut store, &[], StateFilter::All, None)
+            .err()
+            .or_else(|| show_finding(&mut store, 1).err());
+        let Some(error) = error else {
+            panic!("{sql} was accepted");
+        };
+        assert!(error.to_string().contains(expected), "{sql}: {error}");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE findings SET kind = 'vulnerability', severity = 'high', state = 'open'
+                 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE finding_events SET kind = 'discovered' WHERE finding_id = 1",
+                [],
+            )
+            .unwrap();
+        connection.close().unwrap();
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn list_findings_filters_state_and_projects_like_the_old_scan() {
+    let mut store = SqliteStore::open_in_memory().unwrap();
+    store
+        .in_transaction(|session| {
+            for (project, id, severity, kind) in [
+                ("demo", "A", Severity::High, FindingKind::Vulnerability),
+                ("demo", "B", Severity::Low, FindingKind::Notice),
+                ("a'b", "C", Severity::Critical, FindingKind::Malicious),
+                ("other", "D", Severity::Medium, FindingKind::Eol),
+            ] {
+                session.insert_finding(&NewFinding {
+                    project_id: project.to_owned(),
+                    ecosystem: "crates.io".to_owned(),
+                    package: "demo".to_owned(),
+                    vulnerability_id: id.to_owned(),
+                    version: "1".to_owned(),
+                    severity,
+                    summary: id.to_owned(),
+                    aliases: Vec::new(),
+                    fixed_versions: Vec::new(),
+                    kind,
+                    seen_at: "1970-01-01T00:00:00Z".to_owned(),
+                })?;
+            }
+            let mut ignored = session.finding(2)?.unwrap();
+            ignored.state = FindingState::Ignored;
+            session.update_finding(&ignored)?;
+            let mut resolved = session.finding(4)?.unwrap();
+            resolved.state = FindingState::Resolved;
+            session.update_finding(&resolved)?;
+            Ok(())
+        })
+        .unwrap();
+    let all = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
+    let cases = [
+        (Vec::new(), StateFilter::Open),
+        (vec!["demo".to_owned()], StateFilter::Open),
+        (vec!["demo".to_owned(), "a'b".to_owned()], StateFilter::All),
+        (vec!["other".to_owned()], StateFilter::Resolved),
+        (vec!["missing".to_owned()], StateFilter::Open),
+    ];
+    for (projects, filter) in cases {
+        let filtered = list_findings(&mut store, &projects, filter, None).unwrap();
+        let state = match filter {
+            StateFilter::Open => Some(FindingState::Open),
+            StateFilter::Ignored => Some(FindingState::Ignored),
+            StateFilter::Resolved => Some(FindingState::Resolved),
+            StateFilter::All => None,
+        };
+        let expected: Vec<_> = all
+            .iter()
+            .filter(|row| {
+                state.is_none_or(|state| row.state == state)
+                    && (projects.is_empty()
+                        || projects.iter().any(|project| project == &row.project_id))
+            })
+            .cloned()
+            .collect();
+        assert_eq!(filtered, expected, "{projects:?} {filter:?}");
+    }
+    let notices = list_findings(
+        &mut store,
+        &["demo".to_owned()],
+        StateFilter::Ignored,
+        Some("notice"),
+    )
+    .unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].vulnerability_id, "B");
 }

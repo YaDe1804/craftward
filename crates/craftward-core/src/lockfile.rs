@@ -3,8 +3,12 @@
 //! Cargo.lock is parsed here. There is no TOML library.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
 
 /// One package that can be sent to OSV.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -21,7 +25,7 @@ pub struct PackageQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedLock {
     /// `cargo` or `npm`.
-    pub kind: &'static str,
+    pub kind: LockKind,
     /// Packages to query. Each name and version appears once.
     pub queried: Vec<PackageQuery>,
     /// Packages that were seen and not queried.
@@ -46,7 +50,8 @@ impl std::fmt::Display for LockFailure {
 impl std::error::Error for LockFailure {}
 
 /// Which reader a file name selects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LockKind {
     /// `Cargo.lock`.
     Cargo,
@@ -55,6 +60,59 @@ pub enum LockKind {
     /// A name this radar does not read.
     Unknown,
 }
+
+impl LockKind {
+    /// Stable stored word: `cargo`, `npm`, or `unknown`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo",
+            Self::Npm => "npm",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Every value.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[Self::Cargo, Self::Npm, Self::Unknown]
+    }
+}
+
+impl FromStr for LockKind {
+    type Err = UnknownLockKind;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "cargo" => Ok(Self::Cargo),
+            "npm" => Ok(Self::Npm),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(UnknownLockKind {
+                value: text.to_owned(),
+            }),
+        }
+    }
+}
+
+impl fmt::Display for LockKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Text that is not `cargo`, `npm`, or `unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownLockKind {
+    value: String,
+}
+
+impl fmt::Display for UnknownLockKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown lockfile kind: {}", self.value)
+    }
+}
+
+impl std::error::Error for UnknownLockKind {}
 
 /// Selects a reader from the file name, ignoring the directory.
 #[must_use]
@@ -242,7 +300,7 @@ fn collect_cargo(packages: Vec<CargoPackage>) -> ParsedLock {
         }
     }
     ParsedLock {
-        kind: "cargo",
+        kind: LockKind::Cargo,
         queried,
         skipped,
     }
@@ -373,7 +431,7 @@ fn parse_npm(text: &str) -> Result<ParsedLock, LockFailure> {
         }
     }
     Ok(ParsedLock {
-        kind: "npm",
+        kind: LockKind::Npm,
         queried,
         skipped: 0,
     })
@@ -402,5 +460,24 @@ fn invalid(line: u32, message: &str) -> LockFailure {
     LockFailure {
         line: Some(line),
         message: message.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::LockKind;
+
+    #[test]
+    fn lock_kinds_round_trip() {
+        for kind in LockKind::all() {
+            let word = serde_json::to_value(kind).unwrap();
+            assert_eq!(word.as_str(), Some(kind.as_str()));
+            assert_eq!(LockKind::from_str(kind.as_str()).unwrap(), *kind);
+            assert_eq!(serde_json::from_value::<LockKind>(word).unwrap(), *kind);
+        }
+        assert!(LockKind::from_str("yarn").is_err());
+        assert!(serde_json::from_str::<LockKind>("\"yarn\"").is_err());
     }
 }

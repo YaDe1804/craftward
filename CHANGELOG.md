@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   API, including committed WAL frames, and must pass `integrity_check`.
   Writing transactions start with `BEGIN IMMEDIATE`, so a second writer
   waits.
+- SeQu check F2 (SQ-06, SQ-15, and the database parts of SQ-14): finding
+  kind, severity, event kind, HTTP method, and lockfile kind are enums.
+  Their stored text is unchanged. Schema version 6 drops the `CHECK` lists
+  for finding state, finding kind, and event kind; an unknown word fails
+  when the row is read. `findings list` filters state and project in SQL.
+  The busy timeout is set once.
 
 ### Added
 

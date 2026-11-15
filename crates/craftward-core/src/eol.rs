@@ -14,8 +14,9 @@ use serde_json::Value;
 
 use crate::date::{days_between, format_unix_timestamp, is_calendar_date};
 use crate::fs_atomic::write_atomic;
-use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
+use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method};
 use crate::model::Component;
+use crate::store::{FindingKind, Severity};
 
 const LIST_URL: &str = "https://endoflife.date/api/v1/products/";
 const PRODUCT_URL: &str = "https://endoflife.date/api/v1/products/";
@@ -53,9 +54,9 @@ pub struct EolHit {
     /// Component version that selected the cycle.
     pub version: String,
     /// `eol` or `eol_soon`.
-    pub kind: String,
+    pub kind: FindingKind,
     /// `high` for `eol`, `medium` for `eol_soon`.
-    pub severity: String,
+    pub severity: Severity,
     /// Short description.
     pub summary: String,
     /// Product page on endoflife.date.
@@ -357,18 +358,35 @@ fn effect(
     }
     match (is_eol, cycle.eol_from.as_deref()) {
         (true, Some(date)) => match days_between(today, date) {
-            Some(distance) if distance < 0 => {
-                CycleEffect::Hit(hit(product, version, cycle, "eol", "high", date))
-            }
+            Some(distance) if distance < 0 => CycleEffect::Hit(hit(
+                product,
+                version,
+                cycle,
+                FindingKind::Eol,
+                Severity::High,
+                date,
+            )),
             Some(_) => contradictory(product, &cycle.name),
             None => unusable(product, &cycle.name),
         },
-        (true, None) => CycleEffect::Hit(hit(product, version, cycle, "eol", "high", "unknown")),
+        (true, None) => CycleEffect::Hit(hit(
+            product,
+            version,
+            cycle,
+            FindingKind::Eol,
+            Severity::High,
+            "unknown",
+        )),
         (false, Some(date)) => match days_between(today, date) {
             Some(distance) if distance < 0 => contradictory(product, &cycle.name),
-            Some(distance) if distance <= i64::from(warning_days) => {
-                CycleEffect::Hit(hit(product, version, cycle, "eol_soon", "medium", date))
-            }
+            Some(distance) if distance <= i64::from(warning_days) => CycleEffect::Hit(hit(
+                product,
+                version,
+                cycle,
+                FindingKind::EolSoon,
+                Severity::Medium,
+                date,
+            )),
             Some(_) => CycleEffect::Quiet,
             None => unusable(product, &cycle.name),
         },
@@ -380,17 +398,21 @@ fn hit(
     product: &str,
     version: &str,
     cycle: &Cycle,
-    kind: &str,
-    severity: &str,
+    kind: FindingKind,
+    severity: Severity,
     date: &str,
 ) -> EolHit {
-    let verb = if kind == "eol" { "ended" } else { "ends" };
+    let verb = if kind == FindingKind::Eol {
+        "ended"
+    } else {
+        "ends"
+    };
     EolHit {
         id: format!("EOL:{product}:{}", cycle.name),
         product: product.to_owned(),
         version: version.to_owned(),
-        kind: kind.to_owned(),
-        severity: severity.to_owned(),
+        kind,
+        severity,
         summary: format!("support {verb} on {date}"),
         url: format!("https://endoflife.date/{product}"),
     }
@@ -697,7 +719,7 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
 fn get_json(client: &impl HttpClient, url: &str) -> Result<Vec<u8>, String> {
     let response = client
         .execute(&HttpRequest {
-            method: "GET",
+            method: Method::Get,
             url,
             body: None,
         })

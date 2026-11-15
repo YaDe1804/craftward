@@ -24,7 +24,12 @@ must pass `PRAGMA integrity_check` with the single result `ok`. A copy that
 fails that check is removed, so a later open can try again; a copy from an
 earlier attempt is never replaced. Writing transactions use
 `BEGIN IMMEDIATE`, so a second writer waits on the busy timeout instead of
-doing work it cannot commit.
+doing work it cannot commit. Schema version 6 stores finding `state`,
+finding `kind`, and event `kind` as text without `CHECK` lists. Those words
+are checked when a row is read. A new word is a change to the Rust enums,
+not a schema migration. The version 6 rebuild turns foreign keys off before
+its transaction, runs `PRAGMA foreign_key_check` before the commit, and
+turns foreign keys on again afterwards.
 
 ## Rationale
 
@@ -46,4 +51,8 @@ INTO` can also snapshot a live database, but it is a maintenance command
 and fails when the same connection has an open transaction. The backup API
 is built for this copy. `BEGIN IMMEDIATE` takes the reserved lock at the
 start of the transaction. Two writers then queue, and the busy timeout is
-what makes the second one wait.
+what makes the second one wait. Checking the closed vocabularies in Rust
+means a new finding kind, severity, state, or event does not require
+rebuilding the tables. The version 6 rebuild follows SQLite's steps for a
+schema change that `ALTER TABLE` cannot express, so foreign-key references
+stay valid after the tables are replaced.

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    AndroidConfig, AndroidStore, CatalogOrigin, FormFactor, HttpClient, HttpError, HttpRequest,
-    HttpResponse, RadarOptions, detect_target_sdk, load_deadlines, parse_document,
-    render_deadlines, scan, stale_warning, utc_day,
+    AndroidConfig, AndroidStore, CatalogOrigin, FindingKind, FormFactor, HttpClient, HttpError,
+    HttpRequest, HttpResponse, RadarOptions, Severity, detect_target_sdk, load_deadlines,
+    parse_document, render_deadlines, scan, stale_warning, utc_day,
 };
 
 const EMBEDDED: &str = include_str!("../../../data/platform-deadlines.json");
@@ -261,7 +261,7 @@ fn target_sdk_30_reports_only_the_current_row_of_each_requirement() {
         .iter()
         .find(|finding| finding.id == "PLAY:phone:new_apps_and_updates")
         .expect("new apps");
-    assert_eq!(updates.kind, "platform_deadline");
+    assert_eq!(updates.kind, FindingKind::PlatformDeadline);
     assert!(updates.summary.contains("required 36"));
     assert!(updates.summary.contains("deadline 2026-08-31"));
     let existing = report
@@ -294,8 +294,8 @@ fn deadlines_follow_the_day_the_factor_and_the_store() {
         180,
     );
     assert_eq!(past.findings.len(), 1, "{:?}", past.findings);
-    assert_eq!(past.findings[0].kind, "platform_deadline");
-    assert_eq!(past.findings[0].severity, "high");
+    assert_eq!(past.findings[0].kind, FindingKind::PlatformDeadline);
+    assert_eq!(past.findings[0].severity, Severity::High);
     assert_eq!(past.findings[0].ecosystem, "platform");
     assert_eq!(past.findings[0].package, "google-play");
     assert_eq!(past.findings[0].id, "PLAY:phone:new_apps_and_updates");
@@ -320,8 +320,8 @@ fn deadlines_follow_the_day_the_factor_and_the_store() {
         sample("2026-11-16", 36, "2027-02-01"),
         180,
     );
-    assert_eq!(soon.findings[0].kind, "platform_deadline_soon");
-    assert_eq!(soon.findings[0].severity, "medium");
+    assert_eq!(soon.findings[0].kind, FindingKind::PlatformDeadlineSoon);
+    assert_eq!(soon.findings[0].severity, Severity::Medium);
     assert_eq!(soon.findings[0].id, "PLAY:phone:new_apps_and_updates");
 
     let far = scan_sdk(
