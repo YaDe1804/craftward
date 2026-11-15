@@ -33,14 +33,15 @@ Run these before opening a pull request:
 
 ```console
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo deny check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo deny --locked check
 ```
 
-CI runs Clippy and the tests with `--all-features` so the checked-in JSON
-Schema is compared with the schema generated from the Rust types. Formatting
-can be applied with `cargo fmt --all`.
+CI runs Clippy and the tests with `--all-features` and `--locked` so the
+checked-in JSON Schema is compared with the schema generated from the Rust
+types, and so a stale or missing `Cargo.lock` fails the job instead of being
+rewritten. Formatting can be applied with `cargo fmt --all`.
 
 `serde` and `serde_json` are normal dependencies of `craftward-core`.
 `schemars` is optional. The `schema` feature enables it, and that feature is
@@ -52,9 +53,27 @@ Regenerate `schema/craftward.schema.json` after a change to the project types:
 cargo run -p craftward-core --features schema --example generate-schema
 ```
 
+## Dependencies
+
+Manifest version requirements use ordinary Cargo caret ranges (for example
+`1.0.229`). Exact resolved versions live in `Cargo.lock`, which is committed
+and must stay in sync with the manifests. Do not run `cargo update` unless the
+change is intentional and reviewed. CI Clippy, tests, and `cargo deny` use
+`--locked`.
+
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Cargo and
+GitHub Actions. Minor and patch updates are grouped per ecosystem; major
+updates stay in their own pull requests. Commit messages use the
+`chore(deps)` prefix. Actions pinned to a full commit SHA with a trailing
+version comment (for example `# v7.0.1`) are updated together: Dependabot
+rewrites both the SHA and that comment when the comment matches the pinned
+version.
+
 Application code stays in this repository. Add a third-party library only when
-it is necessary, reviewed, and licensed under a license allowed by `deny.toml`.
-CI enforces that policy.
+it is necessary, reviewed under [ADR 0004](docs/adr/0004-dependency-policy.md),
+licensed under a license allowed by `deny.toml`, and recorded in a new or
+updated ADR that names the crate and the reason it was accepted. CI enforces
+the license and ban policy.
 
 ## Pull requests
 
