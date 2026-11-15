@@ -4,9 +4,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::LoadError;
+use crate::fs_atomic::{create_temporary, write_new_with};
 use crate::i18n::{Label, Language, fill, text};
 use crate::load::load_from_path;
 use crate::model::{
@@ -194,10 +194,10 @@ pub fn next_roadmap_version(directory: &Path, id: &str) -> u32 {
 /// Writes the next roadmap HTML file for `project_file` into `directory`.
 ///
 /// The file is `{id}_roadmap_vN.html`. An existing file is never replaced.
-/// The bytes are written to a temporary file in the same directory and then
-/// hard-linked into place. When that link fails because the file system does
-/// not support hard links, the destination is created exclusively and removed
-/// again if the write fails.
+/// The bytes are written to a temporary file in the same directory, synced,
+/// and then hard-linked into place. When that link fails because the file
+/// system does not support hard links, the destination is created exclusively
+/// and removed again if the write fails.
 ///
 /// # Errors
 ///
@@ -285,13 +285,10 @@ fn write_new_file_with(
     if path.exists() {
         return Err(RoadmapError::AlreadyExists(path.to_path_buf()));
     }
-    let temporary = temporary_path(path);
-    if let Err(error) = fs::write(&temporary, bytes) {
-        let _ = fs::remove_file(&temporary);
-        return Err(RoadmapError::Write(error));
-    }
+    let temporary = create_temporary(path, bytes).map_err(RoadmapError::Write)?;
     // `hard_link` fails when the destination exists, so a completed file is
-    // never replaced. The name appears only after the bytes are on disk.
+    // never replaced. The temporary file was synced before this link, so the
+    // name appears only after the bytes are on disk.
     if let Err(error) = link(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         return match publish_choice(&error) {
@@ -392,32 +389,7 @@ fn write_created(
     path: &Path,
     write_body: impl FnOnce(&mut fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    if let Err(error) = write_body(&mut file) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let name = path
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("roadmap.html"));
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    let mut temporary_name = std::ffi::OsString::from(".");
-    temporary_name.push(name);
-    temporary_name.push(format!(".{}.{nanos}.tmp", std::process::id()));
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(temporary_name),
-        _ => PathBuf::from(temporary_name),
-    }
+    write_new_with(path, write_body)
 }
 
 struct Page {

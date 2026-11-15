@@ -13,9 +13,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::date::{days_between, format_unix_timestamp, is_calendar_date};
+use crate::fs_atomic::write_atomic;
 use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
 use crate::model::Component;
-use crate::workspace::write_atomic;
 
 const LIST_URL: &str = "https://endoflife.date/api/v1/products/";
 const PRODUCT_URL: &str = "https://endoflife.date/api/v1/products/";

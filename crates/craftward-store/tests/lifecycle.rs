@@ -2,11 +2,14 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    Finding, FindingState, LockfileReport, ProjectReport, SCHEMA_VERSION, StateFilter,
-    apply_reports, ignore_finding, list_findings, render_ledger_text, reopen_finding, show_finding,
+    Finding, FindingState, LockfileReport, NewFinding, ProjectReport, SCHEMA_VERSION, StateFilter,
+    StateStore, apply_reports, ignore_finding, list_findings, render_ledger_text, reopen_finding,
+    show_finding,
 };
 use craftward_store::SqliteStore;
 use rusqlite::Connection;
@@ -721,5 +724,153 @@ fn a_higher_requirement_updates_the_finding_until_the_sdk_meets_it() {
     let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].state, FindingState::Resolved);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_backup_includes_committed_wal_frames() {
+    let root = scratch("wal");
+    let path = root.join("craftward.db");
+    let writer = Connection::open(&path).unwrap();
+    writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+    writer.pragma_update(None, "user_version", 1_i64).unwrap();
+    writer
+        .execute_batch(
+            "CREATE TABLE runs (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                offline INTEGER NOT NULL,
+                packages_checked INTEGER NOT NULL,
+                open_count INTEGER NOT NULL,
+                new_count INTEGER NOT NULL,
+                resolved_count INTEGER NOT NULL,
+                error TEXT
+            );
+            CREATE TABLE findings (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                vulnerability_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                aliases TEXT NOT NULL,
+                fixed_versions TEXT NOT NULL,
+                state TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                resolved_at TEXT,
+                ignore_reason TEXT,
+                ignore_until TEXT,
+                UNIQUE (project_id, ecosystem, package_name, vulnerability_id)
+            );
+            CREATE TABLE finding_events (
+                id INTEGER PRIMARY KEY,
+                finding_id INTEGER NOT NULL REFERENCES findings(id),
+                kind TEXT NOT NULL,
+                at TEXT NOT NULL,
+                reason TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+    writer
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    writer
+        .pragma_update(None, "wal_autocheckpoint", 0_i64)
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO findings (
+                project_id, ecosystem, package_name, vulnerability_id, version, severity,
+                summary, aliases, fixed_versions, state, first_seen, last_seen
+            ) VALUES (
+                'demo', 'crates.io', 'instant', 'RUSTSEC-WAL', '1', 'high',
+                'wal-only-marker', '[]', '[]', 'open',
+                '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z'
+            )",
+            [],
+        )
+        .unwrap();
+    let main = fs::read(&path).unwrap();
+    assert!(
+        !main
+            .windows(b"wal-only-marker".len())
+            .any(|window| window == b"wal-only-marker"),
+        "the marker must still live in the WAL, not the main file"
+    );
+    let wal = sibling(&path, "-wal");
+    assert!(fs::metadata(&wal).unwrap().len() > 0);
+    SqliteStore::open(&path).unwrap();
+    let backup = sibling(&path, ".bak-v1");
+    let saved =
+        Connection::open_with_flags(&backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let integrity: String = saved
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    let summary: String = saved
+        .query_row(
+            "SELECT summary FROM findings WHERE vulnerability_id = 'RUSTSEC-WAL'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(summary, "wal-only-marker");
+    drop(writer);
+    let _ = fs::remove_dir_all(root);
+}
+
+fn sibling(path: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap().to_os_string();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+#[test]
+fn two_writers_on_one_file_both_finish() {
+    let root = scratch("parallel");
+    let path = root.join("craftward.db");
+    SqliteStore::open(&path).unwrap();
+    let (started, waiting) = mpsc::channel();
+    let held = path.clone();
+    let holder = thread::spawn(move || {
+        let mut store = SqliteStore::open(&held).unwrap();
+        store
+            .in_transaction(|session| {
+                started.send(()).unwrap();
+                thread::sleep(Duration::from_millis(400));
+                session.insert_finding(&NewFinding {
+                    project_id: "demo".to_owned(),
+                    ecosystem: "crates.io".to_owned(),
+                    package: "held".to_owned(),
+                    vulnerability_id: "RUSTSEC-HELD".to_owned(),
+                    version: "1".to_owned(),
+                    severity: "low".to_owned(),
+                    summary: "held".to_owned(),
+                    aliases: Vec::new(),
+                    fixed_versions: Vec::new(),
+                    kind: "notice".to_owned(),
+                    seen_at: "1970-01-01T00:00:00Z".to_owned(),
+                })?;
+                Ok(())
+            })
+            .unwrap();
+    });
+    waiting.recv().unwrap();
+    let began = Instant::now();
+    let mut store = SqliteStore::open(&path).unwrap();
+    apply(&mut store, vec![finding("0.1.12")], NOW);
+    let waited = began.elapsed();
+    holder.join().unwrap();
+    assert!(
+        waited >= Duration::from_millis(250),
+        "the second writer returned in {waited:?}"
+    );
+    let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
     let _ = fs::remove_dir_all(root);
 }

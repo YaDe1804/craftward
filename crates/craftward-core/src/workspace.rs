@@ -3,11 +3,11 @@
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Number, Value};
 
 use crate::error::{LoadError, ValidationError};
+use crate::fs_atomic::write_atomic;
 use crate::load::{load_from_path, load_from_str};
 use crate::model::{IssueStatus, Project, ProjectStatus, TaskStatus};
 
@@ -213,9 +213,9 @@ pub fn load_or_empty(path: &Path) -> Result<Workspace, WorkspaceError> {
 
 /// Writes a workspace file as pretty JSON with LF endings.
 ///
-/// The write is atomic: a temporary file in the same directory is renamed over
-/// the destination. Parent directories are created. A failed write removes the
-/// temporary file.
+/// The write is atomic: a temporary file in the same directory is synced and
+/// then renamed over the destination. Parent directories are created. A failed
+/// write removes the temporary file.
 ///
 /// # Errors
 ///
@@ -684,41 +684,6 @@ fn validation_from_load(error: LoadError) -> WorkspaceError {
             path: "$".to_owned(),
             message: other.to_string(),
         }]),
-    }
-}
-
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)?;
-    }
-    let temporary = temporary_path(path);
-    let write_result = fs::write(&temporary, bytes);
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let name = path
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("workspace.json"));
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    let mut temporary_name = std::ffi::OsString::from(".");
-    temporary_name.push(name);
-    temporary_name.push(format!(".{}.{nanos}.tmp", std::process::id()));
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(temporary_name),
-        _ => PathBuf::from(temporary_name),
     }
 }
 

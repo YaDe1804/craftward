@@ -9,13 +9,14 @@ use std::path::Path;
 
 use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
+use crate::fs_atomic::write_atomic;
 use crate::load::{load_from_path, load_from_str};
 use crate::model::{
     AndroidConfig, AndroidStore, Component, ComponentKind, FormFactor, Issue, IssueSeverity,
     IssueStatus, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
     WatchKind,
 };
-use crate::workspace::{format_project, write_atomic};
+use crate::workspace::format_project;
 
 const PROJECT_STATUSES: &[&str] = &[
     "idea",

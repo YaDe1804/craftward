@@ -27,6 +27,8 @@ computer. A network filesystem does not provide that.
 
 Each connection turns foreign keys on and sets a busy timeout of 5 seconds.
 The journal mode is WAL. WAL stays in effect after the connection closes.
+A writing transaction starts with `BEGIN IMMEDIATE`. The second writer
+blocks until the first commits, or until the busy timeout expires.
 An in-memory database cannot use WAL. SQLite keeps that one in memory mode.
 The file database does not.
 
@@ -37,10 +39,15 @@ Migrations only move forward, one version at a time, each in a transaction.
 If the file's version is newer, Craftward stops and says that a newer
 Craftward version created the database.
 
-Before migrating a database file that already has contents, Craftward copies
-it to `craftward.db.bak-v<old version>` in the same directory. If that copy
-is already there, Craftward stops and leaves the database unchanged. A
-missing file or a file of zero bytes is a new database and is not copied.
+Before migrating a database file that already has contents, Craftward
+writes `craftward.db.bak-v<old version>` in the same directory through
+SQLite's online backup API. That copy includes committed WAL frames that
+have not been checkpointed into the main file. The backup is then opened
+read-only and must pass `PRAGMA integrity_check` with the result `ok`.
+Anything else aborts the migration. A backup created by that failed check
+is removed. If a file of the backup name is already there, Craftward stops
+and leaves the database unchanged. A missing file or a file of zero bytes
+is a new database and is not backed up.
 
 A failed project check is a row in `runs` with `error` set, `evaluated` 0,
 and the counters at zero. The findings of that project are not changed. A
