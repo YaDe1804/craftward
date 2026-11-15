@@ -5,9 +5,9 @@
 version.
 
 Exit status is `0` for success, `1` when a file or request fails, and `2` when
-the command line is wrong. `radar` also exits `3` when it finds a
-vulnerability; an error still exits `1`. `--help` after a command prints
-that command's help and exits `0`.
+the command line is wrong. `radar` also exits `3` when a stored finding is
+open; an error still exits `1`. Ignored findings do not change that status.
+`--help` after a command prints that command's help and exits `0`.
 
 `--workspace <FILE>` selects the workspace file for that invocation. Otherwise
 Craftward uses `CRAFTWARD_WORKSPACE`, then the default location described in
@@ -249,16 +249,47 @@ rule as `roadmap`.
 `--refresh` ignores cached answers and asks OSV again. `--offline` never
 contacts OSV. The two options cannot be combined. `--cache-dir` selects the
 cache directory; otherwise `CRAFTWARD_CACHE_DIR` is used, then the default
-described in [radar.md](radar.md). `--json` prints the same report as JSON.
+described in [radar.md](radar.md). `--data-dir` selects the database
+directory; otherwise `CRAFTWARD_DATA_DIR` is used, then the default
+described in [storage.md](storage.md). `--json` prints the same report as
+JSON. `--all` includes ignored findings in the list. They are always counted.
 
-Exit status is `0` when nothing was found, `3` when at least one
-vulnerability was found, `1` when a project could not be checked, and `2`
-when the command line is wrong. An error takes priority over a finding.
-The text report, the JSON fields, and what is sent to OSV are described in
-[radar.md](radar.md).
+Exit status is `0` when no finding is open, `3` when at least one finding
+is open, `1` when a project could not be checked, and `2` when the command
+line is wrong. An error takes priority over an open finding. The text
+report, the JSON fields, the lifecycle, and what is sent to OSV are
+described in [radar.md](radar.md).
 
 ```console
 craftward radar
 craftward radar harbor-light --json
-craftward radar --offline --cache-dir ./cache
+craftward radar --offline --cache-dir ./cache --data-dir ./data
+```
+
+## findings
+
+Reads the findings stored by `radar`. It does not contact OSV. With no
+project, every stored finding is listed. A project argument is an id or a
+path, with the same ambiguity rule as `roadmap`. `--state` is `open`,
+`ignored`, `resolved`, or `all`. The default is `open`.
+
+`show` prints one finding and its history. `ignore` requires `--reason`.
+The reason must not be empty or only whitespace. `--until` is the last UTC
+day the ignore stays in force, as `YYYY-MM-DD`. Without `--until` the
+ignore does not expire. `reopen` makes an ignored or resolved finding open
+again.
+
+`--data-dir` is the same option as on `radar`. `--json` prints the list or
+the `show` record as JSON. The fields are described in
+[radar.md](radar.md).
+
+Exit status is `0` on success, `1` when the id is unknown or the reason is
+empty, and `2` when the command line is wrong.
+
+```console
+craftward findings
+craftward findings harbor-light --state all --json
+craftward findings show 1
+craftward findings ignore 1 --reason "not affected" --until 2026-12-31
+craftward findings reopen 1
 ```

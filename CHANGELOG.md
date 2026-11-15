@@ -35,3 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OSV which package versions have a known vulnerability. Results are cached
   as JSON. The HTTP client lives in `craftward-net` (ureq 3.5.2, rustls
   0.23.46 with the ring provider, and rustls-native-certs 0.8.5).
+- A local SQLite database for radar findings, runs, and history, in
+  `craftward-store` (rusqlite 0.43.0 with bundled SQLite 3.54.1). `radar`
+  stores each run. `findings` lists, shows, ignores, and reopens findings.
+  A finding that disappears is marked resolved. Exit status 3 means a
+  finding is open.

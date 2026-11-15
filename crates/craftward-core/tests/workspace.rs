@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use craftward_core::{
     Host, LocateError, OsFamily, ProjectStatus, Workspace, WorkspaceEntry, WorkspaceError,
     WorkspaceOrigin, add_project, init_project, list_projects, load_workspace, locate_cache,
-    locate_workspace, remove_project, save_workspace, snapshot,
+    locate_data, locate_workspace, remove_project, save_workspace, snapshot,
 };
 
 struct FakeHost {
@@ -483,5 +483,23 @@ fn cache_directory_follows_the_option_then_the_environment_then_the_default() {
     assert_eq!(
         locate_cache(&mac, None).unwrap(),
         PathBuf::from("/tmp/craftward-cache")
+    );
+    let data = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_DATA_HOME", "/var/lib")],
+        home: Some(PathBuf::from("/home/me")),
+    };
+    assert_eq!(
+        locate_data(&data, None).unwrap(),
+        PathBuf::from("/var/lib/craftward")
+    );
+    let windows = FakeHost {
+        os: OsFamily::Windows,
+        vars: vec![("LOCALAPPDATA", "C:/Users/me/AppData/Local")],
+        home: None,
+    };
+    assert_eq!(
+        locate_data(&windows, None).unwrap(),
+        PathBuf::from("C:/Users/me/AppData/Local/Craftward")
     );
 }

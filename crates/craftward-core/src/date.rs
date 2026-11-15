@@ -68,6 +68,37 @@ pub fn unix_now() -> i64 {
         })
 }
 
+/// Formats a POSIX timestamp as `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// Returns [`None`] when `seconds` is negative or the year does not fit in
+/// four digits.
+#[must_use]
+pub fn format_iso8601(seconds: i64) -> Option<String> {
+    let seconds = u64::try_from(seconds).ok()?;
+    let day = format_unix_days(seconds / 86_400)?;
+    let clock = seconds % 86_400;
+    let hour = clock / 3600;
+    let minute = (clock % 3600) / 60;
+    let second = clock % 60;
+    Some(format!("{day}T{hour:02}:{minute:02}:{second:02}Z"))
+}
+
+/// UTC calendar day of a POSIX timestamp, as `YYYY-MM-DD`.
+///
+/// Returns [`None`] when `seconds` is negative or the year does not fit in
+/// four digits.
+#[must_use]
+pub fn utc_day(seconds: i64) -> Option<String> {
+    let seconds = u64::try_from(seconds).ok()?;
+    format_unix_days(seconds / 86_400)
+}
+
+/// Whether `text` is a real `YYYY-MM-DD` calendar day.
+#[must_use]
+pub fn is_calendar_date(text: &str) -> bool {
+    validate_date(text).is_ok()
+}
+
 /// Formats a POSIX timestamp as `YYYY-MM-DD HH:MM:SS UTC`.
 ///
 /// Returns [`None`] when `seconds` is negative or the year does not fit in

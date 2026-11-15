@@ -26,6 +26,7 @@ fn run(directory: &Path, args: &[&str]) -> std::process::Output {
         .env("XDG_CACHE_HOME", directory)
         .env_remove("CRAFTWARD_WORKSPACE")
         .env_remove("CRAFTWARD_CACHE_DIR")
+        .env_remove("CRAFTWARD_DATA_DIR")
         .output()
         .expect("run craftward")
 }
@@ -117,7 +118,7 @@ fn exit_codes_json_and_a_project_without_lockfiles() {
         String::from_utf8_lossy(&quiet.stderr)
     );
     let text = String::from_utf8_lossy(&quiet.stdout);
-    assert!(text.contains("no findings"), "{text}");
+    assert!(text.contains("no open findings"), "{text}");
 
     seed_hit(&cache, now);
     let hit = run(
@@ -189,4 +190,161 @@ fn exit_codes_json_and_a_project_without_lockfiles() {
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("--cache-dir"));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn removing_lockfiles_keeps_an_open_finding_and_exits_3() {
+    let root = scratch("kept");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let app = root.join("app");
+    fs::create_dir_all(&app).unwrap();
+    let file = project(&app, "demo", "[\"Cargo.lock\"]");
+    cargo_lock(&app);
+    let cache = root.join("cache");
+    let data = root.join("data");
+    seed_hit(&cache, now);
+    let cache_flag = flag("--cache-dir", &cache);
+    let data_flag = flag("--data-dir", &data);
+    let file_arg = file.to_str().unwrap();
+    let first = run(
+        &root,
+        &[
+            "radar",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            "--offline",
+            file_arg,
+        ],
+    );
+    assert_eq!(first.status.code(), Some(3), "{}", stdout(&first));
+    project(&app, "demo", "[]");
+    let again = run(
+        &root,
+        &[
+            "radar",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            "--offline",
+            file_arg,
+        ],
+    );
+    let text = stdout(&again);
+    assert_eq!(again.status.code(), Some(3), "{text}");
+    assert!(text.contains("no lockfiles configured"), "{text}");
+    assert!(
+        text.contains("existing findings are unchanged until lockfiles are configured"),
+        "{text}"
+    );
+    let shown = run(
+        &root,
+        &["findings", "show", "1", data_flag[0], data_flag[1]],
+    );
+    let detail = stdout(&shown);
+    assert!(shown.status.success(), "{detail}");
+    assert!(detail.contains("state: open"), "{detail}");
+    assert!(detail.contains("discovered"), "{detail}");
+    assert!(
+        !detail
+            .lines()
+            .any(|line| line.trim_end().ends_with("resolved")),
+        "{detail}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+fn flag<'a>(name: &'a str, value: &'a Path) -> [&'a str; 2] {
+    [name, value.to_str().unwrap()]
+}
+
+#[test]
+fn ignored_findings_do_not_exit_3_and_show_prints_the_history() {
+    let root = scratch("ignore");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let app = root.join("app");
+    fs::create_dir_all(&app).unwrap();
+    let file = project(&app, "demo", "[\"Cargo.lock\"]");
+    cargo_lock(&app);
+    let cache = root.join("cache");
+    let data = root.join("data");
+    seed_hit(&cache, now);
+    let cache_flag = flag("--cache-dir", &cache);
+    let data_flag = flag("--data-dir", &data);
+    let file_arg = file.to_str().unwrap();
+    let first = run(
+        &root,
+        &[
+            "radar",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            "--offline",
+            file_arg,
+        ],
+    );
+    assert_eq!(first.status.code(), Some(3), "{}", stdout(&first));
+    assert!(stdout(&first).contains("new"));
+    let ignored = run(
+        &root,
+        &[
+            "findings",
+            "ignore",
+            "1",
+            "--reason",
+            "test",
+            "--until",
+            "2099-01-01",
+            data_flag[0],
+            data_flag[1],
+        ],
+    );
+    assert!(ignored.status.success(), "{}", stderr(&ignored));
+    let again = run(
+        &root,
+        &[
+            "radar",
+            cache_flag[0],
+            cache_flag[1],
+            data_flag[0],
+            data_flag[1],
+            "--offline",
+            file_arg,
+        ],
+    );
+    assert_eq!(again.status.code(), Some(0), "{}", stdout(&again));
+    assert!(stdout(&again).contains("ignored: 1"));
+    let shown = run(
+        &root,
+        &["findings", "show", "1", data_flag[0], data_flag[1]],
+    );
+    let text = stdout(&shown);
+    assert!(shown.status.success(), "{text}");
+    assert!(
+        text.contains("discovered") && text.contains("ignored"),
+        "{text}"
+    );
+    let unknown = run(
+        &root,
+        &["findings", "show", "99", data_flag[0], data_flag[1]],
+    );
+    assert_eq!(unknown.status.code(), Some(1));
+    let _ = fs::remove_dir_all(root);
+}
+
+fn stdout(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
 }

@@ -10,6 +10,7 @@ mod edit;
 mod error;
 mod http;
 mod i18n;
+mod lifecycle;
 mod load;
 mod location;
 mod lockfile;
@@ -20,9 +21,12 @@ mod radar;
 mod roadmap;
 #[cfg(feature = "schema")]
 mod schema;
+mod store;
 mod workspace;
 
-pub use date::{format_unix_timestamp, unix_now, utc_date};
+pub use date::{
+    format_iso8601, format_unix_timestamp, is_calendar_date, unix_now, utc_date, utc_day,
+};
 pub use edit::{
     EditError, EditOutcome, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate,
     add_issue, add_phase, add_task, add_watch, edit_file, id_from_title, remove_issue,
@@ -32,10 +36,15 @@ pub use edit::{
 pub use error::{LoadError, ValidationError};
 pub use http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES};
 pub use i18n::{LABELS, Label, Language, fill, text};
+pub use lifecycle::{
+    LedgerFinding, ProjectLedger, apply_reports, ignore_finding, list_findings,
+    render_finding_list, render_finding_show, render_findings_json, render_ledger_json,
+    render_ledger_text, render_show_json, reopen_finding, show_finding,
+};
 pub use load::{load_from_path, load_from_str};
 pub use location::{
     Host, LocateError, OsFamily, ProcessHost, WorkspaceLocation, WorkspaceOrigin, locate_cache,
-    locate_workspace,
+    locate_data, locate_workspace,
 };
 pub use lockfile::{LockFailure, LockKind, PackageQuery, ParsedLock, lock_kind, parse_lock_text};
 pub use model::{
@@ -56,6 +65,10 @@ pub use roadmap::{
 };
 #[cfg(feature = "schema")]
 pub use schema::project_schema_json;
+pub use store::{
+    DATABASE_FILE, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore,
+    StoreError, StoreSession, StoredEvent, StoredFinding,
+};
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,
     init_project, list_projects, load_or_empty, load_workspace, project_file, project_file_by_id,

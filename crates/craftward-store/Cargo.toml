@@ -1,0 +1,18 @@
+[package]
+name = "craftward-store"
+description = "SQLite storage for Craftward."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+craftward-core.workspace = true
+rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true
