@@ -5,6 +5,7 @@
 //! and [`load_from_path`].
 
 mod date;
+mod edit;
 mod error;
 mod i18n;
 mod load;
@@ -17,6 +18,12 @@ mod schema;
 mod workspace;
 
 pub use date::utc_date;
+pub use edit::{
+    EditError, EditOutcome, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate,
+    add_issue, add_phase, add_task, add_watch, edit_file, id_from_title, remove_issue,
+    remove_phase, remove_task, remove_watch, render_project, set_issue_status, set_project,
+    set_task_status,
+};
 pub use error::{LoadError, ValidationError};
 pub use i18n::{LABELS, Label, Language, fill, text};
 pub use load::{load_from_path, load_from_str};

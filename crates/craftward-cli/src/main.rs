@@ -1,5 +1,7 @@
 //! Command-line interface for Craftward.
 
+mod editing;
+
 use std::env;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -39,7 +41,7 @@ fn main() -> ExitCode {
 }
 
 /// Why a command stopped. Usage errors exit 2; everything else exits 1.
-enum Failure {
+pub(crate) enum Failure {
     Usage(String),
     Data(String),
 }
@@ -91,6 +93,8 @@ enum Command {
         directory: Option<PathBuf>,
         language: Language,
     },
+    Edit(editing::Request),
+    HelpText(&'static str),
     Usage(Topic),
 }
 
@@ -187,6 +191,11 @@ fn run(invocation: Invocation) -> Result<ExitCode, Failure> {
             language,
             invocation.workspace.as_deref(),
         ),
+        Command::Edit(request) => editing::run(request, invocation.workspace.as_deref()),
+        Command::HelpText(text) => {
+            println!("{text}");
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -196,7 +205,7 @@ fn run_roadmap(
     language: Language,
     workspace: Option<&Path>,
 ) -> Result<ExitCode, Failure> {
-    let project = roadmap_project(target, workspace)?;
+    let project = resolve_project(target, workspace)?;
     let directory = match directory {
         Some(path) => absolute_from_cwd(path)?,
         None => env::current_dir()
@@ -213,7 +222,7 @@ fn run_roadmap(
     }
 }
 
-fn roadmap_project(target: &str, workspace: Option<&Path>) -> Result<PathBuf, Failure> {
+pub(crate) fn resolve_project(target: &str, workspace: Option<&Path>) -> Result<PathBuf, Failure> {
     let path = platform_path(Path::new(target));
     let exists = path.exists();
     let registered = match registered_project_id(target, workspace) {
@@ -566,6 +575,12 @@ fn parse_command(name: &str, args: &[std::ffi::OsString]) -> Result<Command, Str
         "validate" => Topic::Validate,
         "workspace" => Topic::Workspace,
         "roadmap" => Topic::Roadmap,
+        "show" | "project" | "phase" | "task" | "issue" | "watch" => {
+            return match editing::parse(name, args)? {
+                editing::Parsed::Help(text) => Ok(Command::HelpText(text)),
+                editing::Parsed::Run(request) => Ok(Command::Edit(request)),
+            };
+        }
         _ => return Err(format!("unrecognized command: {name}")),
     };
     if help_only(name, args)? {
@@ -803,6 +818,15 @@ Commands:
       Write the next <id>_roadmap_vN.html for a workspace id or a project
       file. DIR defaults to the current directory. The language defaults to
       en. An existing file is never overwritten.
+  show <PROJECT>
+      Print a project, including the ids later commands use.
+  project set <PROJECT> [--name ..] [--status ..] [--version ..]
+      [--description ..] [--source-dir ..]
+      Change header fields. An empty --version or --description removes it.
+  phase add <PROJECT> --title .. | phase remove <PROJECT> <PHASE> [--force]
+  task add|status|done|remove
+  issue add|status|remove
+  watch add|remove
   workspace path
       Print the workspace file in use and whether it came from --workspace,
       CRAFTWARD_WORKSPACE, or the default location.
