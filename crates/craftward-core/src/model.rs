@@ -66,6 +66,35 @@ pub enum ProjectStatus {
     Discontinued,
 }
 
+impl ProjectStatus {
+    /// Parses a schema-version-1 status word.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "idea" => Some(Self::Idea),
+            "in_development" => Some(Self::InDevelopment),
+            "released" => Some(Self::Released),
+            "maintenance" => Some(Self::Maintenance),
+            "paused" => Some(Self::Paused),
+            "discontinued" => Some(Self::Discontinued),
+            _ => None,
+        }
+    }
+
+    /// The schema-version-1 word for this status.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idea => "idea",
+            Self::InDevelopment => "in_development",
+            Self::Released => "released",
+            Self::Maintenance => "maintenance",
+            Self::Paused => "paused",
+            Self::Discontinued => "discontinued",
+        }
+    }
+}
+
 /// A labeled web address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

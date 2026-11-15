@@ -1,6 +1,13 @@
 # Dependency policy for Craftward, checked with cargo-deny 0.20.2.
 # Reference: https://embarkstudios.github.io/cargo-deny/
 
+[graph]
+# Collect metadata with `--all-features`, so optional crates such as schemars
+# are part of the graph. A true value cannot be turned off from the command
+# line, which keeps `cargo deny check` the same locally and in CI.
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+all-features = true
+
 [advisories]
 # Vulnerability advisories always fail in cargo-deny 0.20. The old
 # `vulnerability` key was removed and setting it is a configuration error.

@@ -35,9 +35,11 @@ cargo run -p craftward-app -- --version
 Both executables print their name and version. `--version` prints the same
 line. `craftward --help` describes the commands.
 
-`craftward validate` checks one or more [`craftward.json`](docs/file-format.md)
-files. The process exits 0 when every file is valid, 1 when a file is invalid
-or cannot be read, and 2 when the command line is wrong.
+`craftward validate` checks project files. With no paths, it checks every
+project in the [workspace](docs/workspace-format.md). The process exits 0 when
+every file is valid, 1 when a file is invalid or cannot be read, and 2 when
+the command line is wrong. `init`, `add`, `remove`, `list`, and
+`workspace path` are described in [docs/cli.md](docs/cli.md).
 
 ```console
 cargo run -p craftward-cli -- validate examples/minimal.craftward.json examples/full.craftward.json
@@ -70,4 +72,6 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Changelog](CHANGELOG.md)
 - [Architecture decisions](docs/adr/)
 - [Project file format](docs/file-format.md)
+- [Workspace file](docs/workspace-format.md)
+- [Command-line interface](docs/cli.md)
 - [Roadmap](docs/roadmap/)
