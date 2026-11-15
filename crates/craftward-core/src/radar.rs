@@ -571,28 +571,32 @@ enum CacheUse {
 }
 
 fn cached_query(package: &PackageQuery, cache_dir: &Path, options: &RadarOptions) -> CacheUse {
-    if options.refresh && !options.offline {
-        return CacheUse::Fetch;
-    }
-    match cache::read_query(cache_dir, package) {
-        Some(cached) if cache::is_fresh(cached.stored_at, options.now, QUERY_TTL_SECONDS) => {
-            CacheUse::Ready(IdList {
-                ids: cached.ids,
-                stale_at: None,
-                from_network_error: false,
-            })
-        }
-        Some(cached) if options.offline => CacheUse::Ready(IdList {
+    let choice = cache::choose_query(cache_dir, package, cache_policy(options, QUERY_TTL_SECONDS));
+    match choice {
+        Ok(cache::CacheChoice::Fresh(cached)) => CacheUse::Ready(IdList {
+            ids: cached.ids,
+            stale_at: None,
+            from_network_error: false,
+        }),
+        Ok(cache::CacheChoice::Stale(cached)) => CacheUse::Ready(IdList {
             ids: cached.ids,
             stale_at: Some(cached.stored_at),
             from_network_error: false,
         }),
-        Some(_) if !options.offline => CacheUse::Fetch,
-        None if options.offline => CacheUse::Missing(format!(
+        Ok(cache::CacheChoice::Unavailable) => CacheUse::Missing(format!(
             "{} {} is not in the cache",
             package.name, package.version
         )),
-        _ => CacheUse::Fetch,
+        Ok(cache::CacheChoice::Fetch) | Err(_) => CacheUse::Fetch,
+    }
+}
+
+fn cache_policy(options: &RadarOptions, ttl_seconds: i64) -> cache::CachePolicy {
+    cache::CachePolicy {
+        now: options.now,
+        ttl_seconds,
+        refresh: options.refresh,
+        offline: options.offline,
     }
 }
 
@@ -652,19 +656,23 @@ fn lookup_one_advisory(
     cache_dir: &Path,
     options: &RadarOptions,
 ) -> Result<AdvisoryHit, String> {
-    if !options.refresh || options.offline {
-        if let Some(cached) = cache::read_advisory(cache_dir, id) {
-            let fresh = cache::is_fresh(cached.stored_at, options.now, ADVISORY_TTL_SECONDS);
-            if fresh || options.offline {
-                return Ok(AdvisoryHit {
-                    advisory: cached.advisory.into(),
-                    stale_at: if fresh { None } else { Some(cached.stored_at) },
-                    from_network_error: false,
-                });
-            }
-        } else if options.offline {
-            return Err(format!("{id} is not in the cache"));
+    match cache::choose_advisory(cache_dir, id, cache_policy(options, ADVISORY_TTL_SECONDS)) {
+        Ok(cache::CacheChoice::Fresh(cached)) => {
+            return Ok(AdvisoryHit {
+                advisory: cached.advisory.into(),
+                stale_at: None,
+                from_network_error: false,
+            });
         }
+        Ok(cache::CacheChoice::Stale(cached)) => {
+            return Ok(AdvisoryHit {
+                advisory: cached.advisory.into(),
+                stale_at: Some(cached.stored_at),
+                from_network_error: false,
+            });
+        }
+        Ok(cache::CacheChoice::Unavailable) => return Err(format!("{id} is not in the cache")),
+        Ok(cache::CacheChoice::Fetch) | Err(_) => {}
     }
     match osv::fetch_advisory(client, id) {
         Ok(advisory) => {
@@ -767,10 +775,7 @@ fn fill_project(
         project.stale_cache_from = stale.and_then(format_unix_timestamp);
     } else if options_offline_stale(stale) {
         project.stale_cache_from = stale.and_then(format_unix_timestamp);
-        project.warnings.push(match &project.stale_cache_from {
-            Some(when) => format!("using cached results from {when}"),
-            None => "using expired cached results".to_owned(),
-        });
+        project.warnings.push(cache::offline_cache_warning(stale));
         project.stale_cache_from = None;
     }
 }

@@ -3,10 +3,14 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 
 use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
+use crate::json_check::{
+    expect_array, expect_object, expect_string, join, newer_schema_version, push, reject_unknown,
+    u64_number,
+};
 use crate::model::Project;
 
 const PROJECT_FIELDS: &[&str] = &[
@@ -119,20 +123,6 @@ fn load_value(value: Value) -> Result<Project, LoadError> {
             message: format!("internal validation mismatch: {error}"),
         }])
     })
-}
-
-fn newer_schema_version(value: &Value) -> Option<u64> {
-    let version = value.as_object()?.get("schema_version")?.as_number()?;
-    let version = u64_number(version)?;
-    (version > 1).then_some(version)
-}
-
-fn u64_number(number: &Number) -> Option<u64> {
-    if number.is_u64() {
-        number.as_u64()
-    } else {
-        None
-    }
 }
 
 fn validate_project(value: &Value, errors: &mut Vec<ValidationError>) {
@@ -456,19 +446,6 @@ fn optional_watch_items(object: &Map<String, Value>, errors: &mut Vec<Validation
     }
 }
 
-fn reject_unknown(
-    object: &Map<String, Value>,
-    parent: &str,
-    allowed: &[&str],
-    errors: &mut Vec<ValidationError>,
-) {
-    for key in object.keys() {
-        if !allowed.contains(&key.as_str()) {
-            push(errors, join(parent, key), "unknown field");
-        }
-    }
-}
-
 fn optional<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
     match object.get(key) {
         None | Some(Value::Null) => None,
@@ -722,58 +699,4 @@ fn note_duplicate(
     } else {
         seen.push(id.to_owned());
     }
-}
-
-fn expect_object<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a Map<String, Value>> {
-    if let Value::Object(object) = value {
-        Some(object)
-    } else {
-        push(errors, path, "must be an object");
-        None
-    }
-}
-
-fn expect_array<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a Vec<Value>> {
-    if let Value::Array(items) = value {
-        Some(items)
-    } else {
-        push(errors, path, "must be an array");
-        None
-    }
-}
-
-fn expect_string<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a str> {
-    if let Value::String(text) = value {
-        Some(text)
-    } else {
-        push(errors, path, "must be a string");
-        None
-    }
-}
-
-fn join(parent: &str, field: &str) -> String {
-    if parent == "$" {
-        field.to_owned()
-    } else {
-        format!("{parent}.{field}")
-    }
-}
-
-fn push(errors: &mut Vec<ValidationError>, path: impl Into<String>, message: impl Into<String>) {
-    errors.push(ValidationError {
-        path: path.into(),
-        message: message.into(),
-    });
 }

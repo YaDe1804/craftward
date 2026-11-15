@@ -104,6 +104,40 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
+/// Why [`accepted_body`] rejected a response.
+pub(crate) enum BodyFault {
+    /// The body is larger than [`MAX_RESPONSE_BYTES`].
+    TooLarge,
+    /// The status is outside 200..299.
+    Status(u16),
+}
+
+/// Accepts a 2xx response whose body is within [`MAX_RESPONSE_BYTES`].
+///
+/// Callers keep their own wording for the two faults.
+pub(crate) fn accepted_body(response: HttpResponse) -> Result<Vec<u8>, BodyFault> {
+    if response.body.len() > MAX_RESPONSE_BYTES {
+        return Err(BodyFault::TooLarge);
+    }
+    if !(200..300).contains(&response.status) {
+        return Err(BodyFault::Status(response.status));
+    }
+    Ok(response.body)
+}
+
+/// Maps [`accepted_body`] faults through caller-supplied messages.
+pub(crate) fn accepted_body_or<E>(
+    response: HttpResponse,
+    too_large: impl FnOnce() -> E,
+    bad_status: impl FnOnce(u16) -> E,
+) -> Result<Vec<u8>, E> {
+    match accepted_body(response) {
+        Ok(body) => Ok(body),
+        Err(BodyFault::TooLarge) => Err(too_large()),
+        Err(BodyFault::Status(status)) => Err(bad_status(status)),
+    }
+}
+
 /// Sends one request.
 pub trait HttpClient {
     /// Performs `request`.

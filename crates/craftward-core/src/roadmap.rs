@@ -400,7 +400,7 @@ struct Page {
 impl Page {
     fn write_document(&mut self, project: &Project, number: u32, generated_on: &str) {
         let number = number.to_string();
-        let name = escape(&project.name);
+        let name = escape_html(&project.name);
         let roadmap = text(self.language, Label::Roadmap);
         let title = fill(
             self.language,
@@ -431,7 +431,7 @@ impl Page {
                 ("roadmap", roadmap),
                 ("number", number),
                 ("as_of", text(self.language, Label::AsOf)),
-                ("date", &escape(generated_on)),
+                ("date", &escape_html(generated_on)),
             ],
         );
         let status = fill(
@@ -446,7 +446,7 @@ impl Page {
             ],
         );
         self.out.push_str("<header>\n  <div>\n    <h1>");
-        self.out.push_str(&escape(&project.name));
+        self.out.push_str(&escape_html(&project.name));
         self.out.push_str("</h1>\n");
         if let Some(description) = project
             .description
@@ -454,7 +454,7 @@ impl Page {
             .filter(|text| !text.is_empty())
         {
             self.out.push_str("    <div class=\"sub\">");
-            self.out.push_str(&escape(description));
+            self.out.push_str(&escape_html(description));
             self.out.push_str("</div>\n");
         }
         self.out.push_str("  </div>\n  <div class=\"meta\">");
@@ -467,7 +467,7 @@ impl Page {
                 Label::FieldLine,
                 &[
                     ("label", text(self.language, Label::Version)),
-                    ("value", &escape(version)),
+                    ("value", &escape_html(version)),
                 ],
             );
             self.out.push_str("<br>\n");
@@ -491,7 +491,7 @@ impl Page {
         let _ = write!(
             self.out,
             "<div class=\"card overall\">\n  <div class=\"row\"><span>{}</span><b>{count}</b></div>\n  <div class=\"bar\"><i style=\"width:{}%\"></i></div>\n  <div class=\"legend\">\n",
-            escape(text(self.language, Label::OverallProgress)),
+            escape_html(text(self.language, Label::OverallProgress)),
             progress.percent
         );
         self.write_legend(Label::Done, "var(--done)");
@@ -504,7 +504,7 @@ impl Page {
         let _ = writeln!(
             self.out,
             "    <span><span class=\"dot\" style=\"background:{color}\"></span>{}</span>",
-            escape(text(self.language, label))
+            escape_html(text(self.language, label))
         );
     }
 
@@ -539,12 +539,12 @@ impl Page {
         let _ = write!(
             self.out,
             "<section class=\"card phase\">\n  <div class=\"top\"><h2><span class=\"num\">{number}</span>{}</h2><span class=\"tag {class}\">{}</span></div>\n",
-            escape(&phase.title),
-            escape(text(self.language, label))
+            escape_html(&phase.title),
+            escape_html(text(self.language, label))
         );
         if let Some(goal) = phase.goal.as_deref().filter(|goal| !goal.is_empty()) {
             self.out.push_str("  <div class=\"goal\">");
-            self.out.push_str(&escape(goal));
+            self.out.push_str(&escape_html(goal));
             self.out.push_str("</div>\n");
         }
         let _ = write!(
@@ -573,11 +573,11 @@ impl Page {
         let _ = write!(
             self.out,
             "    <li{item}><span class=\"st{mark}\"></span><span class=\"t\">{}",
-            escape(&task.title)
+            escape_html(&task.title)
         );
         if let Some(due) = &task.due {
             self.out.push(' ');
-            self.out.push_str(&escape(due));
+            self.out.push_str(&escape_html(due));
         }
         self.out.push_str("</span></li>\n");
     }
@@ -602,16 +602,18 @@ impl Page {
         ]);
         for issue in issues {
             self.out.push_str("<tr><td>");
-            self.out
-                .push_str(&escape(text(self.language, severity_label(issue.severity))));
+            self.out.push_str(&escape_html(text(
+                self.language,
+                severity_label(issue.severity),
+            )));
             self.out.push_str("</td><td>");
             if let Some(url) = &issue.url {
                 self.write_anchor(url, &issue.title);
             } else {
-                self.out.push_str(&escape(&issue.title));
+                self.out.push_str(&escape_html(&issue.title));
             }
             self.out.push_str("</td><td>");
-            self.out.push_str(&escape(text(
+            self.out.push_str(&escape_html(text(
                 self.language,
                 issue_status_label(issue.status),
             )));
@@ -636,15 +638,17 @@ impl Page {
         ]);
         for item in items {
             self.out.push_str("<tr><td>");
-            self.out
-                .push_str(&escape(text(self.language, watch_kind_label(item.kind))));
+            self.out.push_str(&escape_html(text(
+                self.language,
+                watch_kind_label(item.kind),
+            )));
             self.out.push_str("</td><td>");
-            self.out.push_str(&escape(&item.title));
+            self.out.push_str(&escape_html(&item.title));
             self.out.push_str("</td><td>");
-            self.out.push_str(&escape(&item.due));
+            self.out.push_str(&escape_html(&item.due));
             self.out.push_str("</td><td>");
             if let Some(note) = &item.note {
-                self.out.push_str(&escape(note));
+                self.out.push_str(&escape_html(note));
             }
             self.out.push_str("</td></tr>\n");
         }
@@ -668,19 +672,19 @@ impl Page {
         ]);
         for component in &stack.components {
             self.out.push_str("<tr><td>");
-            self.out.push_str(&escape(text(
+            self.out.push_str(&escape_html(text(
                 self.language,
                 component_kind_label(component.kind),
             )));
             self.out.push_str("</td><td>");
-            self.out.push_str(&escape(&component.name));
+            self.out.push_str(&escape_html(&component.name));
             self.out.push_str("</td><td>");
             if let Some(version) = &component.version {
-                self.out.push_str(&escape(version));
+                self.out.push_str(&escape_html(version));
             }
             self.out.push_str("</td><td>");
             if let Some(note) = &component.note {
-                self.out.push_str(&escape(note));
+                self.out.push_str(&escape_html(note));
             }
             self.out.push_str("</td></tr>\n");
         }
@@ -699,7 +703,7 @@ impl Page {
         self.write_row_heading(&[Label::ColumnLabel, Label::ColumnUrl]);
         for link in links {
             self.out.push_str("<tr><td>");
-            self.out.push_str(&escape(&link.label));
+            self.out.push_str(&escape_html(&link.label));
             self.out.push_str("</td><td>");
             self.write_anchor(&link.url, &link.url);
             self.out.push_str("</td></tr>\n");
@@ -709,7 +713,7 @@ impl Page {
 
     fn write_heading(&mut self, label: Label) {
         self.out.push_str("<h3>");
-        self.out.push_str(&escape(text(self.language, label)));
+        self.out.push_str(&escape_html(text(self.language, label)));
         self.out.push_str("</h3>\n");
     }
 
@@ -717,7 +721,7 @@ impl Page {
         self.out.push_str("<tr>");
         for label in labels {
             self.out.push_str("<th>");
-            self.out.push_str(&escape(text(self.language, *label)));
+            self.out.push_str(&escape_html(text(self.language, *label)));
             self.out.push_str("</th>");
         }
         self.out.push_str("</tr>\n");
@@ -727,8 +731,8 @@ impl Page {
         let _ = write!(
             self.out,
             "<a href=\"{}\" rel=\"noopener noreferrer\">{}</a>",
-            escape(url),
-            escape(label)
+            escape_html(url),
+            escape_html(label)
         );
     }
 }
@@ -811,10 +815,6 @@ fn component_kind_label(kind: ComponentKind) -> Label {
 /// Escapes `&`, `<`, `>`, `"`, and `'` for HTML text and attributes.
 #[must_use]
 pub fn escape_html(text: &str) -> String {
-    escape(text)
-}
-
-fn escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         match character {
