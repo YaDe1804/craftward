@@ -15,7 +15,8 @@ use std::time::SystemTime;
 use craftward_core::{
     Language, LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project,
     init_project, is_portable_absolute, list_projects, load_from_path, locate_workspace,
-    missing_paths, project_file, project_file_by_id, remove_project, utc_date, write_roadmap,
+    missing_paths, platform_path, project_file, project_file_by_id, remove_project, utc_date,
+    write_roadmap,
 };
 
 /// Process exit status for a usage error.
@@ -304,14 +305,6 @@ fn absolute_from_cwd(path: &Path) -> Result<PathBuf, String> {
             .map_err(|error| format!("cannot read the current directory: {error}"))?;
         Ok(platform_path(&current.join(path)))
     }
-}
-
-/// Rebuilds `path` so every separator is the one this operating system uses.
-///
-/// A `Path` keeps `/` that were already in the text. On Windows, joining such a
-/// path produces a mixed result such as `C:\dir\app/craftward.json`.
-fn platform_path(path: &Path) -> PathBuf {
-    path.components().collect()
 }
 
 fn validate_workspace(path: &Path) -> Result<ExitCode, String> {

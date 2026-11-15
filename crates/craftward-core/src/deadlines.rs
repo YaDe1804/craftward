@@ -31,7 +31,7 @@ pub enum CatalogOrigin {
 }
 
 /// One published requirement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Deadline {
     /// Store. This build only accepts `google_play`.
     pub platform: String,
@@ -158,7 +158,7 @@ pub fn parse_document(text: &str) -> Result<Parsed, String> {
     }
     Ok(Parsed {
         data_version: file.data_version,
-        entries: file.deadlines.into_iter().map(Deadline::from).collect(),
+        entries: file.deadlines,
     })
 }
 
@@ -379,7 +379,7 @@ fn from_parsed(
     }
 }
 
-fn check_row(index: usize, row: &Row, seen: &mut BTreeSet<String>, errors: &mut Vec<String>) {
+fn check_row(index: usize, row: &Deadline, seen: &mut BTreeSet<String>, errors: &mut Vec<String>) {
     let path = format!("deadlines[{index}]");
     if row.platform != "google_play" {
         errors.push(format!("{path}.platform must be google_play"));
@@ -444,33 +444,5 @@ fn is_https(text: &str) -> bool {
 struct File {
     schema_version: u32,
     data_version: String,
-    deadlines: Vec<Row>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Row {
-    platform: String,
-    form_factor: String,
-    requirement: String,
-    api_level: u32,
-    deadline: String,
-    source: String,
-    checked_on: String,
-    note: String,
-}
-
-impl From<Row> for Deadline {
-    fn from(row: Row) -> Self {
-        Self {
-            platform: row.platform,
-            form_factor: row.form_factor,
-            requirement: row.requirement,
-            api_level: row.api_level,
-            deadline: row.deadline,
-            source: row.source,
-            checked_on: row.checked_on,
-            note: row.note,
-        }
-    }
+    deadlines: Vec<Deadline>,
 }

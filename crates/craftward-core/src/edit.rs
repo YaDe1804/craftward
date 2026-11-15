@@ -1069,7 +1069,12 @@ fn commit(
     created_id: Option<String>,
 ) -> Result<EditOutcome, EditError> {
     project.updated = Some(updated_on.to_owned());
-    let serialized = format_project(&project);
+    let serialized = format_project(&project).map_err(|error| {
+        EditError::InvalidFile(vec![ValidationError {
+            path: "$".to_owned(),
+            message: error.to_string(),
+        }])
+    })?;
     match load_from_str(&serialized) {
         Ok(_) => Ok(EditOutcome {
             project,

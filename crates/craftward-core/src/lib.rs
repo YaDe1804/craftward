@@ -13,6 +13,8 @@ mod error;
 mod fs_atomic;
 mod http;
 mod i18n;
+mod json_check;
+mod json_loose;
 mod lifecycle;
 mod load;
 mod location;
@@ -20,6 +22,7 @@ mod lockfile;
 mod model;
 mod osv;
 mod paths;
+mod percent;
 mod radar;
 mod roadmap;
 #[cfg(feature = "schema")]
@@ -67,7 +70,7 @@ pub use model::{
 };
 pub use osv::{Advisory, BATCH_LIMIT};
 pub use paths::{
-    MissingPath, MissingPathKind, ProjectPaths, is_portable_absolute, missing_paths,
+    MissingPath, MissingPathKind, ProjectPaths, is_portable_absolute, missing_paths, platform_path,
     resolve_project_paths,
 };
 pub use radar::{

@@ -5,10 +5,10 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::model::AndroidConfig;
-use crate::paths::platform_path;
+use crate::paths::join_stored;
 
 /// Where `targetSdk` came from, and any problems along the way.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +37,7 @@ pub fn detect(project_id: &str, source_dir: &Path, config: &AndroidConfig) -> De
     let mut warnings = Vec::new();
     let mut files = Vec::new();
     for relative in &config.detect_from {
-        match fs::read_to_string(resolve(source_dir, relative)) {
+        match fs::read_to_string(join_stored(source_dir, relative)) {
             Ok(text) => files.push(SourceFile {
                 relative: relative.clone(),
                 text,
@@ -395,8 +395,4 @@ fn is_toml(relative: &str) -> bool {
 
 fn is_ident(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-fn resolve(source_dir: &Path, stored: &str) -> PathBuf {
-    platform_path(&source_dir.join(platform_path(Path::new(stored))))
 }

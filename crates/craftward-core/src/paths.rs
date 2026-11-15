@@ -131,6 +131,10 @@ fn project_directory(project_file: &Path) -> PathBuf {
     }
 }
 
-fn join_stored(base: &Path, stored: &str) -> PathBuf {
+/// Joins `stored` onto `base`, then rewrites every separator for this system.
+///
+/// `stored` may use `/`. Joining it in one step would keep those slashes on
+/// Windows, so each piece is normalized before and after the join.
+pub(crate) fn join_stored(base: &Path, stored: &str) -> PathBuf {
     platform_path(&base.join(platform_path(Path::new(stored))))
 }

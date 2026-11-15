@@ -6,16 +6,18 @@
 //! The path contains only the product name. The API version in the
 //! specification is 1.2.1. The data is under the MIT License.
 
-use std::fmt::Write as _;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::de::Deserializer;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::date::{days_between, format_unix_timestamp, is_calendar_date};
-use crate::fs_atomic::write_atomic;
-use crate::http::{HttpClient, HttpError, HttpRequest, HttpResponse, MAX_RESPONSE_BYTES, Method};
+use crate::cache::{self, CacheChoice, CachePolicy, ShapeFault, TimedCache};
+use crate::date::{days_between, is_calendar_date};
+use crate::http::{HttpClient, HttpRequest, MAX_RESPONSE_BYTES, Method, accepted_body_or};
+use crate::json_loose::{lenient_array, optional_bool, optional_lenient_vec};
 use crate::model::Component;
+use crate::percent::{encode, encode_file_name};
 use crate::store::{FindingKind, Severity};
 
 const LIST_URL: &str = "https://endoflife.date/api/v1/products/";
@@ -23,16 +25,17 @@ const PRODUCT_URL: &str = "https://endoflife.date/api/v1/products/";
 const TTL_SECONDS: i64 = 24 * 60 * 60;
 
 /// One product name from the product list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogProduct {
     /// Product id used in the API path.
     pub name: String,
     /// Alternate names from the product summary.
+    #[serde(default, deserialize_with = "crate::json_loose::lenient_vec")]
     pub aliases: Vec<String>,
 }
 
 /// One release cycle and the end-of-life fields from API v1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Cycle {
     /// Cycle name, such as `9.3`.
     pub name: String,
@@ -445,33 +448,39 @@ fn load_catalog(
     options: &EolOptions<'_>,
 ) -> Result<LoadedCatalog, String> {
     let path = options.cache_dir.join("eol").join("products.json");
-    match use_cache(&path, options, "endoflife.date product list")? {
-        CacheRead::Fresh(value) | CacheRead::Stale(value) => Ok(LoadedCatalog {
-            products: parse_cached_products(&value)?,
-            warnings: stale_warning(&value, options.now),
-        }),
-        CacheRead::Fetch => match get_json(client, LIST_URL) {
+    let policy = policy(options);
+    match cache::choose::<ProductsFile>(&path, policy, ShapeFault::Error(PRODUCTS_SHAPE))? {
+        CacheChoice::Fresh(file) => Ok(loaded_products(file.products, Vec::new())),
+        CacheChoice::Stale(file) => Ok(loaded_products(
+            file.products,
+            vec![cache::offline_cache_warning(file.stored_at)],
+        )),
+        CacheChoice::Unavailable => {
+            Err("endoflife.date product list is not in the cache".to_owned())
+        }
+        CacheChoice::Fetch => match get_json(client, LIST_URL) {
             Ok(body) => {
                 let products = parse_product_list(&body)?;
-                write_cached(
+                let _ = cache::write_stored(
                     &path,
-                    &CachedProducts {
-                        stored_at: options.now,
-                        products: &products,
+                    &ProductsFile {
+                        stored_at: Some(options.now),
+                        products: products.clone(),
                     },
+                    false,
                 );
-                Ok(LoadedCatalog {
-                    products,
-                    warnings: Vec::new(),
-                })
+                Ok(loaded_products(products, Vec::new()))
             }
-            Err(error) => match read_cached(&path) {
-                Some(value) => Ok(LoadedCatalog {
-                    products: parse_cached_products(&value)?,
-                    warnings: vec![stale_network(&value)],
-                }),
-                None => Err(format!("endoflife.date product list: {error}")),
-            },
+            Err(error) => {
+                match cache::read_shaped::<ProductsFile>(&path, ShapeFault::Error(PRODUCTS_SHAPE))?
+                {
+                    Some(file) => Ok(loaded_products(
+                        file.products,
+                        vec![cache::network_cache_warning(file.stored_at)],
+                    )),
+                    None => Err(format!("endoflife.date product list: {error}")),
+                }
+            }
         },
     }
 }
@@ -485,235 +494,199 @@ fn load_cycles(
         .cache_dir
         .join("eol")
         .join("products")
-        .join(format!("{}.json", encode_file(product)));
-    match use_cache(&path, options, &format!("endoflife.date product {product}"))? {
-        CacheRead::Fresh(value) | CacheRead::Stale(value) => Ok(LoadedCycles {
-            cycles: parse_cached_cycles(&value)?,
-            warnings: stale_warning(&value, options.now),
-        }),
-        CacheRead::Fetch => {
-            let url = format!("{PRODUCT_URL}{}/", encode_path(product));
+        .join(format!("{}.json", encode_file_name(product)));
+    let policy = policy(options);
+    match cache::choose::<CyclesFile>(&path, policy, ShapeFault::Error(CYCLES_SHAPE))? {
+        CacheChoice::Fresh(file) => {
+            let (_stored_at, cycles) = cycles_from(file);
+            Ok(loaded_cycles(cycles, Vec::new()))
+        }
+        CacheChoice::Stale(file) => {
+            let (stored_at, cycles) = cycles_from(file);
+            Ok(loaded_cycles(
+                cycles,
+                vec![cache::offline_cache_warning(stored_at)],
+            ))
+        }
+        CacheChoice::Unavailable => Err(format!(
+            "endoflife.date product {product} is not in the cache"
+        )),
+        CacheChoice::Fetch => {
+            let url = format!("{PRODUCT_URL}{}/", encode(product));
             match get_json(client, &url) {
                 Ok(body) => {
                     let cycles = parse_product(&body)?;
-                    write_cached(
+                    let _ = cache::write_stored(
                         &path,
-                        &CachedCycles {
+                        &StoredCycles {
                             stored_at: options.now,
                             cycles: &cycles,
                         },
+                        false,
                     );
-                    Ok(LoadedCycles {
-                        cycles,
-                        warnings: Vec::new(),
-                    })
+                    Ok(loaded_cycles(cycles, Vec::new()))
                 }
-                Err(error) => match read_cached(&path) {
-                    Some(value) => Ok(LoadedCycles {
-                        cycles: parse_cached_cycles(&value)?,
-                        warnings: vec![stale_network(&value)],
-                    }),
-                    None => Err(format!("endoflife.date product {product}: {error}")),
-                },
+                Err(error) => {
+                    match cache::read_shaped::<CyclesFile>(&path, ShapeFault::Error(CYCLES_SHAPE))?
+                    {
+                        Some(file) => {
+                            let (stored_at, cycles) = cycles_from(file);
+                            Ok(loaded_cycles(
+                                cycles,
+                                vec![cache::network_cache_warning(stored_at)],
+                            ))
+                        }
+                        None => Err(format!("endoflife.date product {product}: {error}")),
+                    }
+                }
             }
         }
     }
 }
 
-enum CacheRead {
-    Fresh(Value),
-    Stale(Value),
-    Fetch,
-}
+const PRODUCTS_SHAPE: &str = "cached product list is not an object";
+const CYCLES_SHAPE: &str = "cached product is not an object";
 
-fn use_cache(path: &Path, options: &EolOptions<'_>, label: &str) -> Result<CacheRead, String> {
-    if options.refresh && !options.offline {
-        return Ok(CacheRead::Fetch);
-    }
-    match read_cached(path) {
-        Some(value) if fresh(&value, options.now) => Ok(CacheRead::Fresh(value)),
-        Some(value) if options.offline => Ok(CacheRead::Stale(value)),
-        Some(_) if !options.offline => Ok(CacheRead::Fetch),
-        None if options.offline => Err(format!("{label} is not in the cache")),
-        _ => Ok(CacheRead::Fetch),
+fn policy(options: &EolOptions<'_>) -> CachePolicy {
+    CachePolicy {
+        now: options.now,
+        ttl_seconds: TTL_SECONDS,
+        refresh: options.refresh,
+        offline: options.offline,
     }
 }
 
-fn fresh(value: &Value, now: i64) -> bool {
-    value
-        .get("stored_at")
-        .and_then(Value::as_i64)
-        .is_some_and(|stored| now.saturating_sub(stored) < TTL_SECONDS)
+fn loaded_products(products: Vec<CatalogProduct>, warnings: Vec<String>) -> LoadedCatalog {
+    LoadedCatalog { products, warnings }
 }
 
-fn stale_warning(value: &Value, now: i64) -> Vec<String> {
-    if fresh(value, now) {
-        Vec::new()
-    } else {
-        vec![stale_offline(value)]
-    }
+fn loaded_cycles(cycles: Vec<Cycle>, warnings: Vec<String>) -> LoadedCycles {
+    LoadedCycles { cycles, warnings }
 }
 
-fn stale_offline(value: &Value) -> String {
-    match stored_stamp(value) {
-        Some(when) => format!("using cached results from {when}"),
-        None => "using expired cached results".to_owned(),
-    }
+fn cycles_from(file: CyclesFile) -> (Option<i64>, Vec<Cycle>) {
+    (
+        file.stored_at,
+        file.cycles.into_iter().map(Cycle::from).collect(),
+    )
 }
 
-fn stale_network(value: &Value) -> String {
-    match stored_stamp(value) {
-        Some(when) => format!("using cached results from {when} after a network error"),
-        None => "using cached results after a network error".to_owned(),
-    }
-}
-
-fn stored_stamp(value: &Value) -> Option<String> {
-    format_unix_timestamp(value.get("stored_at").and_then(Value::as_i64)?)
-}
-
-fn read_cached(path: &Path) -> Option<Value> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn write_cached(path: &Path, value: &impl Serialize) {
-    let Ok(bytes) = serde_json::to_vec_pretty(value) else {
-        return;
-    };
-    let _ = write_atomic(path, &bytes);
+#[derive(Serialize, Deserialize)]
+struct ProductsFile {
+    #[serde(default)]
+    stored_at: Option<i64>,
+    #[serde(deserialize_with = "lenient_array")]
+    products: Vec<CatalogProduct>,
 }
 
 #[derive(Serialize)]
-struct CachedProducts<'a> {
-    stored_at: i64,
-    products: &'a [CatalogProduct],
-}
-
-#[derive(Serialize)]
-struct CachedCycles<'a> {
+struct StoredCycles<'a> {
     stored_at: i64,
     cycles: &'a [Cycle],
 }
 
-impl Serialize for CatalogProduct {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("CatalogProduct", 2)?;
-        state.serialize_field("name", &self.name)?;
-        state.serialize_field("aliases", &self.aliases)?;
-        state.end()
+#[derive(Deserialize)]
+struct CyclesFile {
+    #[serde(default)]
+    stored_at: Option<i64>,
+    #[serde(deserialize_with = "lenient_array")]
+    cycles: Vec<RawCycle>,
+}
+
+/// One cycle from the API (`isEol` / `eolFrom`) or from our cache (`is_eol` / `eol_from`).
+#[derive(Deserialize)]
+struct RawCycle {
+    name: String,
+    #[serde(alias = "isEol", default, deserialize_with = "optional_bool")]
+    is_eol: Option<bool>,
+    #[serde(alias = "eolFrom", default)]
+    eol_from: EolFrom,
+}
+
+impl TimedCache for ProductsFile {
+    fn stored_at(&self) -> Option<i64> {
+        self.stored_at
     }
 }
 
-impl Serialize for Cycle {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Cycle", 4)?;
-        state.serialize_field("name", &self.name)?;
-        state.serialize_field("is_eol", &self.is_eol)?;
-        state.serialize_field("eol_from", &self.eol_from)?;
-        state.serialize_field("eol_from_invalid", &self.eol_from_invalid)?;
-        state.end()
+impl TimedCache for CyclesFile {
+    fn stored_at(&self) -> Option<i64> {
+        self.stored_at
     }
 }
 
-fn parse_cached_products(value: &Value) -> Result<Vec<CatalogProduct>, String> {
-    let items = value
-        .get("products")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "cached product list is not an object".to_owned())?;
-    Ok(items.iter().filter_map(cached_product).collect())
+impl From<RawCycle> for Cycle {
+    fn from(cycle: RawCycle) -> Self {
+        let (eol_from, eol_from_invalid) = cycle.eol_from.into_parts();
+        Self {
+            name: cycle.name,
+            is_eol: cycle.is_eol,
+            eol_from,
+            eol_from_invalid,
+        }
+    }
 }
 
-fn cached_product(value: &Value) -> Option<CatalogProduct> {
-    let object = value.as_object()?;
-    Some(CatalogProduct {
-        name: object.get("name")?.as_str()?.to_owned(),
-        aliases: string_list(object.get("aliases")),
-    })
+/// Matches the previous Value walk: null is fine, a calendar day is kept, anything else is unusable.
+#[derive(Debug, Clone, Default)]
+enum EolFrom {
+    #[default]
+    Absent,
+    Null,
+    Valid(String),
+    Invalid,
 }
 
-fn parse_cached_cycles(value: &Value) -> Result<Vec<Cycle>, String> {
-    let items = value
-        .get("cycles")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "cached product is not an object".to_owned())?;
-    Ok(items.iter().filter_map(cached_cycle).collect())
+impl EolFrom {
+    fn into_parts(self) -> (Option<String>, bool) {
+        match self {
+            Self::Valid(text) => (Some(text), false),
+            Self::Null => (None, false),
+            Self::Absent | Self::Invalid => (None, true),
+        }
+    }
 }
 
-fn cached_cycle(value: &Value) -> Option<Cycle> {
-    let object = value.as_object()?;
-    let name = object.get("name")?.as_str()?.to_owned();
-    Some(cycle_from_fields(
-        name,
-        object.get("is_eol"),
-        object.get("eol_from"),
-    ))
+impl<'de> Deserialize<'de> for EolFrom {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Value::deserialize(deserializer)? {
+            Value::Null => Self::Null,
+            Value::String(text) if is_calendar_date(&text) => Self::Valid(text),
+            _ => Self::Invalid,
+        })
+    }
 }
 
 fn parse_product_list(body: &[u8]) -> Result<Vec<CatalogProduct>, String> {
-    let value: Value = serde_json::from_slice(body).map_err(|error| error.to_string())?;
-    let items = value
-        .get("result")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "endoflife.date product list has no result".to_owned())?;
-    Ok(items.iter().filter_map(cached_product).collect())
+    let list: ProductList = serde_json::from_slice(body).map_err(|error| {
+        if error.is_syntax() || error.is_eof() {
+            error.to_string()
+        } else {
+            "endoflife.date product list has no result".to_owned()
+        }
+    })?;
+    list.result
+        .ok_or_else(|| "endoflife.date product list has no result".to_owned())
 }
 
 fn parse_product(body: &[u8]) -> Result<Vec<Cycle>, String> {
-    let value: Value = serde_json::from_slice(body).map_err(|error| error.to_string())?;
-    let result = value
-        .get("result")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "endoflife.date product has no result".to_owned())?;
-    let items = result
-        .get("releases")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "endoflife.date product has no releases".to_owned())?;
-    Ok(items
-        .iter()
-        .filter_map(|item| {
-            let object = item.as_object()?;
-            let name = object.get("name")?.as_str()?.to_owned();
-            Some(cycle_from_fields(
-                name,
-                object.get("isEol"),
-                object.get("eolFrom"),
-            ))
-        })
-        .collect())
-}
-
-fn cycle_from_fields(name: String, eol_flag: Option<&Value>, eol_date: Option<&Value>) -> Cycle {
-    let is_eol = eol_flag.and_then(Value::as_bool);
-    let (eol_from, eol_from_invalid) = match eol_date {
-        Some(Value::Null) => (None, false),
-        Some(Value::String(text)) if is_calendar_date(text) => (Some(text.clone()), false),
-        _ => (None, true),
+    let document: ProductDocument = serde_json::from_slice(body).map_err(|error| {
+        if error.is_syntax() || error.is_eof() {
+            error.to_string()
+        } else {
+            "endoflife.date product has no result".to_owned()
+        }
+    })?;
+    let Some(result) = document.result else {
+        return Err("endoflife.date product has no result".to_owned());
     };
-    Cycle {
-        name,
-        is_eol,
-        eol_from,
-        eol_from_invalid,
-    }
-}
-
-fn string_list(value: Option<&Value>) -> Vec<String> {
-    value.and_then(Value::as_array).map_or_default(|items| {
-        items
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect()
-    })
+    let Some(releases) = result.releases else {
+        return Err("endoflife.date product has no releases".to_owned());
+    };
+    Ok(releases.into_iter().map(Cycle::from).collect())
 }
 
 fn get_json(client: &impl HttpClient, url: &str) -> Result<Vec<u8>, String> {
@@ -724,35 +697,27 @@ fn get_json(client: &impl HttpClient, url: &str) -> Result<Vec<u8>, String> {
             body: None,
         })
         .map_err(|error| error.message)?;
-    accepted(response).map_err(|error| error.message)
+    accepted_body_or(
+        response,
+        || format!("response is larger than {MAX_RESPONSE_BYTES} bytes"),
+        |status| format!("HTTP status {status}"),
+    )
 }
 
-fn accepted(response: HttpResponse) -> Result<Vec<u8>, HttpError> {
-    if response.body.len() > MAX_RESPONSE_BYTES {
-        return Err(HttpError {
-            message: format!("response is larger than {MAX_RESPONSE_BYTES} bytes"),
-        });
-    }
-    if response.status == 200 {
-        return Ok(response.body);
-    }
-    Err(HttpError {
-        message: format!("HTTP status {}", response.status),
-    })
+#[derive(Deserialize)]
+struct ProductList {
+    #[serde(default, deserialize_with = "optional_lenient_vec")]
+    result: Option<Vec<CatalogProduct>>,
 }
 
-fn encode_path(name: &str) -> String {
-    let mut encoded = String::new();
-    for byte in name.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.' {
-            encoded.push(char::from(byte));
-        } else {
-            let _ = write!(encoded, "%{byte:02X}");
-        }
-    }
-    encoded
+#[derive(Deserialize)]
+struct ProductDocument {
+    #[serde(default)]
+    result: Option<ProductResult>,
 }
 
-fn encode_file(name: &str) -> String {
-    encode_path(name).replace('.', "_")
+#[derive(Deserialize)]
+struct ProductResult {
+    #[serde(default, deserialize_with = "optional_lenient_vec")]
+    releases: Option<Vec<RawCycle>>,
 }

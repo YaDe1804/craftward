@@ -192,7 +192,7 @@ fn parse_cargo(text: &str) -> Result<ParsedLock, LockFailure> {
             continue;
         }
         if trimmed == "[[package]]" {
-            finish_package(&mut packages, current.take(), line_no)?;
+            finish_package(&mut packages, current.take())?;
             skipping = false;
             current = Some(CargoPackage {
                 line: line_no,
@@ -203,7 +203,7 @@ fn parse_cargo(text: &str) -> Result<ParsedLock, LockFailure> {
             continue;
         }
         if trimmed.starts_with('[') {
-            finish_package(&mut packages, current.take(), line_no)?;
+            finish_package(&mut packages, current.take())?;
             skipping = true;
             continue;
         }
@@ -234,7 +234,7 @@ fn parse_cargo(text: &str) -> Result<ParsedLock, LockFailure> {
             _ => {}
         }
     }
-    finish_package(&mut packages, current.take(), 0)?;
+    finish_package(&mut packages, current.take())?;
     let Some((_, version)) = format_version else {
         return Err(invalid(1, "Cargo.lock has no format version"));
     };
@@ -260,7 +260,6 @@ struct CargoPackage {
 fn finish_package(
     packages: &mut Vec<CargoPackage>,
     package: Option<CargoPackage>,
-    _next_line: u32,
 ) -> Result<(), LockFailure> {
     let Some(package) = package else {
         return Ok(());

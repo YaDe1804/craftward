@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for finding state, finding kind, and event kind; an unknown word fails
   when the row is read. `findings list` filters state and project in SQL.
   The busy timeout is set once.
+- SeQu check F3 (SQ-05, SQ-07, and the remaining SQ-14 points): shared
+  modules for JSON validation helpers, percent-encoding, timed JSON cache,
+  path joining, and HTTP body checks. OSV, endoflife.date, and the deadlines
+  file use typed serde. `workspace.json` is written through Serialize. Cache
+  and project serialization failures are returned instead of writing `{}`.
 
 ### Added
 

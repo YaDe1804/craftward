@@ -4,10 +4,15 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Number, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use crate::error::{LoadError, ValidationError};
 use crate::fs_atomic::write_atomic;
+use crate::json_check::{
+    expect_array, expect_object, expect_string, newer_schema_version, push, reject_unknown,
+    u64_number,
+};
 use crate::load::{load_from_path, load_from_str};
 use crate::model::{IssueStatus, Project, ProjectStatus, TaskStatus};
 
@@ -16,7 +21,7 @@ const ENTRY_FIELDS: &[&str] = &["path"];
 const PROJECT_FILE_NAME: &str = "craftward.json";
 
 /// One `workspace.json` file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Workspace {
     /// Format generation. Readers of this version accept only the integer `1`.
     pub schema_version: u32,
@@ -25,7 +30,7 @@ pub struct Workspace {
 }
 
 /// A path to one `craftward.json`, stored in the workspace file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceEntry {
     /// Path of the project file. A relative path is relative to the workspace
     /// file's directory and uses `/`. An absolute path is a normal path for
@@ -220,9 +225,10 @@ pub fn load_or_empty(path: &Path) -> Result<Workspace, WorkspaceError> {
 /// # Errors
 ///
 /// Returns [`WorkspaceError::Write`] when the directory cannot be created or
-/// the rename fails.
+/// the rename fails, and [`WorkspaceError::Validation`] when the registry
+/// cannot be serialized.
 pub fn save_workspace(path: &Path, workspace: &Workspace) -> Result<(), WorkspaceError> {
-    let text = format_workspace(workspace);
+    let text = format_workspace(workspace)?;
     write_atomic(path, text.as_bytes()).map_err(WorkspaceError::Write)
 }
 
@@ -261,7 +267,7 @@ pub fn init_project(
         issues: None,
         watch_items: None,
     };
-    let text = format_project(&project);
+    let text = format_project(&project).map_err(|error| serialize_error(&error))?;
     if let Err(error) = load_from_str(&text) {
         return Err(validation_from_load(error));
     }
@@ -549,20 +555,6 @@ fn parse_workspace(text: &str) -> Result<Workspace, WorkspaceError> {
     workspace_from_value(&value)
 }
 
-fn newer_schema_version(value: &Value) -> Option<u64> {
-    let version = value.as_object()?.get("schema_version")?.as_number()?;
-    let version = u64_number(version)?;
-    (version > 1).then_some(version)
-}
-
-fn u64_number(number: &Number) -> Option<u64> {
-    if number.is_u64() {
-        number.as_u64()
-    } else {
-        None
-    }
-}
-
 fn validate_workspace(value: &Value, errors: &mut Vec<ValidationError>) {
     let Some(object) = expect_object(value, "$", errors) else {
         return;
@@ -651,30 +643,24 @@ fn workspace_from_value(value: &Value) -> Result<Workspace, WorkspaceError> {
     })
 }
 
-fn format_workspace(workspace: &Workspace) -> String {
-    let entries: Vec<String> = workspace
-        .projects
-        .iter()
-        .map(|entry| {
-            let path = serde_json::to_string(&entry.path).unwrap_or_else(|_| "\"\"".to_owned());
-            format!("    {{\n      \"path\": {path}\n    }}")
-        })
-        .collect();
-    let body = if entries.is_empty() {
-        String::new()
-    } else {
-        format!("\n{}\n  ", entries.join(",\n"))
-    };
-    format!(
-        "{{\n  \"schema_version\": {},\n  \"projects\": [{body}]\n}}\n",
-        workspace.schema_version
-    )
+fn format_workspace(workspace: &Workspace) -> Result<String, WorkspaceError> {
+    let mut text =
+        serde_json::to_string_pretty(workspace).map_err(|error| serialize_error(&error))?;
+    text.push('\n');
+    Ok(text)
 }
 
-pub(crate) fn format_project(project: &Project) -> String {
-    let mut text = serde_json::to_string_pretty(project).unwrap_or_else(|_| "{}".to_owned());
+pub(crate) fn format_project(project: &Project) -> Result<String, serde_json::Error> {
+    let mut text = serde_json::to_string_pretty(project)?;
     text.push('\n');
-    text
+    Ok(text)
+}
+
+fn serialize_error(error: &serde_json::Error) -> WorkspaceError {
+    WorkspaceError::Validation(vec![ValidationError {
+        path: "$".to_owned(),
+        message: error.to_string(),
+    }])
 }
 
 fn validation_from_load(error: LoadError) -> WorkspaceError {
@@ -687,69 +673,32 @@ fn validation_from_load(error: LoadError) -> WorkspaceError {
     }
 }
 
-fn reject_unknown(
-    object: &Map<String, Value>,
-    parent: &str,
-    allowed: &[&str],
-    errors: &mut Vec<ValidationError>,
-) {
-    for key in object.keys() {
-        if !allowed.contains(&key.as_str()) {
-            push(errors, join(parent, key), "unknown field");
-        }
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::{Workspace, WorkspaceEntry, format_workspace};
 
-fn expect_object<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a Map<String, Value>> {
-    if let Value::Object(object) = value {
-        Some(object)
-    } else {
-        push(errors, path, "must be an object");
-        None
+    #[test]
+    fn format_workspace_matches_the_previous_layout() {
+        let empty = format_workspace(&Workspace::empty()).unwrap();
+        assert_eq!(
+            empty,
+            "{\n  \"schema_version\": 1,\n  \"projects\": []\n}\n"
+        );
+        let filled = format_workspace(&Workspace {
+            schema_version: 1,
+            projects: vec![
+                WorkspaceEntry {
+                    path: "demo/craftward.json".to_owned(),
+                },
+                WorkspaceEntry {
+                    path: "other/craftward.json".to_owned(),
+                },
+            ],
+        })
+        .unwrap();
+        assert_eq!(
+            filled,
+            "{\n  \"schema_version\": 1,\n  \"projects\": [\n    {\n      \"path\": \"demo/craftward.json\"\n    },\n    {\n      \"path\": \"other/craftward.json\"\n    }\n  ]\n}\n"
+        );
     }
-}
-
-fn expect_array<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a Vec<Value>> {
-    if let Value::Array(items) = value {
-        Some(items)
-    } else {
-        push(errors, path, "must be an array");
-        None
-    }
-}
-
-fn expect_string<'a>(
-    value: &'a Value,
-    path: &str,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a str> {
-    if let Value::String(text) = value {
-        Some(text)
-    } else {
-        push(errors, path, "must be a string");
-        None
-    }
-}
-
-fn join(parent: &str, field: &str) -> String {
-    if parent == "$" {
-        field.to_owned()
-    } else {
-        format!("{parent}.{field}")
-    }
-}
-
-fn push(errors: &mut Vec<ValidationError>, path: impl Into<String>, message: impl Into<String>) {
-    errors.push(ValidationError {
-        path: path.into(),
-        message: message.into(),
-    });
 }
