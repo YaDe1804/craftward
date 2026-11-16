@@ -1,20 +1,25 @@
 //! egui surface that renders the view model.
 
 use eframe::egui::{
-    self, Align, Button, CentralPanel, CollapsingHeader, Color32, Context, CornerRadius, Frame,
-    Key, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke, Theme,
-    ThemePreference, Ui, Vec2,
+    self, Align, Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Context, CornerRadius,
+    Frame, Key, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke, TextEdit,
+    Theme, ThemePreference, Ui, Vec2,
 };
 
-use crate::load::{LoadedPortfolio, load_portfolio};
+use crate::actions::{
+    SaveResult, save_issue_status, save_new_issue, save_new_task, save_task_status,
+};
+use crate::load::{LoadedPortfolio, LoadedProject, load_portfolio};
 use crate::theme::{
     self, ACCENT, BACKGROUND, CARD, CARD_GAP, CARD_INNER, CARD_PADDING, CARD_ROUNDING,
     DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, PAGE_MARGIN, PROGRESS_TRACK, RUNNING,
     SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, TEXT, TYPE,
 };
 use crate::view::{
-    FindingRow, PortfolioView, ProgressView, ProjectCard, ProjectDetail, StatusBadge, build_detail,
-    build_portfolio, finding_count_badges, grid_columns, open_findings_label,
+    FindingRow, IssueForm, PortfolioView, ProgressView, ProjectCard, ProjectDetail, StatusBadge,
+    TaskForm, badge_stretches_to_parent, build_detail, build_portfolio, finding_count_badges,
+    grid_columns, grid_row_column_slots, issue_severity_choices, issue_status_choices,
+    open_findings_label, task_status_choices,
 };
 
 /// Which screen is visible.
@@ -29,6 +34,80 @@ enum Screen {
     },
 }
 
+/// Where a save error should appear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ErrorSite {
+    /// Task status menu.
+    Task {
+        /// Phase id.
+        phase_id: String,
+        /// Task id.
+        task_id: String,
+    },
+    /// Issue status menu.
+    Issue {
+        /// Issue id.
+        issue_id: String,
+    },
+    /// Open task form.
+    TaskForm,
+    /// Open issue form.
+    IssueForm,
+}
+
+/// Detail-view editing widgets (no egui types).
+#[derive(Debug, Default)]
+struct DetailEdit {
+    /// Open task form, when adding to a phase.
+    task_form: Option<TaskForm>,
+    /// Open issue form.
+    issue_form: Option<IssueForm>,
+    /// Last save error message.
+    error: Option<String>,
+    /// Whether the error is an external-change conflict.
+    conflict: bool,
+    /// Which control owns [`Self::error`].
+    error_site: Option<ErrorSite>,
+}
+
+impl DetailEdit {
+    fn clear_message(&mut self) {
+        self.error = None;
+        self.conflict = false;
+        self.error_site = None;
+    }
+
+    fn clear_all(&mut self) {
+        self.task_form = None;
+        self.issue_form = None;
+        self.clear_message();
+    }
+
+    fn set_error(&mut self, site: ErrorSite, message: String, conflict: bool) {
+        self.error_site = Some(site);
+        self.error = Some(message);
+        self.conflict = conflict;
+    }
+}
+
+/// Action produced by the detail view widgets.
+enum DetailAction {
+    /// Set a task status.
+    SetTaskStatus {
+        phase_id: String,
+        task_id: String,
+        status: String,
+    },
+    /// Set an issue status.
+    SetIssueStatus { issue_id: String, status: String },
+    /// Persist the open task form.
+    SaveTask,
+    /// Persist the open issue form.
+    SaveIssue,
+    /// Reload after a conflict.
+    Reload,
+}
+
 /// The Craftward desktop application.
 pub struct CraftwardApp {
     /// Last loaded data.
@@ -37,6 +116,8 @@ pub struct CraftwardApp {
     portfolio: PortfolioView,
     /// Current screen.
     screen: Screen,
+    /// Detail editing widgets.
+    edit: DetailEdit,
 }
 
 impl CraftwardApp {
@@ -50,29 +131,132 @@ impl CraftwardApp {
             loaded,
             portfolio,
             screen: Screen::Overview,
+            edit: DetailEdit::default(),
         }
     }
 
     fn reload(&mut self) {
         self.loaded = load_portfolio();
         self.portfolio = build_portfolio(&self.loaded);
+        self.edit.clear_all();
         if let Screen::Detail { index } = self.screen
             && index >= self.loaded.projects.len()
         {
             self.screen = Screen::Overview;
         }
     }
+
+    fn apply_detail_action(&mut self, index: usize, action: DetailAction) {
+        match action {
+            DetailAction::Reload => self.reload(),
+            DetailAction::SetTaskStatus {
+                phase_id,
+                task_id,
+                status,
+            } => {
+                let site = ErrorSite::Task {
+                    phase_id: phase_id.clone(),
+                    task_id: task_id.clone(),
+                };
+                self.run_save(index, site, |path, fingerprint| {
+                    save_task_status(path, fingerprint, &phase_id, &task_id, &status)
+                });
+            }
+            DetailAction::SetIssueStatus { issue_id, status } => {
+                let site = ErrorSite::Issue {
+                    issue_id: issue_id.clone(),
+                };
+                self.run_save(index, site, |path, fingerprint| {
+                    save_issue_status(path, fingerprint, &issue_id, &status)
+                });
+            }
+            DetailAction::SaveTask => {
+                let Some(form) = self.edit.task_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::TaskForm, |path, fingerprint| {
+                    save_new_task(path, fingerprint, &form)
+                });
+            }
+            DetailAction::SaveIssue => {
+                let Some(form) = self.edit.issue_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::IssueForm, |path, fingerprint| {
+                    save_new_issue(path, fingerprint, &form)
+                });
+            }
+        }
+    }
+
+    fn run_save(
+        &mut self,
+        index: usize,
+        site: ErrorSite,
+        save: impl FnOnce(&std::path::Path, &craftward_core::ContentFingerprint) -> SaveResult,
+    ) {
+        let Some(project) = self.loaded.projects.get(index) else {
+            return;
+        };
+        let Some(fingerprint) = project.fingerprint.clone() else {
+            self.edit.set_error(
+                site,
+                "project file is not available for editing".to_owned(),
+                false,
+            );
+            return;
+        };
+        let path = project.path.clone();
+        match save(&path, &fingerprint) {
+            SaveResult::Saved => {
+                let stay = self.screen;
+                self.reload();
+                self.screen = stay;
+            }
+            SaveResult::Failed { message, conflict } => {
+                self.edit.set_error(site, message, conflict);
+            }
+        }
+    }
 }
 
 impl eframe::App for CraftwardApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        if ctx.input(|input| input.key_pressed(Key::Escape))
-            && matches!(self.screen, Screen::Detail { .. })
-        {
-            self.screen = Screen::Overview;
+        self.handle_escape(ui);
+        self.draw_top_bar(ui);
+        Panel::bottom("craftward_footer")
+            .frame(
+                Frame::NONE
+                    .fill(BACKGROUND)
+                    .inner_margin(Margin::symmetric(PAGE_MARGIN, 8))
+                    .stroke(Stroke::new(1.0, LINE)),
+            )
+            .show(ui, |ui| {
+                draw_footer(ui, &self.portfolio);
+            });
+        let action = self.draw_central(ui);
+        if let (Screen::Detail { index }, Some(action)) = (self.screen, action) {
+            self.apply_detail_action(index, action);
         }
+    }
+}
 
+impl CraftwardApp {
+    fn handle_escape(&mut self, ui: &Ui) {
+        if !ui.ctx().input(|input| input.key_pressed(Key::Escape)) {
+            return;
+        }
+        if self.edit.task_form.is_some() || self.edit.issue_form.is_some() {
+            self.edit.task_form = None;
+            self.edit.issue_form = None;
+            self.edit.clear_message();
+        } else if matches!(self.screen, Screen::Detail { .. }) {
+            self.screen = Screen::Overview;
+            self.edit.clear_all();
+        }
+    }
+
+    fn draw_top_bar(&mut self, ui: &mut Ui) {
         Panel::top("craftward_top")
             .frame(
                 Frame::NONE
@@ -114,22 +298,15 @@ impl eframe::App for CraftwardApp {
                                 .clicked()
                         {
                             self.screen = Screen::Overview;
+                            self.edit.clear_all();
                         }
                     });
                 });
             });
+    }
 
-        Panel::bottom("craftward_footer")
-            .frame(
-                Frame::NONE
-                    .fill(BACKGROUND)
-                    .inner_margin(Margin::symmetric(PAGE_MARGIN, 8))
-                    .stroke(Stroke::new(1.0, LINE)),
-            )
-            .show(ui, |ui| {
-                draw_footer(ui, &self.portfolio);
-            });
-
+    fn draw_central(&mut self, ui: &mut Ui) -> Option<DetailAction> {
+        let mut action = None;
         CentralPanel::default()
             .frame(
                 Frame::NONE
@@ -139,13 +316,14 @@ impl eframe::App for CraftwardApp {
             .show(ui, |ui| match self.screen {
                 Screen::Overview => {
                     if let Some(index) = draw_overview(ui, &self.portfolio) {
+                        self.edit.clear_all();
                         self.screen = Screen::Detail { index };
                     }
                 }
                 Screen::Detail { index } => {
                     if let Some(project) = self.loaded.projects.get(index) {
                         let detail = build_detail(index, project);
-                        draw_detail(ui, &detail);
+                        action = draw_detail(ui, &detail, project, &mut self.edit);
                     } else {
                         ui.label(
                             RichText::new("That project is no longer listed.")
@@ -159,10 +337,12 @@ impl eframe::App for CraftwardApp {
                             .clicked()
                         {
                             self.screen = Screen::Overview;
+                            self.edit.clear_all();
                         }
                     }
                 }
             });
+        action
     }
 }
 
@@ -226,14 +406,14 @@ fn draw_overview(ui: &mut Ui, portfolio: &PortfolioView) -> Option<usize> {
         for card in &portfolio.cards {
             row.push(card);
             if row.len() == columns {
-                if let Some(index) = draw_card_row(ui, &row) {
+                if let Some(index) = draw_card_row(ui, &row, columns) {
                     open = Some(index);
                 }
                 row.clear();
             }
         }
         if !row.is_empty()
-            && let Some(index) = draw_card_row(ui, &row)
+            && let Some(index) = draw_card_row(ui, &row, columns)
         {
             open = Some(index);
         }
@@ -241,10 +421,10 @@ fn draw_overview(ui: &mut Ui, portfolio: &PortfolioView) -> Option<usize> {
     open
 }
 
-fn draw_card_row(ui: &mut Ui, cards: &[&ProjectCard]) -> Option<usize> {
+fn draw_card_row(ui: &mut Ui, cards: &[&ProjectCard], columns: usize) -> Option<usize> {
     let mut open = None;
-    let columns = cards.len().max(1);
-    ui.columns(columns, |cols| {
+    let slots = grid_row_column_slots(columns, cards.len());
+    ui.columns(slots, |cols| {
         for (column, card) in cols.iter_mut().zip(cards.iter()) {
             if draw_card(column, card) {
                 open = Some(card.index);
@@ -373,7 +553,13 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard) -> bool {
     response.clicked() || (response.has_focus() && ui.input(|input| input.key_pressed(Key::Enter)))
 }
 
-fn draw_detail(ui: &mut Ui, detail: &ProjectDetail) {
+fn draw_detail(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    loaded: &LoadedProject,
+    edit: &mut DetailEdit,
+) -> Option<DetailAction> {
+    let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
         ui.label(
             RichText::new(&detail.name)
@@ -394,19 +580,43 @@ fn draw_detail(ui: &mut Ui, detail: &ProjectDetail) {
             return;
         }
 
+        if edit.conflict {
+            ui.add_space(8.0);
+            ui.colored_label(
+                SEVERITY_CRITICAL,
+                edit.error
+                    .as_deref()
+                    .unwrap_or("project file changed on disk"),
+            );
+            if ui
+                .add(Button::new(
+                    RichText::new("Reload").font(TYPE.body_id()).color(ACCENT),
+                ))
+                .clicked()
+            {
+                action = Some(DetailAction::Reload);
+            }
+        }
+
         ui.add_space(8.0);
+        let editable = loaded.fingerprint.is_some() && detail.load_error.is_none();
         let wide = ui.available_width() >= DETAIL_TWO_COLUMNS_FROM;
         if wide {
             ui.columns(2, |cols| {
                 draw_detail_left(&mut cols[0], detail);
-                draw_detail_right(&mut cols[1], detail);
+                if let Some(next) = draw_detail_right(&mut cols[1], detail, edit, editable) {
+                    action = Some(next);
+                }
             });
         } else {
             draw_detail_left(ui, detail);
             ui.add_space(CARD_GAP);
-            draw_detail_right(ui, detail);
+            if let Some(next) = draw_detail_right(ui, detail, edit, editable) {
+                action = Some(next);
+            }
         }
     });
+    action
 }
 
 fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
@@ -478,8 +688,38 @@ fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
     });
 }
 
-fn draw_detail_right(ui: &mut Ui, detail: &ProjectDetail) {
-    section(ui, "Phases", detail.phases.is_empty(), |ui| {
+fn draw_detail_right(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = draw_phases_panel(ui, detail, edit, editable);
+    ui.add_space(CARD_GAP);
+    if let Some(next) = draw_issues_panel(ui, detail, edit, editable) {
+        action = Some(next);
+    }
+    action
+}
+
+fn draw_phases_panel(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = None;
+    card_frame().show(ui, |ui| {
+        ui.label(
+            RichText::new("Phases")
+                .font(TYPE.section_id())
+                .color(HEADING)
+                .strong(),
+        );
+        if detail.phases.is_empty() {
+            ui.label(RichText::new("None").font(TYPE.body_id()).color(MUTED));
+            return;
+        }
         for phase in &detail.phases {
             let header = format!("{}  {}", phase.status.display(), phase.title);
             CollapsingHeader::new(
@@ -502,40 +742,382 @@ fn draw_detail_right(ui: &mut Ui, detail: &ProjectDetail) {
                 }
                 draw_progress(ui, phase.progress);
                 for task in &phase.tasks {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(task.status.symbol)
-                                .font(TYPE.body_id())
-                                .color(status_colour(&task.status)),
-                        )
-                        .on_hover_text(task.status.label);
-                        ui.label(RichText::new(&task.title).font(TYPE.body_id()).color(TEXT))
-                            .on_hover_text(format!("{} ({})", task.status.label, task.id));
-                        if let Some(due) = &task.due {
-                            ui.label(
-                                RichText::new(format!("due {due}"))
-                                    .font(TYPE.secondary_id())
-                                    .color(MUTED),
-                            );
+                    if let Some(next) = draw_task_row(ui, &phase.id, task, edit, editable) {
+                        action = Some(next);
+                    }
+                }
+                if editable {
+                    let form_open = edit
+                        .task_form
+                        .as_ref()
+                        .is_some_and(|form| form.phase_id == phase.id);
+                    if form_open {
+                        if let Some(next) = draw_task_form(ui, edit) {
+                            action = Some(next);
                         }
-                    });
+                    } else if ui
+                        .add(Button::new(
+                            RichText::new("Add task")
+                                .font(TYPE.secondary_id())
+                                .color(ACCENT),
+                        ))
+                        .clicked()
+                    {
+                        edit.clear_message();
+                        edit.issue_form = None;
+                        edit.task_form = Some(TaskForm::new(phase.id.clone()));
+                    }
                 }
             });
             ui.add_space(4.0);
         }
     });
+    action
+}
 
-    ui.add_space(CARD_GAP);
-    section(ui, "Open issues", detail.issues.is_empty(), |ui| {
+fn draw_task_row(
+    ui: &mut Ui,
+    phase_id: &str,
+    task: &crate::view::TaskRow,
+    edit: &DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        if editable {
+            if let Some(status) = status_menu(
+                ui,
+                &format!("task-status-{phase_id}-{}", task.id),
+                task.status.symbol,
+                task.status.label,
+                status_colour(&task.status),
+                task_status_choices(),
+            ) {
+                action = Some(DetailAction::SetTaskStatus {
+                    phase_id: phase_id.to_owned(),
+                    task_id: task.id.clone(),
+                    status: status.to_owned(),
+                });
+            }
+        } else {
+            ui.label(
+                RichText::new(task.status.symbol)
+                    .font(TYPE.body_id())
+                    .color(status_colour(&task.status)),
+            )
+            .on_hover_text(task.status.label);
+        }
+        ui.label(RichText::new(&task.title).font(TYPE.body_id()).color(TEXT))
+            .on_hover_text(format!("{} ({})", task.status.label, task.id));
+        if let Some(due) = &task.due {
+            ui.label(
+                RichText::new(format!("due {due}"))
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+        }
+    });
+    if matches!(
+        &edit.error_site,
+        Some(ErrorSite::Task {
+            phase_id: err_phase,
+            task_id
+        }) if err_phase == phase_id && task_id == &task.id
+    ) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_issues_panel(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = None;
+    card_frame().show(ui, |ui| {
+        ui.label(
+            RichText::new("Open issues")
+                .font(TYPE.section_id())
+                .color(HEADING)
+                .strong(),
+        );
+        if detail.issues.is_empty() && edit.issue_form.is_none() {
+            ui.label(RichText::new("None").font(TYPE.body_id()).color(MUTED));
+        }
         for issue in &detail.issues {
             ui.horizontal(|ui| {
                 draw_badge(ui, &issue.severity, None);
-                draw_badge(ui, &issue.status, None);
+                if editable {
+                    if let Some(status) = status_menu(
+                        ui,
+                        &format!("issue-status-{}", issue.id),
+                        issue.status.symbol,
+                        issue.status.label,
+                        status_colour(&issue.status),
+                        issue_status_choices(),
+                    ) {
+                        action = Some(DetailAction::SetIssueStatus {
+                            issue_id: issue.id.clone(),
+                            status: status.to_owned(),
+                        });
+                    }
+                } else {
+                    draw_badge(ui, &issue.status, None);
+                }
                 ui.label(RichText::new(&issue.title).font(TYPE.body_id()).color(TEXT))
                     .on_hover_text(format!("Issue id: {}", issue.id));
             });
+            if matches!(
+                &edit.error_site,
+                Some(ErrorSite::Issue { issue_id }) if issue_id == &issue.id
+            ) {
+                draw_inline_error(ui, edit, &mut action);
+            }
+        }
+        if editable {
+            if edit.issue_form.is_some() {
+                if let Some(next) = draw_issue_form(ui, edit) {
+                    action = Some(next);
+                }
+            } else if ui
+                .add(Button::new(
+                    RichText::new("Add issue")
+                        .font(TYPE.secondary_id())
+                        .color(ACCENT),
+                ))
+                .clicked()
+            {
+                edit.clear_message();
+                edit.task_form = None;
+                edit.issue_form = Some(IssueForm::default());
+            }
         }
     });
+    action
+}
+
+fn draw_task_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    let validation;
+    {
+        let form = edit.task_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("New task")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Title")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            ui.add(
+                TextEdit::singleline(&mut form.title)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Due").font(TYPE.secondary_id()).color(MUTED));
+            ui.add(
+                TextEdit::singleline(&mut form.due)
+                    .font(TYPE.body_id())
+                    .hint_text("YYYY-MM-DD")
+                    .desired_width(120.0),
+            );
+        });
+        can_save = form.can_save();
+        validation = form.validation_message();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveTask);
+    }
+    if let Some(message) = validation {
+        ui.label(
+            RichText::new(message)
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        );
+    }
+    ui.horizontal(|ui| {
+        let save = ui.add_enabled(
+            can_save,
+            Button::new(RichText::new("Save").font(TYPE.body_id()).color(ACCENT)),
+        );
+        if save.clicked() {
+            action = Some(DetailAction::SaveTask);
+        }
+        if ui
+            .add(Button::new(
+                RichText::new("Cancel").font(TYPE.body_id()).color(MUTED),
+            ))
+            .clicked()
+        {
+            cancel = true;
+        }
+    });
+    if cancel {
+        edit.task_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::TaskForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_issue_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    let validation;
+    {
+        let form = edit.issue_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("New issue")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Title")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            ui.add(
+                TextEdit::singleline(&mut form.title)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Severity")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let selected = issue_severity_choices()
+                .iter()
+                .find(|(key, _)| *key == form.severity)
+                .map_or(form.severity.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("new-issue-severity")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in issue_severity_choices() {
+                        ui.selectable_value(&mut form.severity, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Note").font(TYPE.secondary_id()).color(MUTED));
+            ui.add(
+                TextEdit::singleline(&mut form.note)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        can_save = form.can_save();
+        validation = form.validation_message();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveIssue);
+    }
+    if let Some(message) = validation {
+        ui.label(
+            RichText::new(message)
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        );
+    }
+    ui.horizontal(|ui| {
+        let save = ui.add_enabled(
+            can_save,
+            Button::new(RichText::new("Save").font(TYPE.body_id()).color(ACCENT)),
+        );
+        if save.clicked() {
+            action = Some(DetailAction::SaveIssue);
+        }
+        if ui
+            .add(Button::new(
+                RichText::new("Cancel").font(TYPE.body_id()).color(MUTED),
+            ))
+            .clicked()
+        {
+            cancel = true;
+        }
+    });
+    if cancel {
+        edit.issue_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::IssueForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_inline_error(ui: &mut Ui, edit: &DetailEdit, action: &mut Option<DetailAction>) {
+    if let Some(message) = &edit.error {
+        ui.colored_label(SEVERITY_CRITICAL, message);
+    }
+    if edit.conflict
+        && ui
+            .add(Button::new(
+                RichText::new("Reload")
+                    .font(TYPE.secondary_id())
+                    .color(ACCENT),
+            ))
+            .clicked()
+    {
+        *action = Some(DetailAction::Reload);
+    }
+}
+
+fn status_menu<'a>(
+    ui: &mut Ui,
+    id_salt: &str,
+    symbol: &str,
+    label: &str,
+    colour: Color32,
+    choices: &'a [(&'static str, &'static str)],
+) -> Option<&'a str> {
+    let mut chosen = None;
+    ui.push_id(id_salt, |ui| {
+        ui.menu_button(
+            RichText::new(symbol).font(TYPE.body_id()).color(colour),
+            |ui| {
+                ui.label(RichText::new(label).font(TYPE.secondary_id()).color(MUTED));
+                for (key, choice_label) in choices {
+                    if ui
+                        .button(
+                            RichText::new(*choice_label)
+                                .font(TYPE.body_id())
+                                .color(TEXT),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some(*key);
+                        ui.close();
+                    }
+                }
+            },
+        )
+        .response
+        .on_hover_text(format!("{label} — change status"));
+    });
+    chosen
 }
 
 fn draw_finding(ui: &mut Ui, finding: &FindingRow) {
@@ -585,24 +1167,29 @@ fn draw_progress(ui: &mut Ui, progress: ProgressView) {
 }
 
 fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
+    debug_assert!(!badge_stretches_to_parent());
     let text = match count {
         Some(value) => format!("{} {} · {value}", badge.symbol, badge.label),
         None => badge.display(),
     };
     let colour = status_colour(badge);
-    Frame::NONE
-        .fill(CARD_INNER)
-        .stroke(Stroke::new(1.0, LINE))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(text)
-                    .font(TYPE.secondary_id())
-                    .color(colour)
-                    .strong(),
-            );
-        });
+    // Horizontal layout shrinks the frame to the label instead of the card width.
+    ui.horizontal(|ui| {
+        Frame::NONE
+            .fill(CARD_INNER)
+            .stroke(Stroke::new(1.0, LINE))
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(Margin::symmetric(8, 3))
+            .show(ui, |ui| {
+                ui.set_max_width(ui.spacing().interact_size.x.max(1.0) * 20.0);
+                ui.label(
+                    RichText::new(text)
+                        .font(TYPE.secondary_id())
+                        .color(colour)
+                        .strong(),
+                );
+            });
+    });
 }
 
 fn status_colour(badge: &StatusBadge) -> Color32 {

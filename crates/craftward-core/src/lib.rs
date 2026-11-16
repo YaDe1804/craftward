@@ -40,9 +40,10 @@ pub use deadlines::{
     load as load_deadlines, page_url, parse_document, render as render_deadlines, stale_warning,
 };
 pub use edit::{
-    AndroidChanges, ComponentChanges, EditError, EditOutcome, NewComponent, NewIssue, NewPhase,
-    NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_component, add_issue, add_lockfile,
-    add_phase, add_task, add_watch, edit_file, id_from_title, remove_component, remove_issue,
+    AndroidChanges, ComponentChanges, ContentFingerprint, EditError, EditOutcome, NewComponent,
+    NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_component, add_issue,
+    add_lockfile, add_phase, add_task, add_watch, content_fingerprint, edit_file,
+    edit_file_if_unchanged, fingerprint_file, id_from_title, remove_component, remove_issue,
     remove_lockfile, remove_phase, remove_task, remove_watch, render_project, set_android,
     set_component, set_issue_status, set_project, set_task_status,
 };

@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Desktop editing for task status, issue status, adding a task to a phase,
+  and adding an issue. Writes go through the same `craftward-core` path as
+  the CLI, with a content fingerprint so an external file change is not
+  overwritten. See [ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md)
+  and [docs/desktop.md](docs/desktop.md).
+
 ### Fixed
 
+- Desktop status and stack symbols use only glyphs present in egui's
+  bundled fonts; a unit test fails if a new symbol lacks a glyph.
+- Portfolio status badges shrink to their text width instead of stretching
+  across the card.
+- A single card in the last portfolio grid row keeps the normal column
+  width instead of spanning the full row.
 - SeQu check F1 (SQ-01, SQ-02, SQ-03): file replacement now creates the
   temporary file exclusively, syncs it before publishing, and syncs the
   parent directory on Unix. A migration backup uses SQLite's online backup
@@ -48,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop app foundation in `craftward-app` (eframe 0.37.0, glow renderer,
   accesskit, Wayland and X11): dark theme aligned with the HTML roadmaps,
   portfolio overview sorted by urgency, and a per-project detail view.
-  Read-only; same workspace and `craftward.db` paths as the CLI. See
+  Same workspace and `craftward.db` paths as the CLI. See
   [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md) and
   [docs/desktop.md](docs/desktop.md).
 - Repository skeleton with a Cargo workspace, command-line and desktop
