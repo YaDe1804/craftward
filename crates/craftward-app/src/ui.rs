@@ -2,8 +2,8 @@
 
 use eframe::egui::{
     self, Align, Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Context, CornerRadius,
-    Frame, Key, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke, TextEdit,
-    Theme, ThemePreference, Ui, Vec2,
+    Frame, Key, Label, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke,
+    TextEdit, Theme, ThemePreference, Ui, Vec2,
 };
 
 use crate::actions::{
@@ -19,7 +19,7 @@ use crate::view::{
     FindingRow, IssueForm, PortfolioView, ProgressView, ProjectCard, ProjectDetail, StatusBadge,
     TaskForm, badge_stretches_to_parent, build_detail, build_portfolio, finding_count_badges,
     grid_columns, grid_row_column_slots, issue_severity_choices, issue_status_choices,
-    open_findings_label, task_status_choices,
+    longest_status_choice_label, open_findings_label, task_status_choices, task_title_is_muted,
 };
 
 /// Which screen is visible.
@@ -602,6 +602,7 @@ fn draw_detail(
         let editable = loaded.fingerprint.is_some() && detail.load_error.is_none();
         let wide = ui.available_width() >= DETAIL_TWO_COLUMNS_FROM;
         if wide {
+            // Each column Ui is top_down_justified at full half-width (see egui::Ui::columns).
             ui.columns(2, |cols| {
                 draw_detail_left(&mut cols[0], detail);
                 if let Some(next) = draw_detail_right(&mut cols[1], detail, edit, editable) {
@@ -622,7 +623,10 @@ fn draw_detail(
 fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
     section(ui, "Overview", false, |ui| {
         if let Some(status) = &detail.status {
-            draw_badge(ui, status, None);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Status:").font(TYPE.body_id()).color(MUTED));
+                draw_badge(ui, status, None);
+            });
         }
         for field in &detail.overview_fields {
             if field.label == "Status" {
@@ -634,15 +638,25 @@ fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
                         .font(TYPE.body_id())
                         .color(MUTED),
                 );
-                let value = ui.label(RichText::new(&field.value).font(TYPE.body_id()).color(TEXT));
+                let value = ui.add(
+                    Label::new(RichText::new(&field.value).font(TYPE.body_id()).color(TEXT)).wrap(),
+                );
                 if field.label == "Id" {
                     value.on_hover_text("Useful for CLI commands");
                 }
             });
         }
         if let Some(description) = &detail.description {
-            ui.add_space(4.0);
-            ui.label(RichText::new(description).font(TYPE.body_id()).color(MUTED));
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Description:")
+                        .font(TYPE.body_id())
+                        .color(MUTED),
+                );
+                ui.add(
+                    Label::new(RichText::new(description).font(TYPE.body_id()).color(MUTED)).wrap(),
+                );
+            });
         }
         ui.add_space(6.0);
         draw_progress(ui, detail.progress);
@@ -657,10 +671,13 @@ fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
                     .version
                     .as_ref()
                     .map_or(String::new(), |value| format!(" {value}"));
-                ui.label(
-                    RichText::new(format!("{}{version}", component.name))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
+                ui.add(
+                    Label::new(
+                        RichText::new(format!("{}{version}", component.name))
+                            .font(TYPE.body_id())
+                            .color(TEXT),
+                    )
+                    .wrap(),
                 );
             });
         }
@@ -671,10 +688,13 @@ fn draw_detail_left(ui: &mut Ui, detail: &ProjectDetail) {
         for row in &detail.deadlines {
             ui.horizontal(|ui| {
                 draw_badge(ui, &row.kind, None);
-                ui.label(
-                    RichText::new(format!("{} — {} ({})", row.title, row.due, row.remaining))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
+                ui.add(
+                    Label::new(
+                        RichText::new(format!("{} — {} ({})", row.title, row.due, row.remaining))
+                            .font(TYPE.body_id())
+                            .color(TEXT),
+                    )
+                    .wrap(),
                 );
             });
         }
@@ -720,6 +740,7 @@ fn draw_phases_panel(
             ui.label(RichText::new("None").font(TYPE.body_id()).color(MUTED));
             return;
         }
+        let status_width = status_chip_column_width(ui, task_status_choices());
         for phase in &detail.phases {
             let header = format!("{}  {}", phase.status.display(), phase.title);
             CollapsingHeader::new(
@@ -731,18 +752,25 @@ fn draw_phases_panel(
             .default_open(phase.initially_expanded)
             .id_salt(&phase.id)
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new(&phase.id)
-                        .font(TYPE.secondary_id())
-                        .color(MUTED),
+                ui.add(
+                    Label::new(
+                        RichText::new(&phase.id)
+                            .font(TYPE.secondary_id())
+                            .color(MUTED),
+                    )
+                    .wrap(),
                 )
                 .on_hover_text(format!("Phase id: {}", phase.id));
                 if let Some(goal) = &phase.goal {
-                    ui.label(RichText::new(goal).font(TYPE.body_id()).color(MUTED));
+                    ui.add(
+                        Label::new(RichText::new(goal).font(TYPE.body_id()).color(MUTED)).wrap(),
+                    );
                 }
                 draw_progress(ui, phase.progress);
                 for task in &phase.tasks {
-                    if let Some(next) = draw_task_row(ui, &phase.id, task, edit, editable) {
+                    if let Some(next) =
+                        draw_task_row(ui, &phase.id, task, edit, editable, status_width)
+                    {
                         action = Some(next);
                     }
                 }
@@ -781,17 +809,23 @@ fn draw_task_row(
     task: &crate::view::TaskRow,
     edit: &DetailEdit,
     editable: bool,
+    status_width: f32,
 ) -> Option<DetailAction> {
     let mut action = None;
+    let title_colour = if task_title_is_muted(task.status.key) {
+        MUTED
+    } else {
+        TEXT
+    };
     ui.horizontal(|ui| {
         if editable {
             if let Some(status) = status_menu(
                 ui,
                 &format!("task-status-{phase_id}-{}", task.id),
-                task.status.symbol,
                 task.status.label,
                 status_colour(&task.status),
                 task_status_choices(),
+                status_width,
             ) {
                 action = Some(DetailAction::SetTaskStatus {
                     phase_id: phase_id.to_owned(),
@@ -800,15 +834,22 @@ fn draw_task_row(
                 });
             }
         } else {
-            ui.label(
-                RichText::new(task.status.symbol)
-                    .font(TYPE.body_id())
-                    .color(status_colour(&task.status)),
-            )
-            .on_hover_text(task.status.label);
+            draw_status_chip(
+                ui,
+                task.status.label,
+                status_colour(&task.status),
+                status_width,
+            );
         }
-        ui.label(RichText::new(&task.title).font(TYPE.body_id()).color(TEXT))
-            .on_hover_text(format!("{} ({})", task.status.label, task.id));
+        ui.add(
+            Label::new(
+                RichText::new(&task.title)
+                    .font(TYPE.body_id())
+                    .color(title_colour),
+            )
+            .wrap(),
+        )
+        .on_hover_text(format!("{} ({})", task.status.label, task.id));
         if let Some(due) = &task.due {
             ui.label(
                 RichText::new(format!("due {due}"))
@@ -846,6 +887,7 @@ fn draw_issues_panel(
         if detail.issues.is_empty() && edit.issue_form.is_none() {
             ui.label(RichText::new("None").font(TYPE.body_id()).color(MUTED));
         }
+        let status_width = status_chip_column_width(ui, issue_status_choices());
         for issue in &detail.issues {
             ui.horizontal(|ui| {
                 draw_badge(ui, &issue.severity, None);
@@ -853,10 +895,10 @@ fn draw_issues_panel(
                     if let Some(status) = status_menu(
                         ui,
                         &format!("issue-status-{}", issue.id),
-                        issue.status.symbol,
                         issue.status.label,
                         status_colour(&issue.status),
                         issue_status_choices(),
+                        status_width,
                     ) {
                         action = Some(DetailAction::SetIssueStatus {
                             issue_id: issue.id.clone(),
@@ -864,10 +906,17 @@ fn draw_issues_panel(
                         });
                     }
                 } else {
-                    draw_badge(ui, &issue.status, None);
+                    draw_status_chip(
+                        ui,
+                        issue.status.label,
+                        status_colour(&issue.status),
+                        status_width,
+                    );
                 }
-                ui.label(RichText::new(&issue.title).font(TYPE.body_id()).color(TEXT))
-                    .on_hover_text(format!("Issue id: {}", issue.id));
+                ui.add(
+                    Label::new(RichText::new(&issue.title).font(TYPE.body_id()).color(TEXT)).wrap(),
+                )
+                .on_hover_text(format!("Issue id: {}", issue.id));
             });
             if matches!(
                 &edit.error_site,
@@ -1085,37 +1134,95 @@ fn draw_inline_error(ui: &mut Ui, edit: &DetailEdit, action: &mut Option<DetailA
     }
 }
 
+/// Horizontal chip padding (frame margins) plus room for the menu caret.
+const STATUS_CHIP_PAD: f32 = 28.0;
+
+fn status_chip_column_width(ui: &Ui, choices: &[(&'static str, &'static str)]) -> f32 {
+    let label = longest_status_choice_label(choices);
+    let font = TYPE.secondary_id();
+    let text_w = ui.ctx().fonts_mut(|fonts| {
+        fonts
+            .layout_no_wrap(label.to_owned(), font, Color32::WHITE)
+            .size()
+            .x
+    });
+    text_w + STATUS_CHIP_PAD
+}
+
+fn draw_status_chip(ui: &mut Ui, label: &str, colour: Color32, fixed_width: f32) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(fixed_width, 0.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.set_min_width(fixed_width);
+            ui.set_max_width(fixed_width);
+            Frame::NONE
+                .fill(CARD_INNER)
+                .stroke(Stroke::new(1.0, LINE))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(Margin::symmetric(8, 3))
+                .show(ui, |ui| {
+                    ui.set_min_width((fixed_width - 16.0).max(1.0));
+                    ui.label(
+                        RichText::new(label)
+                            .font(TYPE.secondary_id())
+                            .color(colour)
+                            .strong(),
+                    );
+                });
+        },
+    );
+}
+
 fn status_menu<'a>(
     ui: &mut Ui,
     id_salt: &str,
-    symbol: &str,
     label: &str,
     colour: Color32,
     choices: &'a [(&'static str, &'static str)],
+    fixed_width: f32,
 ) -> Option<&'a str> {
     let mut chosen = None;
     ui.push_id(id_salt, |ui| {
-        ui.menu_button(
-            RichText::new(symbol).font(TYPE.body_id()).color(colour),
+        ui.allocate_ui_with_layout(
+            Vec2::new(fixed_width, 0.0),
+            Layout::left_to_right(Align::Center),
             |ui| {
-                ui.label(RichText::new(label).font(TYPE.secondary_id()).color(MUTED));
-                for (key, choice_label) in choices {
-                    if ui
-                        .button(
-                            RichText::new(*choice_label)
-                                .font(TYPE.body_id())
-                                .color(TEXT),
+                ui.set_min_width(fixed_width);
+                ui.set_max_width(fixed_width);
+                Frame::NONE
+                    .fill(CARD_INNER)
+                    .stroke(Stroke::new(1.0, LINE))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::symmetric(8, 3))
+                    .show(ui, |ui| {
+                        ui.set_min_width((fixed_width - 16.0).max(1.0));
+                        ui.menu_button(
+                            RichText::new(label)
+                                .font(TYPE.secondary_id())
+                                .color(colour)
+                                .strong(),
+                            |ui| {
+                                for (key, choice_label) in choices {
+                                    if ui
+                                        .button(
+                                            RichText::new(*choice_label)
+                                                .font(TYPE.body_id())
+                                                .color(TEXT),
+                                        )
+                                        .clicked()
+                                    {
+                                        chosen = Some(*key);
+                                        ui.close();
+                                    }
+                                }
+                            },
                         )
-                        .clicked()
-                    {
-                        chosen = Some(*key);
-                        ui.close();
-                    }
-                }
+                        .response
+                        .on_hover_text(format!("{label} — change status"));
+                    });
             },
-        )
-        .response
-        .on_hover_text(format!("{label} — change status"));
+        );
     });
     chosen
 }
@@ -1125,16 +1232,22 @@ fn draw_finding(ui: &mut Ui, finding: &FindingRow) {
         draw_badge(ui, &finding.severity, None);
         draw_badge(ui, &finding.kind, None);
     });
-    ui.label(
-        RichText::new(&finding.source)
-            .font(TYPE.body_id())
-            .color(TEXT),
+    ui.add(
+        Label::new(
+            RichText::new(&finding.source)
+                .font(TYPE.body_id())
+                .color(TEXT),
+        )
+        .wrap(),
     );
     if !finding.summary.is_empty() {
-        ui.label(
-            RichText::new(&finding.summary)
-                .font(TYPE.secondary_id())
-                .color(MUTED),
+        ui.add(
+            Label::new(
+                RichText::new(&finding.summary)
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            )
+            .wrap(),
         );
     }
     ui.add_space(6.0);
@@ -1169,6 +1282,7 @@ fn draw_progress(ui: &mut Ui, progress: ProgressView) {
 fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
     debug_assert!(!badge_stretches_to_parent());
     let text = match count {
+        Some(value) if badge.symbol.is_empty() => format!("{} · {value}", badge.label),
         Some(value) => format!("{} {} · {value}", badge.symbol, badge.label),
         None => badge.display(),
     };

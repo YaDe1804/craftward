@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use craftward_core::{FindingKind, Language, ProjectStatus, StateFilter};
+use craftward_core::{Language, ProjectStatus, StateFilter};
 
 /// Track project files and print a summary of the workspace.
 #[derive(Debug, Parser)]
@@ -17,16 +17,31 @@ use craftward_core::{FindingKind, Language, ProjectStatus, StateFilter};
     infer_subcommands = false
 )]
 pub(crate) struct Cli {
-    /// Workspace file path.
-    #[arg(long, global = true, value_name = "FILE")]
+    /// Workspace file path (`CRAFTWARD_WORKSPACE` or the platform default when omitted).
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        help_heading = "Global options"
+    )]
     pub workspace: Option<PathBuf>,
 
-    /// Directory for craftward.db and related data.
-    #[arg(long, global = true, value_name = "DIR")]
+    /// Directory for craftward.db and related data (`CRAFTWARD_DATA_DIR` or the platform default).
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIR",
+        help_heading = "Global options"
+    )]
     pub data_dir: Option<PathBuf>,
 
-    /// Directory for cached OSV and endoflife.date responses.
-    #[arg(long, global = true, value_name = "DIR")]
+    /// Directory for cached OSV and endoflife.date responses (`CRAFTWARD_CACHE_DIR` or the platform default).
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIR",
+        help_heading = "Global options"
+    )]
     pub cache_dir: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -38,30 +53,30 @@ pub(crate) enum Command {
     /// Create DIR/craftward.json with the required fields.
     #[command(long_about = INIT_ABOUT)]
     Init {
-        /// Directory for the new project file. Defaults to the current directory.
+        /// Directory for the new project file; defaults to the current directory.
         #[arg(value_name = "DIR")]
         directory: Option<PathBuf>,
-        /// Project id.
+        /// Project id (short name stored in craftward.json).
         #[arg(long)]
         id: String,
         /// Project display name.
         #[arg(long)]
         name: String,
-        /// Project status. Defaults to idea.
-        #[arg(long, value_parser = parse_status, default_value = "idea")]
-        status: ProjectStatus,
+        /// Project lifecycle status; defaults to idea.
+        #[arg(long, value_enum, default_value_t = CliProjectStatus::Idea)]
+        status: CliProjectStatus,
     },
     /// Add a craftward.json file, or a directory that contains one.
     #[command(long_about = ADD_ABOUT)]
     Add {
-        /// Project file or directory.
+        /// Project file or directory that contains craftward.json.
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
     /// Remove a project from the workspace.
     #[command(long_about = REMOVE_ABOUT)]
     Remove {
-        /// Project id.
+        /// Workspace project id to remove from the registry.
         #[arg(value_name = "ID")]
         id: String,
     },
@@ -71,7 +86,7 @@ pub(crate) enum Command {
     /// Check project files.
     #[command(long_about = VALIDATE_ABOUT)]
     Validate {
-        /// Project files to check. Empty means every workspace project.
+        /// Project files to check; empty means every workspace project.
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
     },
@@ -84,20 +99,20 @@ pub(crate) enum Command {
     /// Write a versioned HTML roadmap for one project.
     #[command(long_about = ROADMAP_ABOUT)]
     Roadmap {
-        /// Workspace id or project path.
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "ID|PATH")]
         target: String,
-        /// Output directory. Defaults to the current directory.
+        /// Output directory; defaults to the current directory.
         #[arg(long = "dir", value_name = "DIR")]
         directory: Option<PathBuf>,
-        /// Language for fixed labels.
+        /// Language for fixed labels (en or de).
         #[arg(long = "lang", value_parser = parse_language, default_value = "en")]
         language: Language,
     },
     /// Print one project, including the ids used by later commands.
     #[command(long_about = SHOW_ABOUT)]
     Show {
-        /// Workspace id or project path.
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
     },
@@ -134,13 +149,13 @@ pub(crate) enum Command {
     /// Look up known vulnerabilities, support ends, and Play deadlines.
     #[command(long_about = RADAR_ABOUT)]
     Radar {
-        /// Workspace ids or project paths. Empty means every workspace project.
+        /// Workspace ids or project paths; empty means every workspace project.
         #[arg(value_name = "PROJECT")]
         projects: Vec<String>,
-        /// Ignore fresh cache entries and ask again.
+        /// Ignore fresh cache entries and ask OSV / endoflife.date again.
         #[arg(long, conflicts_with = "offline")]
         refresh: bool,
-        /// Never contact OSV or endoflife.date.
+        /// Never contact OSV or endoflife.date; use cache only.
         #[arg(long, conflicts_with = "refresh")]
         offline: bool,
         /// Print JSON instead of the text report.
@@ -152,10 +167,10 @@ pub(crate) enum Command {
         /// Count notices and soon-findings toward exit status 3.
         #[arg(long)]
         strict: bool,
-        /// Days ahead that still count as `eol_soon`.
+        /// Days ahead that still count as `eol_soon` (default 90).
         #[arg(long, default_value_t = 90, value_name = "N")]
         eol_warning_days: u32,
-        /// Days ahead that still count as `platform_deadline_soon`.
+        /// Days ahead that still count as `platform_deadline_soon` (default 180).
         #[arg(long, default_value_t = 180, value_name = "N")]
         deadline_warning_days: u32,
     },
@@ -167,13 +182,13 @@ pub(crate) enum Command {
         /// Project ids or paths for the default list.
         #[arg(value_name = "PROJECT", global = false)]
         projects: Vec<String>,
-        /// Which states to print.
+        /// Which finding states to print.
         #[arg(long, value_enum, default_value_t = CliStateFilter::Open)]
         state: CliStateFilter,
-        /// Which kind to print.
-        #[arg(long, value_parser = parse_kind)]
-        kind: Option<String>,
-        /// Print JSON.
+        /// Restrict the list to one finding kind.
+        #[arg(long, value_enum)]
+        kind: Option<CliFindingKind>,
+        /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
     },
@@ -200,16 +215,22 @@ pub(crate) enum ProjectCommand {
     /// Change header fields.
     #[command(long_about = PROJECT_SET_ABOUT)]
     Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// New display name.
         #[arg(long)]
         name: Option<String>,
-        #[arg(long, value_parser = parse_status_string)]
-        status: Option<String>,
+        /// New lifecycle status.
+        #[arg(long, value_enum)]
+        status: Option<CliProjectStatus>,
+        /// New version string; pass an empty value to clear.
         #[arg(long)]
         version: Option<String>,
+        /// New description; pass an empty value to clear.
         #[arg(long)]
         description: Option<String>,
+        /// New source directory path stored in the project file.
         #[arg(long = "source-dir")]
         source_dir: Option<String>,
     },
@@ -220,22 +241,29 @@ pub(crate) enum PhaseCommand {
     /// Append a phase.
     #[command(long_about = PHASE_ADD_ABOUT)]
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase title.
         #[arg(long)]
         title: String,
+        /// Explicit phase id; formed from the title when omitted.
         #[arg(long)]
         id: Option<String>,
+        /// Optional phase goal.
         #[arg(long)]
         goal: Option<String>,
     },
     /// Remove a phase.
     #[command(long_about = PHASE_REMOVE_ABOUT)]
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase id to remove.
         #[arg(value_name = "PHASE")]
         phase: String,
+        /// Remove the phase even when it still has tasks.
         #[arg(long)]
         force: bool,
     },
@@ -246,50 +274,67 @@ pub(crate) enum TaskCommand {
     /// Append a task to a phase.
     #[command(long_about = TASK_ADD_ABOUT)]
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase id that receives the task.
         #[arg(value_name = "PHASE")]
         phase: String,
+        /// Task title.
         #[arg(long)]
         title: String,
+        /// Explicit task id; formed from the title when omitted.
         #[arg(long)]
         id: Option<String>,
-        #[arg(long)]
-        status: Option<String>,
-        #[arg(long)]
+        /// Task status; defaults to open.
+        #[arg(long, value_enum)]
+        status: Option<CliTaskStatus>,
+        /// Due day as YYYY-MM-DD.
+        #[arg(long, value_name = "YYYY-MM-DD")]
         due: Option<String>,
+        /// Optional free-form note.
         #[arg(long)]
         note: Option<String>,
     },
     /// Set a task's status.
     #[command(long_about = TASK_STATUS_ABOUT)]
     Status {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase id that owns the task.
         #[arg(value_name = "PHASE")]
         phase: String,
+        /// Task id to update.
         #[arg(value_name = "TASK")]
         task: String,
-        #[arg(value_name = "STATUS")]
-        status: String,
+        /// New task status.
+        #[arg(value_name = "STATUS", value_enum)]
+        status: CliTaskStatus,
     },
     /// Mark a task done.
     #[command(long_about = TASK_DONE_ABOUT)]
     Done {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase id that owns the task.
         #[arg(value_name = "PHASE")]
         phase: String,
+        /// Task id to mark done.
         #[arg(value_name = "TASK")]
         task: String,
     },
     /// Remove a task from a phase.
     #[command(long_about = TASK_REMOVE_ABOUT)]
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Phase id that owns the task.
         #[arg(value_name = "PHASE")]
         phase: String,
+        /// Task id to remove.
         #[arg(value_name = "TASK")]
         task: String,
     },
@@ -300,34 +345,45 @@ pub(crate) enum IssueCommand {
     /// Append an issue.
     #[command(long_about = ISSUE_ADD_ABOUT)]
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Issue title.
         #[arg(long)]
         title: String,
-        #[arg(long)]
-        severity: String,
+        /// Issue severity.
+        #[arg(long, value_enum)]
+        severity: CliIssueSeverity,
+        /// Explicit issue id; formed from the title when omitted.
         #[arg(long)]
         id: Option<String>,
+        /// Tracker URL starting with http:// or https://.
         #[arg(long)]
         url: Option<String>,
+        /// Optional free-form note.
         #[arg(long)]
         note: Option<String>,
     },
     /// Set an issue's status.
     #[command(long_about = ISSUE_STATUS_ABOUT)]
     Status {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Issue id to update.
         #[arg(value_name = "ISSUE")]
         issue: String,
-        #[arg(value_name = "STATUS")]
-        status: String,
+        /// New issue status.
+        #[arg(value_name = "STATUS", value_enum)]
+        status: CliIssueStatus,
     },
     /// Remove an issue.
     #[command(long_about = ISSUE_REMOVE_ABOUT)]
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Issue id to remove.
         #[arg(value_name = "ISSUE")]
         issue: String,
     },
@@ -338,24 +394,32 @@ pub(crate) enum WatchCommand {
     /// Append a watch item.
     #[command(long_about = WATCH_ADD_ABOUT)]
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
-        #[arg(long)]
-        kind: String,
+        /// Kind of dated reminder.
+        #[arg(long, value_enum)]
+        kind: CliWatchKind,
+        /// Reminder title.
         #[arg(long)]
         title: String,
-        #[arg(long)]
+        /// Due day as YYYY-MM-DD.
+        #[arg(long, value_name = "YYYY-MM-DD")]
         due: String,
+        /// Explicit watch id; formed from the title when omitted.
         #[arg(long)]
         id: Option<String>,
+        /// Optional free-form note.
         #[arg(long)]
         note: Option<String>,
     },
     /// Remove a watch item.
     #[command(long_about = WATCH_REMOVE_ABOUT)]
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Watch item id to remove.
         #[arg(value_name = "WATCH")]
         watch: String,
     },
@@ -366,24 +430,30 @@ pub(crate) enum FindingsCommand {
     /// Print one finding and its history.
     #[command(long_about = FINDINGS_SHOW_ABOUT)]
     Show {
+        /// Stored finding id (positive integer).
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
         id: i64,
+        /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
     },
     /// Ignore a finding.
     #[command(long_about = FINDINGS_IGNORE_ABOUT)]
     Ignore {
+        /// Stored finding id (positive integer).
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
         id: i64,
+        /// Why the finding is ignored.
         #[arg(long)]
         reason: String,
-        #[arg(long)]
+        /// Last UTC day the ignore stays in force (YYYY-MM-DD).
+        #[arg(long, value_name = "YYYY-MM-DD")]
         until: Option<String>,
     },
     /// Mark a finding open again.
     #[command(long_about = FINDINGS_REOPEN_ABOUT)]
     Reopen {
+        /// Stored finding id (positive integer).
         #[arg(value_name = "ID", value_parser = parse_finding_id)]
         id: i64,
     },
@@ -394,38 +464,51 @@ pub(crate) enum StackCommand {
     /// Append a stack component.
     #[command(long_about = STACK_ADD_ABOUT)]
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
-        #[arg(long)]
-        kind: String,
+        /// Component role in the stack.
+        #[arg(long, value_enum)]
+        kind: CliComponentKind,
+        /// Component name (matched case-insensitively later).
         #[arg(long)]
         name: String,
+        /// Optional version string.
         #[arg(long)]
         version: Option<String>,
+        /// Optional free-form note.
         #[arg(long)]
         note: Option<String>,
+        /// endoflife.date product id for support checks.
         #[arg(long = "eol-product")]
         eol_product: Option<String>,
     },
     /// Change one stack component.
     #[command(long_about = STACK_SET_ABOUT)]
     Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Component name to change.
         #[arg(value_name = "NAME")]
         name: String,
+        /// New version; pass an empty value to clear.
         #[arg(long)]
         version: Option<String>,
+        /// New note; pass an empty value to clear.
         #[arg(long)]
         note: Option<String>,
+        /// New endoflife.date product id; pass an empty value to clear.
         #[arg(long = "eol-product")]
         eol_product: Option<String>,
     },
     /// Remove one stack component.
     #[command(long_about = STACK_REMOVE_ABOUT)]
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Component name to remove.
         #[arg(value_name = "NAME")]
         name: String,
     },
@@ -438,18 +521,25 @@ pub(crate) enum StackCommand {
     /// Create or change stack.android.
     #[command(long_about = STACK_ANDROID_ABOUT)]
     Android {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Android targetSdk; pass an empty value to clear.
         #[arg(long = "target-sdk")]
         target_sdk: Option<String>,
+        /// Android minSdk; pass an empty value to clear.
         #[arg(long = "min-sdk")]
         min_sdk: Option<String>,
-        #[arg(long = "form-factor")]
-        form_factor: Option<String>,
-        #[arg(long)]
-        store: Option<String>,
+        /// Device form factor (phone, automotive, wear, tv, or xr).
+        #[arg(long = "form-factor", value_enum)]
+        form_factor: Option<CliFormFactor>,
+        /// Distribution store (`google_play` or `none`).
+        #[arg(long, value_enum)]
+        store: Option<CliAndroidStore>,
+        /// Relative path used to detect targetSdk; may be repeated.
         #[arg(long = "detect-from", action = clap::ArgAction::Append)]
         detect_from: Vec<String>,
+        /// Drop the current detect-from list before appending new paths.
         #[arg(long = "clear-detect-from")]
         clear_detect_from: bool,
     },
@@ -459,26 +549,135 @@ pub(crate) enum StackCommand {
 pub(crate) enum StackLockfileCommand {
     /// Append a lockfile path.
     Add {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Relative lockfile path inside the project.
         #[arg(value_name = "PATH")]
         path: String,
     },
     /// Remove a lockfile path.
     Remove {
+        /// Workspace id, craftward.json path, or directory that contains one.
         #[arg(value_name = "PROJECT")]
         project: String,
+        /// Relative lockfile path to remove.
         #[arg(value_name = "PATH")]
         path: String,
     },
 }
 
+/// Finding state filter for `findings`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum CliStateFilter {
+    /// Open findings.
     Open,
+    /// Ignored findings.
     Ignored,
+    /// Resolved findings.
     Resolved,
+    /// Every stored state.
     All,
+}
+
+/// Project lifecycle status.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliProjectStatus {
+    Idea,
+    InDevelopment,
+    Released,
+    Maintenance,
+    Paused,
+    Discontinued,
+}
+
+/// Task status word.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliTaskStatus {
+    Open,
+    InProgress,
+    Done,
+    Dropped,
+}
+
+/// Issue status word.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliIssueStatus {
+    Open,
+    InProgress,
+    Resolved,
+    WontFix,
+}
+
+/// Issue severity word.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliIssueSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// Watch item kind.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliWatchKind {
+    Deadline,
+    Expiry,
+    Review,
+    Other,
+}
+
+/// Stack component kind.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliComponentKind {
+    Platform,
+    Language,
+    Framework,
+    Runtime,
+    Sdk,
+    Service,
+    Tool,
+    Other,
+}
+
+/// Android form factor.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliFormFactor {
+    Phone,
+    Automotive,
+    Wear,
+    Tv,
+    Xr,
+}
+
+/// Android store.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliAndroidStore {
+    GooglePlay,
+    None,
+}
+
+/// Finding kind filter.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CliFindingKind {
+    Vulnerability,
+    Malicious,
+    Unmaintained,
+    Unsound,
+    Notice,
+    Eol,
+    EolSoon,
+    PlatformDeadline,
+    PlatformDeadlineSoon,
 }
 
 impl From<CliStateFilter> for StateFilter {
@@ -492,28 +691,148 @@ impl From<CliStateFilter> for StateFilter {
     }
 }
 
-fn parse_status(text: &str) -> Result<ProjectStatus, String> {
-    ProjectStatus::parse(text).ok_or_else(|| {
-        format!(
-            "unknown status: {text}; expected idea, in_development, released, maintenance, paused, or discontinued"
-        )
-    })
+impl CliProjectStatus {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idea => "idea",
+            Self::InDevelopment => "in_development",
+            Self::Released => "released",
+            Self::Maintenance => "maintenance",
+            Self::Paused => "paused",
+            Self::Discontinued => "discontinued",
+        }
+    }
 }
 
-fn parse_status_string(text: &str) -> Result<String, String> {
-    parse_status(text)?;
-    Ok(text.to_owned())
+impl From<CliProjectStatus> for ProjectStatus {
+    fn from(value: CliProjectStatus) -> Self {
+        match value {
+            CliProjectStatus::Idea => Self::Idea,
+            CliProjectStatus::InDevelopment => Self::InDevelopment,
+            CliProjectStatus::Released => Self::Released,
+            CliProjectStatus::Maintenance => Self::Maintenance,
+            CliProjectStatus::Paused => Self::Paused,
+            CliProjectStatus::Discontinued => Self::Discontinued,
+        }
+    }
+}
+
+impl CliTaskStatus {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Dropped => "dropped",
+        }
+    }
+}
+
+impl CliIssueStatus {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::InProgress => "in_progress",
+            Self::Resolved => "resolved",
+            Self::WontFix => "wont_fix",
+        }
+    }
+}
+
+impl CliIssueSeverity {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+impl CliWatchKind {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deadline => "deadline",
+            Self::Expiry => "expiry",
+            Self::Review => "review",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl CliComponentKind {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Platform => "platform",
+            Self::Language => "language",
+            Self::Framework => "framework",
+            Self::Runtime => "runtime",
+            Self::Sdk => "sdk",
+            Self::Service => "service",
+            Self::Tool => "tool",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl CliFormFactor {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Automotive => "automotive",
+            Self::Wear => "wear",
+            Self::Tv => "tv",
+            Self::Xr => "xr",
+        }
+    }
+}
+
+impl CliAndroidStore {
+    /// Schema word stored in craftward.json.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "google_play",
+            Self::None => "none",
+        }
+    }
+}
+
+impl CliFindingKind {
+    /// Schema word used by the findings filter.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vulnerability => "vulnerability",
+            Self::Malicious => "malicious",
+            Self::Unmaintained => "unmaintained",
+            Self::Unsound => "unsound",
+            Self::Notice => "notice",
+            Self::Eol => "eol",
+            Self::EolSoon => "eol_soon",
+            Self::PlatformDeadline => "platform_deadline",
+            Self::PlatformDeadlineSoon => "platform_deadline_soon",
+        }
+    }
 }
 
 fn parse_language(text: &str) -> Result<Language, String> {
-    Language::parse(text).ok_or_else(|| format!("unknown language: {text}"))
-}
-
-fn parse_kind(value: &str) -> Result<String, String> {
-    value.parse::<FindingKind>().map(|kind| kind.as_str().to_owned()).map_err(|_| {
-        "--kind must be vulnerability, malicious, unmaintained, unsound, notice, eol, eol_soon, platform_deadline, or platform_deadline_soon"
-            .to_owned()
-    })
+    Language::parse(text).ok_or_else(|| format!("unknown language: {text}; expected en or de"))
 }
 
 fn parse_finding_id(text: &str) -> Result<i64, String> {
@@ -693,6 +1012,11 @@ mod tests {
         assert_help_clean(Cli::command());
     }
 
+    #[test]
+    fn every_argument_and_option_has_a_non_empty_description() {
+        assert_args_documented(&Cli::command(), "craftward");
+    }
+
     fn assert_help_clean(mut command: Command) {
         for help in [command.render_help(), command.render_long_help()] {
             let text = help.to_string();
@@ -711,6 +1035,29 @@ mod tests {
         let children: Vec<Command> = command.get_subcommands().cloned().collect();
         for child in children {
             assert_help_clean(child);
+        }
+    }
+
+    fn assert_args_documented(command: &Command, path: &str) {
+        for arg in command.get_arguments() {
+            let id = arg.get_id().as_str();
+            if id == "version" || id == "help" {
+                continue;
+            }
+            let help = arg
+                .get_help()
+                .map_or_default(std::string::ToString::to_string);
+            let long = arg
+                .get_long_help()
+                .map_or_default(std::string::ToString::to_string);
+            assert!(
+                !help.trim().is_empty() || !long.trim().is_empty(),
+                "missing help text for argument `{id}` on `{path}`"
+            );
+        }
+        for child in command.get_subcommands() {
+            let child_path = format!("{path} {}", child.get_name());
+            assert_args_documented(child, &child_path);
         }
     }
 }
