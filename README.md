@@ -25,9 +25,10 @@ Pre-alpha, no usable release yet.
 
 - Portfolio overview and per-project detail over the same workspace file and
   `craftward.db` as the CLI
-- Create, add, and remove projects; edit header, phases, tasks, and issues
-  through the same writers as the CLI, with undo toasts and conflict banners
-- Native folder/file dialogs and OS clipboard (see
+- Create, add, and remove projects; edit header, phases, tasks, issues,
+  stack (components, lockfiles, Android), and watch items through the same
+  writers as the CLI, with undo toasts and conflict banners
+- Native folder/file/lockfile dialogs and OS clipboard (see
   [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md))
 
 Target platforms are Windows, Linux, and macOS. Accepted design decisions are

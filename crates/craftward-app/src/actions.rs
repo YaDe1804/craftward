@@ -4,16 +4,20 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    ContentFingerprint, EditError, EditOutcome, IssueChanges, LinkChange, LinkListUpdate, NewIssue,
-    NewPhase, NewTask, PhaseChanges, ProjectChanges, ProjectStatus, StringListUpdate, TaskChanges,
-    UndoOffer, UndoSnapshot, add_issue, add_phase, add_project_if_unchanged, add_task,
-    content_fingerprint, edit_file_if_unchanged, init_project, remove_issue, remove_phase,
-    remove_project_if_unchanged, remove_task, set_issue, set_issue_status, set_phase, set_project,
-    set_task, set_task_status, utc_date, workspace_bytes_or_empty,
+    AndroidChanges, ComponentChanges, ContentFingerprint, EditError, EditOutcome, IssueChanges,
+    LinkChange, LinkListUpdate, NewComponent, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
+    ProjectChanges, ProjectStatus, StringListUpdate, TaskChanges, UndoOffer, UndoSnapshot,
+    WatchChanges, add_component, add_issue, add_lockfile, add_phase, add_project_if_unchanged,
+    add_task, add_watch, content_fingerprint, edit_file_if_unchanged, init_project, load_from_path,
+    remove_component, remove_issue, remove_lockfile, remove_phase, remove_project_if_unchanged,
+    remove_task, remove_watch, set_android, set_component, set_issue, set_issue_status, set_phase,
+    set_project, set_task, set_task_status, set_watch, utc_date, workspace_bytes_or_empty,
 };
 
 use crate::view::{
-    HeaderForm, IssueEditForm, IssueForm, NewProjectForm, PhaseForm, TaskEditForm, TaskForm,
+    AndroidForm, ComponentEditForm, ComponentForm, HeaderForm, IssueEditForm, IssueForm,
+    LockfileForm, NewProjectForm, PhaseForm, TaskEditForm, TaskForm, WatchEditForm, WatchForm,
+    project_source_dir,
 };
 
 /// Result of a desktop save attempt.
@@ -373,6 +377,228 @@ pub fn save_remove_issue(
     )
 }
 
+/// Adds a stack component.
+#[must_use]
+pub fn save_new_component(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    form: &ComponentForm,
+) -> SaveResult {
+    if let Some(message) = form.validation_message() {
+        return failed(message);
+    }
+    let name = form.name_for_edit().to_owned();
+    apply(
+        path,
+        fingerprint,
+        format!("Added component {name}"),
+        |project, updated_on| {
+            add_component(
+                project,
+                NewComponent {
+                    kind: &form.kind,
+                    name: form.name_for_edit(),
+                    version: form.version_for_edit(),
+                    note: None,
+                    eol_product: form.eol_product_for_edit(),
+                },
+                updated_on,
+            )
+        },
+    )
+}
+
+/// Updates optional fields of a stack component.
+#[must_use]
+pub fn save_component_edit(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    name: &str,
+    form: &ComponentEditForm,
+) -> SaveResult {
+    apply(
+        path,
+        fingerprint,
+        format!("Updated component {name}"),
+        |project, updated_on| {
+            set_component(
+                project,
+                name,
+                ComponentChanges {
+                    version: form.version_update(),
+                    note: form.note_update(),
+                    eol_product: form.eol_product_update(),
+                },
+                updated_on,
+            )
+        },
+    )
+}
+
+/// Removes a stack component.
+#[must_use]
+pub fn save_remove_component(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    name: &str,
+) -> SaveResult {
+    apply(
+        path,
+        fingerprint,
+        format!("Removed component {name}"),
+        |project, updated_on| remove_component(project, name, updated_on),
+    )
+}
+
+/// Adds a lockfile path after validating it exists under `source_dir`.
+#[must_use]
+pub fn save_add_lockfile(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    form: &LockfileForm,
+) -> SaveResult {
+    let project = match load_from_path(path) {
+        Ok(project) => project,
+        Err(error) => return failed(error.to_string()),
+    };
+    let source_dir = project_source_dir(path, &project);
+    if let Some(message) = form.validation_message(&source_dir) {
+        return failed(message);
+    }
+    let lockfile = form.path_for_edit().to_owned();
+    apply(
+        path,
+        fingerprint,
+        format!("Added lockfile {lockfile}"),
+        |project, updated_on| add_lockfile(project, &lockfile, updated_on),
+    )
+}
+
+/// Removes a lockfile path.
+#[must_use]
+pub fn save_remove_lockfile(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    lockfile: &str,
+) -> SaveResult {
+    apply(
+        path,
+        fingerprint,
+        format!("Removed lockfile {lockfile}"),
+        |project, updated_on| remove_lockfile(project, lockfile, updated_on),
+    )
+}
+
+/// Creates or replaces `stack.android`.
+#[must_use]
+pub fn save_android(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    form: &AndroidForm,
+) -> SaveResult {
+    if let Some(message) = form.validation_message() {
+        return failed(message);
+    }
+    let detect_from = form.detect_from_paths();
+    apply(
+        path,
+        fingerprint,
+        "Updated Android settings".to_owned(),
+        |project, updated_on| {
+            set_android(
+                project,
+                AndroidChanges {
+                    target_sdk: form.target_sdk_update(),
+                    min_sdk: form.min_sdk_update(),
+                    form_factor: Some(form.form_factor.as_str()),
+                    store: Some(form.store.as_str()),
+                    detect_from: &detect_from,
+                    clear_detect_from: true,
+                },
+                updated_on,
+            )
+        },
+    )
+}
+
+/// Adds a watch item.
+#[must_use]
+pub fn save_new_watch(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    form: &WatchForm,
+) -> SaveResult {
+    if let Some(message) = form.validation_message() {
+        return failed(message);
+    }
+    let title = form.title_for_edit().to_owned();
+    apply(
+        path,
+        fingerprint,
+        format!("Added watch {title}"),
+        |project, updated_on| {
+            add_watch(
+                project,
+                NewWatch {
+                    kind: &form.kind,
+                    title: form.title_for_edit(),
+                    due: form.due_for_edit(),
+                    id: None,
+                    note: form.note_for_edit(),
+                },
+                updated_on,
+            )
+        },
+    )
+}
+
+/// Updates a watch item.
+#[must_use]
+pub fn save_watch_edit(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    watch_id: &str,
+    form: &WatchEditForm,
+) -> SaveResult {
+    if let Some(message) = form.validation_message() {
+        return failed(message);
+    }
+    apply(
+        path,
+        fingerprint,
+        format!("Updated watch {}", form.title_for_edit()),
+        |project, updated_on| {
+            set_watch(
+                project,
+                watch_id,
+                WatchChanges {
+                    title: Some(form.title_for_edit()),
+                    kind: Some(form.kind.as_str()),
+                    due: Some(form.due_for_edit()),
+                    note: form.note_update(),
+                },
+                updated_on,
+            )
+        },
+    )
+}
+
+/// Removes a watch item.
+#[must_use]
+pub fn save_remove_watch(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    watch_id: &str,
+    title: &str,
+) -> SaveResult {
+    apply(
+        path,
+        fingerprint,
+        format!("Removed watch {title}"),
+        |project, updated_on| remove_watch(project, watch_id, updated_on),
+    )
+}
+
 /// Creates a project file and adds it to the workspace.
 #[must_use]
 pub fn save_new_project(
@@ -586,17 +812,24 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use craftward_core::{
-        IssueChanges, LinkChange, LinkListUpdate, NewIssue, NewPhase, NewTask, PhaseChanges,
-        ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_issue, add_phase,
-        add_task, content_fingerprint, edit_file, fingerprint_file, remove_phase, set_issue,
-        set_phase, set_project, set_task, utc_date,
+        AndroidChanges, ComponentChanges, IssueChanges, LinkChange, LinkListUpdate, NewComponent,
+        NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges, ProjectChanges, ProjectUpdate,
+        StringListUpdate, TaskChanges, WatchChanges, add_component, add_issue, add_lockfile,
+        add_phase, add_task, add_watch, content_fingerprint, edit_file, fingerprint_file,
+        remove_component, remove_lockfile, remove_phase, remove_watch, set_android, set_component,
+        set_issue, set_phase, set_project, set_task, set_watch, utc_date,
     };
 
     use super::{
-        SaveResult, save_header, save_issue_edit, save_new_phase, save_phase_edit,
-        save_remove_phase, save_task_edit,
+        SaveResult, save_add_lockfile, save_android, save_component_edit, save_header,
+        save_issue_edit, save_new_component, save_new_phase, save_new_watch, save_phase_edit,
+        save_remove_component, save_remove_lockfile, save_remove_phase, save_remove_watch,
+        save_task_edit, save_watch_edit,
     };
-    use crate::view::{HeaderForm, IssueEditForm, PhaseForm, TaskEditForm};
+    use crate::view::{
+        AndroidForm, ComponentEditForm, ComponentForm, HeaderForm, IssueEditForm, LockfileForm,
+        PhaseForm, TaskEditForm, WatchEditForm, WatchForm,
+    };
 
     fn today() -> String {
         utc_date(SystemTime::now()).expect("clock")
@@ -892,6 +1125,211 @@ mod tests {
             }
         ));
         assert_eq!(fs::read(&path).unwrap(), before);
+        let bad_lock = LockfileForm {
+            path: "missing.lock".to_owned(),
+        };
+        assert!(matches!(
+            save_add_lockfile(&path, &fingerprint, &bad_lock),
+            SaveResult::Failed {
+                conflict: false,
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn save_stack_and_watch_match_cli_bytes() {
+        let root = scratch("stack-watch");
+        let path = minimal(&root);
+        fs::write(root.join("Cargo.lock"), "# cargo\n").unwrap();
+        let day = today();
+        let (app, cli) = twin_paths(&path);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let component = ComponentForm {
+            kind: "runtime".to_owned(),
+            name: "Node.js".to_owned(),
+            version: "22".to_owned(),
+            eol_product: "nodejs".to_owned(),
+        };
+        assert!(matches!(
+            save_new_component(&app, &fingerprint, &component),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            add_component(
+                project,
+                NewComponent {
+                    kind: "runtime",
+                    name: "Node.js",
+                    version: Some("22"),
+                    note: None,
+                    eol_product: Some("nodejs"),
+                },
+                updated,
+            )
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let edit = ComponentEditForm {
+            version: "22.1".to_owned(),
+            note: "LTS".to_owned(),
+            eol_product: String::new(),
+        };
+        assert!(matches!(
+            save_component_edit(&app, &fingerprint, "Node.js", &edit),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            set_component(
+                project,
+                "Node.js",
+                ComponentChanges {
+                    version: ProjectUpdate::Set("22.1"),
+                    note: ProjectUpdate::Set("LTS"),
+                    eol_product: ProjectUpdate::Clear,
+                },
+                updated,
+            )
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let lock = LockfileForm {
+            path: "Cargo.lock".to_owned(),
+        };
+        assert!(matches!(
+            save_add_lockfile(&app, &fingerprint, &lock),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            add_lockfile(project, "Cargo.lock", updated)
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let android = AndroidForm {
+            target_sdk: "35".to_owned(),
+            min_sdk: "24".to_owned(),
+            form_factor: "phone".to_owned(),
+            store: "google_play".to_owned(),
+            detect_from: "app/build.gradle.kts".to_owned(),
+        };
+        assert!(matches!(
+            save_android(&app, &fingerprint, &android),
+            SaveResult::Saved { .. }
+        ));
+        let detect = vec!["app/build.gradle.kts".to_owned()];
+        edit_file(&cli, &day, |project, updated| {
+            set_android(
+                project,
+                AndroidChanges {
+                    target_sdk: ProjectUpdate::Set("35"),
+                    min_sdk: ProjectUpdate::Set("24"),
+                    form_factor: Some("phone"),
+                    store: Some("google_play"),
+                    detect_from: &detect,
+                    clear_detect_from: true,
+                },
+                updated,
+            )
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let watch = WatchForm {
+            kind: "expiry".to_owned(),
+            title: "Renew domain".to_owned(),
+            due: "2027-06-30".to_owned(),
+            note: "Registrar".to_owned(),
+        };
+        assert!(matches!(
+            save_new_watch(&app, &fingerprint, &watch),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            add_watch(
+                project,
+                NewWatch {
+                    kind: "expiry",
+                    title: "Renew domain",
+                    due: "2027-06-30",
+                    id: None,
+                    note: Some("Registrar"),
+                },
+                updated,
+            )
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        let watch_edit = WatchEditForm {
+            kind: "deadline".to_owned(),
+            title: "Renew the domain".to_owned(),
+            due: "2027-07-01".to_owned(),
+            note: String::new(),
+        };
+        assert!(matches!(
+            save_watch_edit(&app, &fingerprint, "renew-domain", &watch_edit),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            set_watch(
+                project,
+                "renew-domain",
+                WatchChanges {
+                    title: Some("Renew the domain"),
+                    kind: Some("deadline"),
+                    due: Some("2027-07-01"),
+                    note: ProjectUpdate::Clear,
+                },
+                updated,
+            )
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        assert!(matches!(
+            save_remove_watch(&app, &fingerprint, "renew-domain", "Renew the domain"),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            remove_watch(project, "renew-domain", updated)
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        assert!(matches!(
+            save_remove_lockfile(&app, &fingerprint, "Cargo.lock"),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            remove_lockfile(project, "Cargo.lock", updated)
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
+
+        let fingerprint = fingerprint_file(&app).unwrap();
+        assert!(matches!(
+            save_remove_component(&app, &fingerprint, "Node.js"),
+            SaveResult::Saved { .. }
+        ));
+        edit_file(&cli, &day, |project, updated| {
+            remove_component(project, "Node.js", updated)
+        })
+        .unwrap();
+        assert_twins_equal(&app, &cli);
         let _ = fs::remove_dir_all(root);
     }
 }

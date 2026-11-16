@@ -43,13 +43,13 @@ pub use deadlines::{
 pub use edit::{
     AndroidChanges, ComponentChanges, ContentFingerprint, EditError, EditOutcome, IssueChanges,
     LinkChange, LinkListUpdate, NewComponent, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
-    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_component, add_issue,
-    add_lockfile, add_phase, add_task, add_watch, content_fingerprint, edit_file,
+    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, WatchChanges, add_component,
+    add_issue, add_lockfile, add_phase, add_task, add_watch, content_fingerprint, edit_file,
     edit_file_if_unchanged, fingerprint_file, id_from_title, remove_component,
     remove_file_if_unchanged, remove_issue, remove_lockfile, remove_phase, remove_task,
     remove_watch, render_project, replace_file_if_unchanged, restore_file_if_unchanged,
     set_android, set_component, set_issue, set_issue_status, set_phase, set_project, set_task,
-    set_task_status,
+    set_task_status, set_watch,
 };
 pub use eol::{
     CatalogProduct, Cycle, EolHit, EolOptions, EolReport, check_components, normalize_name,

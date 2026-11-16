@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Craftward – Roadmap v15</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#161b22; --card2:#1c232c; --line:#2a323d;
+    --text:#e6edf3; --muted:#8b98a7;
+    --done:#3fb950; --run:#d29922; --open:#6e7b8b; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
+  header{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+  h1{margin:0;font-size:30px;letter-spacing:.2px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);margin-top:4px}
+  .meta{color:var(--muted);font-size:13px;text-align:right}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .overall{margin-bottom:22px}
+  .overall .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .overall b{font-size:22px}
+  .bar{height:10px;background:#232b35;border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--done),#56d364);border-radius:99px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font-size:13px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+  .phase h2{margin:0;font-size:17px}
+  .phase .top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:4px}
+  .phase .goal{color:var(--muted);font-size:13.5px;margin:2px 0 12px}
+  .tag{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:99px;white-space:nowrap;border:1px solid}
+  .tag.run{color:var(--run);border-color:#5c4613;background:#2a2109}
+  .tag.done{color:var(--done);border-color:#1f5c2c;background:#0f2a16}
+  .tag.open{color:var(--muted);border-color:var(--line);background:var(--card2)}
+  .num{color:var(--accent);font-weight:700;margin-right:6px}
+  ul{list-style:none;margin:12px 0 0;padding:0}
+  li{display:flex;gap:10px;padding:6px 0;border-top:1px solid #212933;font-size:14px}
+  li:first-child{border-top:0}
+  .st{flex:0 0 16px;height:16px;margin-top:3px;border-radius:4px;border:2px solid var(--open)}
+  .st.done{background:var(--done);border-color:var(--done);position:relative}
+  .st.done::after{content:"";position:absolute;left:3px;top:0;width:4px;height:8px;border:solid #0e1116;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .st.run{border-color:var(--run);background:repeating-linear-gradient(45deg,#3a2e0c,#3a2e0c 3px,transparent 3px,transparent 6px)}
+  li.done span.t{color:var(--muted)}
+  .pct{font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:5px}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:30px 0 12px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{text-align:left;padding:8px 10px;border-top:1px solid #212933;vertical-align:top}
+  th{color:var(--muted);font-weight:600;border-top:0;font-size:12.5px}
+  td:first-child{white-space:nowrap;font-weight:600}
+  .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+  .q{color:var(--run)}
+  footer{color:var(--muted);font-size:12.5px;margin-top:28px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>Craft<span>ward</span></h1>
+    <div class="sub">Projekt-Zentrale mit Wartungsradar – lokal, Open Source, in Rust, für Windows, Linux und macOS</div>
+  </div>
+  <div class="meta">Roadmap v15 · Stand 16.11.2026<br>Status: Desktop-App kann bearbeiten, mit Rückgängig, Ordnerdialog und Zwischenablage</div>
+</header>
+
+<div class="card overall">
+  <div class="row"><span>Gesamtfortschritt</span><b>40 / 70 Aufgaben · 57 %</b></div>
+  <div class="bar"><i style="width:57%"></i></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--done)"></span>erledigt</span>
+    <span><span class="dot" style="background:var(--run)"></span>in Arbeit</span>
+    <span><span class="dot" style="background:var(--open)"></span>offen</span>
+  </div>
+</div>
+
+<div class="grid">
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">0</span>Fundament &amp; Entscheidungen</h2><span class="tag done">erledigt</span></div>
+    <div class="goal">Alle Grundsatzfragen geklärt, Repo steht.</div>
+    <div class="pct"><span>12 von 12</span><span>100 %</span></div>
+    <div class="bar"><i style="width:100%"></i></div>
+    <ul>
+      <li class="done"><span class="st done"></span><span class="t">Name festgelegt: Craftward</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Sprache festgelegt: Rust</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Oberfläche festgelegt: egui</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Code-Grundsatz: eigener Anwendungscode, nur geprüfte Bibliotheken</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Datenquelle: eine craftward.json pro Projekt</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Speicherkonzept: lokal als Standard, Team-Server später anschließbar</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Lizenz festgelegt: Apache-2.0, keine Zweitlizenz</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Sprache: Englisch als Standard, Oberfläche mehrsprachig</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Ablage: pro Projekt wählbar, Standardordner nur als Vorschlag</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Plattformen: Windows, Linux und macOS</span></li>
+      <li class="done"><span class="st done"></span><span class="t">GitHub-Repo angelegt, main per Ruleset geschützt</span></li>
+      <li class="done"><span class="st done"></span><span class="t">ADRs 0001 bis 0009 geschrieben</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">1</span>Datenmodell</h2><span class="tag run">in Arbeit</span></div>
+    <div class="goal">Das Dateiformat ist das Herz des Tools – erst das Schema, dann der Code.</div>
+    <div class="pct"><span>6 von 8</span><span>75 %</span></div>
+    <div class="bar"><i style="width:75%"></i></div>
+    <ul>
+      <li class="done"><span class="st done"></span><span class="t">Allgemeinen Kern definieren: Projekt, Status, Meilensteine, offene Punkte, Wächter</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Stack-Abschnitt definieren (Plattformen, SDKs, Abhängigkeiten mit Versionen)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Abgrenzung festlegen: was in die craftward.json gehört, was in die Datenbank</span></li>
+      <li class="done"><span class="st done"></span><span class="t">JSON-Schema v1, aus dem Rust-Code erzeugt und per Test abgesichert</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Regeln für Schema-Änderungen und Migration festlegen</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Projektliste (workspace.json): merkt sich den Speicherort jedes Projekts</span></li>
+      <li><span class="st run"></span><span class="t">Projektliste anhand der 28 GitHub-Repos neu aufstellen, aktive Projekte als craftward.json erfassen (erfasst: Craftward, Lockward, TruLog)</span></li>
+      <li><span class="st"></span><span class="t">Lücken markieren (Versionen, offene Bugs) und ergänzen</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">2</span>Kern &amp; Kommandozeile</h2><span class="tag run">in Arbeit</span></div>
+    <div class="goal">Früh nutzbar, auch ohne Oberfläche. Speicherung hinter einer einheitlichen Schnittstelle.</div>
+    <div class="pct"><span>13 von 15</span><span>87 %</span></div>
+    <div class="bar"><i style="width:87%"></i></div>
+    <ul>
+      <li class="done"><span class="st done"></span><span class="t">Workspace angelegt: Kern-Bibliothek, CLI, Oberfläche getrennt</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Projektdateien einlesen und prüfen (craftward validate)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Verständliche Fehlermeldungen: alle Fehler einer Datei mit genauer Stelle</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Speicher-Schnittstelle: lokal jetzt, Server später ohne Umbau (craftward-store)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Lokale Datenbank (SQLite über rusqlite) für Radar-Zustand und Verlauf</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Tabellen automatisch anlegen und migrieren, mit Sicherungskopie vor jeder Migration</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Speicherorte frei wählbar: Standardordner je Betriebssystem als Vorschlag, nichts fest vorgegeben</span></li>
+      <li><span class="st"></span><span class="t">Betriebsart „geteilter Ordner / Git-Repo" für kleine Teams</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Befehl: Portfolio-Übersicht im Terminal (craftward list)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Befehl: Roadmap-HTML aus der craftward.json erzeugen (craftward roadmap, Englisch und Deutsch)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Bearbeitungsbefehle: show, project set, phase/task/issue/watch hinzufügen, ändern, entfernen</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Stack-Befehle: Komponenten und Lockdateien hinzufügen, ändern, entfernen</span></li>
+      <li class="done"><span class="st done"></span><span class="t">SeQu-Check v1: 15 Befunde in sechs Paketen behoben (Datenintegrität, Typen, Duplikate, Radar-Korrektheit, Lieferkette, clap)</span></li>
+      <li><span class="st"></span><span class="t">Tests inklusive Fuzzing des Parsers</span></li>
+      <li class="done"><span class="st done"></span><span class="t">CI: Format, Lints, Tests auf Windows, Linux und macOS, Lizenzprüfung der Abhängigkeiten</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">3</span>Wartungsradar</h2><span class="tag run">in Arbeit</span></div>
+    <div class="goal">Das Alleinstellungsmerkmal: Was muss ich tun, weil sich draußen etwas geändert hat?</div>
+    <div class="pct"><span>6 von 8</span><span>75 %</span></div>
+    <div class="bar"><i style="width:75%"></i></div>
+    <ul>
+      <li><span class="st"></span><span class="t">Wächter-Schnittstelle entwerfen (Quelle → Meldung)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Quelle: Sicherheitslücken (OSV) gegen Lockfiles (Cargo.lock, package-lock.json; craftward radar)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Quelle: Support-Ende (endoflife.date), mit Vorwarnung 90 Tage</span></li>
+      <li><span class="st"></span><span class="t">Quelle: neue Versionen (Release-Feeds, Paket-Registries)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Quelle: Plattform-Fristen von Google Play (targetSdk aus Gradle-Dateien, je Gerätetyp)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Abgleich Meldung ↔ Stack mit Dringlichkeit; Meldungsarten (Lücke, Schadsoftware, Hinweis)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Zwischenspeicher, funktioniert auch offline (Abfragen als JSON-Cache, Zustand und Verlauf in SQLite)</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Meldungen ignorieren (mit Begründung, befristbar); Behebung wird automatisch erkannt</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">4</span>Desktop-Oberfläche</h2><span class="tag run">in Arbeit</span></div>
+    <div class="goal">egui mit eigenem Erscheinungsbild.</div>
+    <div class="pct"><span>3 von 11</span><span>27 %</span></div>
+    <div class="bar"><i style="width:27%"></i></div>
+    <ul>
+      <li class="done"><span class="st done"></span><span class="t">Eigenes Theme: Farben, Schrift, Abstände, Karten</span></li>
+      <li><span class="st"></span><span class="t">Mehrsprachigkeit: alle Texte über Schlüssel, eine Datei pro Sprache; Start mit Englisch und Deutsch</span></li>
+      <li><span class="st"></span><span class="t">Sprachwahl nach Systemsprache, umstellbar in den Einstellungen</span></li>
+      <li><span class="st"></span><span class="t">Einstellungen: Speicherorte jederzeit ändern, Daten ziehen dabei mit um</span></li>
+      <li><span class="st"></span><span class="t">Einrichtungsdialog beim ersten Start: Betriebsart und Speicherort wählen, Standardordner vorgeschlagen</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Ansicht: Portfolio mit allen Projekten und Status</span></li>
+      <li class="done"><span class="st done"></span><span class="t">Ansicht: Projektdetail mit Meilensteinen und Planung</span></li>
+      <li><span class="st"></span><span class="t">Ansicht: Radar-Eingang über alle Projekte</span></li>
+      <li><span class="st"></span><span class="t">Ansicht: Bugs und offene Punkte</span></li>
+      <li><span class="st run"></span><span class="t">Bearbeiten in der App, Speichern zurück in die craftward.json (erledigt: Status, Anlegen, Bearbeiten, Entfernen mit Rückgängig, Projekte, Kopfdaten, Phasen; offen: Stack, Lockdateien, Android, Watch-Items)</span></li>
+      <li><span class="st"></span><span class="t">Dateien beobachten und bei Änderung neu laden</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">5</span>Veröffentlichung</h2><span class="tag open">offen</span></div>
+    <div class="goal">Erstes öffentliches Release.</div>
+    <div class="pct"><span>0 von 9</span><span>0 %</span></div>
+    <div class="bar"><i style="width:0%"></i></div>
+    <ul>
+      <li><span class="st"></span><span class="t">Eigene Abhängigkeiten mit Lockward und bomward prüfen</span></li>
+      <li><span class="st"></span><span class="t">Drittlizenz-Datei und NOTICE automatisch erzeugen</span></li>
+      <li><span class="st"></span><span class="t">README, Schema-Dokumentation, Beispielprojekt</span></li>
+      <li><span class="st"></span><span class="t">Automatische Builds für Windows, Linux und macOS (Intel und Apple-Chip)</span></li>
+      <li><span class="st"></span><span class="t">Handtest auf einem Mac vor dem Release</span></li>
+      <li><span class="st"></span><span class="t">Code-Signierung für Windows und macOS klären</span></li>
+      <li><span class="st"></span><span class="t">Community Standards auf GitHub vollständig: Code of Conduct, Issue-Vorlagen (mit Verweis auf den privaten Meldeweg für Sicherheitslücken)</span></li>
+      <li><span class="st"></span><span class="t">Release v0.1.0 auf GitHub</span></li>
+      <li><span class="st"></span><span class="t">Außenauftritt: Vorstellung in r/rust, Show HN, This Week in Rust, Artikel auf yadelabs.de oder dev.to; danach Traffic auswerten</span></li>
+    </ul>
+  </section>
+
+  <section class="card phase">
+    <div class="top"><h2><span class="num">6</span>Ausbau</h2><span class="tag open">später</span></div>
+    <div class="goal">Erst nach v0.1.0 entscheiden.</div>
+    <div class="pct"><span>0 von 7</span><span>0 %</span></div>
+    <div class="bar"><i style="width:0%"></i></div>
+    <ul>
+      <li><span class="st"></span><span class="t">Team-Server: PostgreSQL-Anschluss (damit auch Supabase und eigene Server)</span></li>
+      <li><span class="st"></span><span class="t">Anmeldung, Rechte pro Nutzer, gleichzeitige Änderungen</span></li>
+      <li><span class="st"></span><span class="t">Zugangsdaten im Schlüsselspeicher des Betriebssystems</span></li>
+      <li><span class="st"></span><span class="t">Datenübernahme von lokal auf den Server</span></li>
+      <li><span class="st"></span><span class="t">Wächter-Pakete außerhalb von Software (Domains, Verträge, Fristen)</span></li>
+      <li><span class="st"></span><span class="t">Benachrichtigungen und GitHub-Action</span></li>
+      <li><span class="st"></span><span class="t">Bezahlversion prüfen (Kandidat: Team-Server als getrenntes Zusatzmodul)</span></li>
+    </ul>
+  </section>
+
+</div>
+
+<h3>Entscheidungen</h3>
+<div class="two">
+  <div class="card">
+    <table>
+      <tr><th>Getroffen</th><th></th></tr>
+      <tr><td>Name</td><td>Craftward</td></tr>
+      <tr><td>Sprache</td><td>Rust</td></tr>
+      <tr><td>Oberfläche</td><td>egui, Design wird angepasst</td></tr>
+      <tr><td>Code</td><td>Eigener Anwendungscode; Bibliotheken nur geprüft und sparsam</td></tr>
+      <tr><td>Daten</td><td>Lokal, eine craftward.json pro Projekt, daraus auch die Roadmap. Optionales Feld source_dir, wenn die Datei außerhalb des Repos liegt</td></tr>
+      <tr><td>Ablage</td><td>Pro Projekt wählbar: im Repo oder in einem eigenen Ordner. Die App schlägt Standardordner vor, schreibt aber keinen Speicherort fest vor</td></tr>
+      <tr><td>Plattformen</td><td>Windows, Linux und macOS</td></tr>
+      <tr><td>Speicher</td><td>Lokal als Standard (SQLite neben den Projektdateien); geteilter Ordner für kleine Teams; Team-Server nach v0.1.0</td></tr>
+      <tr><td>Lizenz</td><td>Apache-2.0 für Code und Dateiformat, keine Zweitlizenz</td></tr>
+      <tr><td>Sprache</td><td>Englisch als Standard; Oberfläche mehrsprachig, Start mit Englisch und Deutsch. Code, Doku, CLI und Dateiformat bleiben Englisch</td></tr>
+      <tr><td>Modell</td><td>Open Source</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <table>
+      <tr><th>Offen (klärt sich in der Umsetzung)</th><th></th></tr>
+      <tr><td class="q">Bibliotheken</td><td>Übersetzungen: Auswahl nach Prüfung. Bereits eingebaut: serde, serde_json, ureq mit rustls (ring, Zertifikate des Betriebssystems), rusqlite mit mitkompiliertem SQLite, clap (nur CLI); schemars nur für die Schema-Erzeugung</td></tr>
+    </table>
+  </div>
+</div>
+
+<h3>Vorbilder</h3>
+<div class="card">
+  <table>
+    <tr><th>Tool</th><th>Was wir übernehmen</th></tr>
+    <tr><td>Backstage</td><td>Beschreibungsdatei pro Projekt, versioniert im Repo</td></tr>
+    <tr><td>Dependency-Track</td><td>Laufender Abgleich des Bestands mit neuen Schwachstellen</td></tr>
+    <tr><td>Renovate</td><td>Eine gebündelte Übersicht aller anstehenden Updates</td></tr>
+    <tr><td>endoflife.date</td><td>Offene Daten zum Support-Ende als Radar-Quelle</td></tr>
+  </table>
+</div>
+
+<footer>Änderungen gegenüber v14: AP10 bis AP12b – Bearbeiten in der App über denselben Schreibweg wie die CLI, Schutz vor Überschreiben fremder Änderungen, Rückgängig-Meldung statt Bestätigungsdialogen, Projekte anlegen, hinzufügen und entfernen, Kopfdaten und Phasen, Ordnerdialog, Zwischenablage, neue CLI-Befehle phase/task/issue set und remove --delete-file, Prüfung der Dokumentation mit ADR-Verzeichnis 0001–0025. Handgepflegte Fassung, bis Craftward voll einsetzbar ist. Nächste Aktualisierung: craftward_roadmap_v16.html</footer>
+</div>
+</body>
+</html>

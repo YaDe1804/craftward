@@ -6,10 +6,10 @@ use std::time::SystemTime;
 
 use craftward_core::{
     EditError, IssueChanges, LinkChange, LinkListUpdate, NewIssue, NewPhase, NewTask, NewWatch,
-    PhaseChanges, ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_issue,
-    add_phase, add_task, add_watch, edit_file, load_from_path, remove_issue, remove_phase,
-    remove_task, remove_watch, render_project, set_issue, set_issue_status, set_phase, set_project,
-    set_task, set_task_status, utc_date,
+    PhaseChanges, ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, WatchChanges,
+    add_issue, add_phase, add_task, add_watch, edit_file, load_from_path, remove_issue,
+    remove_phase, remove_task, remove_watch, render_project, set_issue, set_issue_status,
+    set_phase, set_project, set_task, set_task_status, set_watch, utc_date,
 };
 
 use crate::{Failure, resolve_project};
@@ -109,6 +109,14 @@ pub(crate) enum Request {
         due: String,
         id: Option<String>,
         note: Option<String>,
+    },
+    SetWatch {
+        target: String,
+        watch: String,
+        title: Option<String>,
+        kind: Option<String>,
+        due: Option<String>,
+        note: Update,
     },
     RemoveWatch {
         target: String,
@@ -243,6 +251,7 @@ fn apply(
         | Request::SetIssueStatus { .. }
         | Request::RemoveIssue { .. }
         | Request::AddWatch { .. }
+        | Request::SetWatch { .. }
         | Request::RemoveWatch { .. } => apply_record(request, project, updated_on),
         Request::Show { .. } => unreachable!("show does not change the file"),
     }
@@ -370,6 +379,24 @@ fn apply_record(
             },
             updated_on,
         ),
+        Request::SetWatch {
+            watch,
+            title,
+            kind,
+            due,
+            note,
+            ..
+        } => set_watch(
+            project,
+            watch,
+            WatchChanges {
+                title: title.as_deref(),
+                kind: kind.as_deref(),
+                due: due.as_deref(),
+                note: note.as_update(),
+            },
+            updated_on,
+        ),
         Request::RemoveWatch { watch, .. } => remove_watch(project, watch, updated_on),
         Request::Show { .. }
         | Request::SetProject { .. }
@@ -400,6 +427,7 @@ fn confirmation(request: &Request, created: Option<&str>) -> String {
         }
         Request::RemoveIssue { issue, .. } => format!("removed issue {issue}"),
         Request::AddWatch { .. } => format!("added watch {}", created.unwrap_or("?")),
+        Request::SetWatch { watch, .. } => format!("updated watch {watch}"),
         Request::RemoveWatch { watch, .. } => format!("removed watch {watch}"),
         Request::Show { .. } => String::new(),
     }
@@ -443,6 +471,7 @@ impl Request {
             | Self::SetIssueStatus { target, .. }
             | Self::RemoveIssue { target, .. }
             | Self::AddWatch { target, .. }
+            | Self::SetWatch { target, .. }
             | Self::RemoveWatch { target, .. } => target,
         }
     }

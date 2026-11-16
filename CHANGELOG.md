@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop stack and watch editing: components, lockfiles (with native
+  Browse and existence/type checks), Android settings, and watch items in
+  the Deadlines section. Core and CLI gain `watch set`. See
+  [docs/desktop.md](docs/desktop.md) and [docs/cli.md](docs/cli.md).
 - Desktop editing with undo toasts (about eight seconds), sticky conflict
   banners, workspace project create/add/remove, overview header edit, phase
   add/edit/remove, task and issue add/edit/remove, and shared

@@ -1,9 +1,12 @@
 //! Pure view-model builders. No egui types live here.
 
+use std::path::{Path, PathBuf};
+
 use craftward_core::{
-    ComponentKind, Issue, IssueSeverity, IssueStatus, Phase, PhaseState, Project, ProjectStatus,
-    Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind, days_between,
-    is_calendar_date, phase_state, snapshot, task_progress, unix_now, utc_day,
+    ComponentKind, Issue, IssueSeverity, IssueStatus, LockKind, Phase, PhaseState, Project,
+    ProjectStatus, Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind,
+    days_between, is_calendar_date, lock_kind, phase_state, resolve_project_paths, snapshot,
+    task_progress, unix_now, utc_day,
 };
 
 use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject, count_by_severity};
@@ -198,6 +201,25 @@ pub struct ComponentRow {
     pub name: String,
     /// Version when set.
     pub version: Option<String>,
+    /// Free-form note when set.
+    pub note: Option<String>,
+    /// endoflife.date product id when set.
+    pub eol_product: Option<String>,
+}
+
+/// Android fields for the detail page and edit form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidDetail {
+    /// Stored `target_sdk`.
+    pub target_sdk: Option<u32>,
+    /// Stored `min_sdk`.
+    pub min_sdk: Option<u32>,
+    /// Form factor schema word.
+    pub form_factor: String,
+    /// Store schema word.
+    pub store: String,
+    /// Detection paths relative to `source_dir`.
+    pub detect_from: Vec<String>,
 }
 
 /// One watch / deadline row.
@@ -211,6 +233,12 @@ pub struct DeadlineRow {
     pub due: String,
     /// Remaining-time text for `due`.
     pub remaining: String,
+    /// Watch id when this row is a watch item (task dues leave this empty).
+    pub watch_id: Option<String>,
+    /// Watch kind schema word when this row is a watch item.
+    pub watch_kind: Option<String>,
+    /// Watch note when set.
+    pub note: Option<String>,
 }
 
 /// Label/value pair for the overview section.
@@ -257,6 +285,10 @@ pub struct ProjectDetail {
     pub target_sdk: Option<u32>,
     /// Stack components.
     pub components: Vec<ComponentRow>,
+    /// Lockfile paths relative to `source_dir`.
+    pub lockfiles: Vec<String>,
+    /// Android block when `stack.android` is present.
+    pub android: Option<AndroidDetail>,
     /// Phases.
     pub phases: Vec<PhaseBlock>,
     /// Open issues.
@@ -413,6 +445,8 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
                 progress: project_progress(project),
                 target_sdk,
                 components: component_rows(project),
+                lockfiles: lockfile_rows(project),
+                android: android_detail(project),
                 phases: phase_blocks(project),
                 issues: open_issue_rows(project),
                 findings: finding_rows(&loaded.findings),
@@ -436,6 +470,8 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
             progress: ProgressView::empty(),
             target_sdk: None,
             components: Vec::new(),
+            lockfiles: Vec::new(),
+            android: None,
             phases: Vec::new(),
             issues: Vec::new(),
             findings: finding_rows(&loaded.findings),
@@ -1020,6 +1056,462 @@ impl IssueEditForm {
     }
 }
 
+/// Draft for adding a stack component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentForm {
+    /// Component kind schema word.
+    pub kind: String,
+    /// Component name.
+    pub name: String,
+    /// Optional version.
+    pub version: String,
+    /// Optional endoflife.date product id.
+    pub eol_product: String,
+}
+
+impl Default for ComponentForm {
+    fn default() -> Self {
+        Self {
+            kind: "runtime".to_owned(),
+            name: String::new(),
+            version: String::new(),
+            eol_product: String::new(),
+        }
+    }
+}
+
+impl ComponentForm {
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.name.trim().is_empty() {
+            return Some("Name is required");
+        }
+        if !component_kind_choices()
+            .iter()
+            .any(|(key, _)| *key == self.kind.as_str())
+        {
+            return Some("Choose a valid component kind");
+        }
+        None
+    }
+
+    /// Trimmed name.
+    #[must_use]
+    pub fn name_for_edit(&self) -> &str {
+        self.name.trim()
+    }
+
+    /// Optional version.
+    #[must_use]
+    pub fn version_for_edit(&self) -> Option<&str> {
+        optional_text(&self.version)
+    }
+
+    /// Optional eol product.
+    #[must_use]
+    pub fn eol_product_for_edit(&self) -> Option<&str> {
+        optional_text(&self.eol_product)
+    }
+}
+
+/// Draft for editing optional fields of an existing component.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ComponentEditForm {
+    /// Version (empty clears).
+    pub version: String,
+    /// Note (empty clears).
+    pub note: String,
+    /// endoflife.date product id (empty clears).
+    pub eol_product: String,
+}
+
+impl ComponentEditForm {
+    /// Starts an edit form from an existing component.
+    #[must_use]
+    pub fn from_component(component: &ComponentRow) -> Self {
+        Self {
+            version: component.version.clone().unwrap_or_default(),
+            note: component.note.clone().unwrap_or_default(),
+            eol_product: component.eol_product.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Always valid; empty fields clear optional values.
+    #[must_use]
+    pub const fn can_save() -> bool {
+        true
+    }
+
+    /// Version update.
+    #[must_use]
+    pub fn version_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.version)
+    }
+
+    /// Note update.
+    #[must_use]
+    pub fn note_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.note)
+    }
+
+    /// `eol_product` update.
+    #[must_use]
+    pub fn eol_product_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.eol_product)
+    }
+}
+
+/// Draft for adding a lockfile path.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LockfileForm {
+    /// Path relative to `source_dir`.
+    pub path: String,
+}
+
+impl LockfileForm {
+    /// Whether Save may run against `source_dir`.
+    #[must_use]
+    pub fn can_save(&self, source_dir: &Path) -> bool {
+        self.validation_message(source_dir).is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self, source_dir: &Path) -> Option<&'static str> {
+        validate_lockfile_relative(self.path.trim(), source_dir)
+    }
+
+    /// Trimmed path for the core API.
+    #[must_use]
+    pub fn path_for_edit(&self) -> &str {
+        self.path.trim()
+    }
+}
+
+/// Draft for editing `stack.android`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidForm {
+    /// Target SDK (empty clears).
+    pub target_sdk: String,
+    /// Min SDK (empty clears).
+    pub min_sdk: String,
+    /// Form factor schema word.
+    pub form_factor: String,
+    /// Store schema word.
+    pub store: String,
+    /// One relative path per line.
+    pub detect_from: String,
+}
+
+impl Default for AndroidForm {
+    fn default() -> Self {
+        Self {
+            target_sdk: String::new(),
+            min_sdk: String::new(),
+            form_factor: "phone".to_owned(),
+            store: "google_play".to_owned(),
+            detect_from: String::new(),
+        }
+    }
+}
+
+impl AndroidForm {
+    /// Starts from stored android fields, or defaults when absent.
+    #[must_use]
+    pub fn from_detail(android: Option<&AndroidDetail>) -> Self {
+        match android {
+            Some(android) => Self {
+                target_sdk: android.target_sdk.map_or_default(|value| value.to_string()),
+                min_sdk: android.min_sdk.map_or_default(|value| value.to_string()),
+                form_factor: android.form_factor.clone(),
+                store: android.store.clone(),
+                detect_from: android.detect_from.join("\n"),
+            },
+            None => Self::default(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if let Some(error) = sdk_field_error(&self.target_sdk) {
+            return Some(error);
+        }
+        if let Some(error) = sdk_field_error(&self.min_sdk) {
+            return Some(error);
+        }
+        if !form_factor_choices()
+            .iter()
+            .any(|(key, _)| *key == self.form_factor.as_str())
+        {
+            return Some("Choose a valid form factor");
+        }
+        if !android_store_choices()
+            .iter()
+            .any(|(key, _)| *key == self.store.as_str())
+        {
+            return Some("Choose a valid store");
+        }
+        for path in self.detect_from_paths() {
+            if path.is_empty() {
+                return Some("detect_from paths must not be empty");
+            }
+            if craftward_core::is_portable_absolute(&path)
+                || path.split(['/', '\\']).any(|segment| segment == "..")
+            {
+                return Some("detect_from paths must be relative without ..");
+            }
+        }
+        None
+    }
+
+    /// Target SDK update.
+    #[must_use]
+    pub fn target_sdk_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.target_sdk)
+    }
+
+    /// Min SDK update.
+    #[must_use]
+    pub fn min_sdk_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.min_sdk)
+    }
+
+    /// Detect-from paths for a full replace.
+    #[must_use]
+    pub fn detect_from_paths(&self) -> Vec<String> {
+        self.detect_from
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// Draft for adding a watch item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchForm {
+    /// Kind schema word.
+    pub kind: String,
+    /// Title.
+    pub title: String,
+    /// Due day.
+    pub due: String,
+    /// Optional note.
+    pub note: String,
+}
+
+impl Default for WatchForm {
+    fn default() -> Self {
+        Self {
+            kind: "deadline".to_owned(),
+            title: String::new(),
+            due: String::new(),
+            note: String::new(),
+        }
+    }
+}
+
+impl WatchForm {
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            return Some("Title is required");
+        }
+        if !watch_kind_choices()
+            .iter()
+            .any(|(key, _)| *key == self.kind.as_str())
+        {
+            return Some("Choose a valid watch kind");
+        }
+        let due = self.due.trim();
+        if due.is_empty() {
+            return Some("Due date is required");
+        }
+        if !is_calendar_date(due) {
+            return Some("Due date must be YYYY-MM-DD");
+        }
+        None
+    }
+
+    /// Trimmed title.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// Trimmed due.
+    #[must_use]
+    pub fn due_for_edit(&self) -> &str {
+        self.due.trim()
+    }
+
+    /// Optional note.
+    #[must_use]
+    pub fn note_for_edit(&self) -> Option<&str> {
+        optional_text(&self.note)
+    }
+}
+
+/// Draft for editing an existing watch item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchEditForm {
+    /// Kind schema word.
+    pub kind: String,
+    /// Title.
+    pub title: String,
+    /// Due day.
+    pub due: String,
+    /// Note (empty clears).
+    pub note: String,
+}
+
+impl WatchEditForm {
+    /// Starts from a watch deadline row.
+    #[must_use]
+    pub fn from_deadline(row: &DeadlineRow) -> Self {
+        Self {
+            kind: row
+                .watch_kind
+                .clone()
+                .unwrap_or_else(|| "deadline".to_owned()),
+            title: row.title.clone(),
+            due: row.due.clone(),
+            note: row.note.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            return Some("Title is required");
+        }
+        if !watch_kind_choices()
+            .iter()
+            .any(|(key, _)| *key == self.kind.as_str())
+        {
+            return Some("Choose a valid watch kind");
+        }
+        let due = self.due.trim();
+        if due.is_empty() || !is_calendar_date(due) {
+            return Some("Due date must be YYYY-MM-DD");
+        }
+        None
+    }
+
+    /// Trimmed title.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// Trimmed due.
+    #[must_use]
+    pub fn due_for_edit(&self) -> &str {
+        self.due.trim()
+    }
+
+    /// Note update.
+    #[must_use]
+    pub fn note_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.note)
+    }
+}
+
+/// Validates a lockfile path relative to `source_dir`.
+#[must_use]
+pub fn validate_lockfile_relative(path: &str, source_dir: &Path) -> Option<&'static str> {
+    if path.is_empty() {
+        return Some("Path is required");
+    }
+    if craftward_core::is_portable_absolute(path)
+        || path.split(['/', '\\']).any(|segment| segment == "..")
+    {
+        return Some("Path must be relative to source_dir without ..");
+    }
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path);
+    match lock_kind(Path::new(name)) {
+        LockKind::Cargo | LockKind::Npm => {}
+        LockKind::Unknown => {
+            return Some("Lockfile must be Cargo.lock or package-lock.json");
+        }
+    }
+    let resolved = source_dir.join(path);
+    if !resolved.is_file() {
+        return Some("Lockfile does not exist under source_dir");
+    }
+    None
+}
+
+/// Turns an absolute pick into a path relative to `base`, using `/` separators.
+#[must_use]
+pub fn relative_to_dir(absolute: &Path, base: &Path) -> Option<String> {
+    let relative = absolute.strip_prefix(base).ok()?;
+    let text = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Resolves the source directory used for lockfile paths.
+#[must_use]
+pub fn project_source_dir(project_file: &Path, project: &Project) -> PathBuf {
+    resolve_project_paths(project_file, project).source_dir
+}
+
+fn optional_text(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn sdk_field_error(text: &str) -> Option<&'static str> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u32>() {
+        Ok(value) if value >= 1 => None,
+        _ => Some("SDK level must be a positive integer"),
+    }
+}
+
 /// Draft for creating a new project and adding it to the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectForm {
@@ -1224,6 +1716,50 @@ pub fn issue_severity_choices() -> &'static [(&'static str, &'static str)] {
     ]
 }
 
+/// Stack component kind choices.
+#[must_use]
+pub fn component_kind_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("platform", "Platform"),
+        ("language", "Language"),
+        ("framework", "Framework"),
+        ("runtime", "Runtime"),
+        ("sdk", "SDK"),
+        ("service", "Service"),
+        ("tool", "Tool"),
+        ("other", "Other"),
+    ]
+}
+
+/// Watch kind choices.
+#[must_use]
+pub fn watch_kind_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("deadline", "Deadline"),
+        ("expiry", "Expiry"),
+        ("review", "Review"),
+        ("other", "Other"),
+    ]
+}
+
+/// Android form factor choices.
+#[must_use]
+pub fn form_factor_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("phone", "Phone"),
+        ("automotive", "Automotive"),
+        ("wear", "Wear"),
+        ("tv", "TV"),
+        ("xr", "XR"),
+    ]
+}
+
+/// Android store choices.
+#[must_use]
+pub fn android_store_choices() -> &'static [(&'static str, &'static str)] {
+    &[("google_play", "Google Play"), ("none", "None")]
+}
+
 /// Human label for open issues (singular / plural / none).
 #[must_use]
 pub fn open_issues_label(count: usize) -> String {
@@ -1419,8 +1955,29 @@ fn component_rows(project: &Project) -> Vec<ComponentRow> {
                 kind: component_kind_badge(component.kind),
                 name: component.name.clone(),
                 version: component.version.clone(),
+                note: component.note.clone(),
+                eol_product: component.eol_product.clone(),
             })
             .collect()
+    })
+}
+
+fn lockfile_rows(project: &Project) -> Vec<String> {
+    project
+        .stack
+        .as_ref()
+        .map_or_else(Vec::new, |stack| stack.lockfiles.clone())
+}
+
+fn android_detail(project: &Project) -> Option<AndroidDetail> {
+    project.stack.as_ref().and_then(|stack| {
+        stack.android.as_ref().map(|android| AndroidDetail {
+            target_sdk: android.target_sdk,
+            min_sdk: android.min_sdk,
+            form_factor: android.form_factor.as_str().to_owned(),
+            store: android.store.as_str().to_owned(),
+            detect_from: android.detect_from.clone(),
+        })
     })
 }
 
@@ -1514,6 +2071,9 @@ fn deadline_rows(project: &Project, today: &str) -> Vec<DeadlineRow> {
                         title: task.title.clone(),
                         due: due.clone(),
                         remaining: remaining_label(today, due),
+                        watch_id: None,
+                        watch_kind: None,
+                        note: None,
                     });
                 }
             }
@@ -1529,11 +2089,15 @@ fn deadline_rows(project: &Project, today: &str) -> Vec<DeadlineRow> {
 }
 
 fn watch_row(item: &WatchItem, today: &str) -> DeadlineRow {
+    let kind = watch_kind_badge(item.kind);
     DeadlineRow {
-        kind: watch_kind_badge(item.kind),
+        watch_kind: Some(kind.key.to_owned()),
+        kind,
         title: item.title.clone(),
         due: item.due.clone(),
         remaining: remaining_label(today, &item.due),
+        watch_id: Some(item.id.clone()),
+        note: item.note.clone(),
     }
 }
 
@@ -2127,6 +2691,56 @@ mod tests {
         form.note = "  note  ".to_owned();
         assert!(form.can_save());
         assert_eq!(form.note_for_edit(), Some("note"));
+    }
+
+    #[test]
+    fn stack_and_watch_forms_validate_fields() {
+        use super::{
+            ComponentForm, LockfileForm, WatchForm, relative_to_dir, validate_lockfile_relative,
+        };
+        use std::fs;
+
+        let mut component = ComponentForm::default();
+        assert!(!component.can_save());
+        component.name = "Rust".to_owned();
+        assert!(component.can_save());
+        component.kind = "weird".to_owned();
+        assert!(!component.can_save());
+
+        let mut watch = WatchForm::default();
+        assert!(!watch.can_save());
+        watch.title = "Renew".to_owned();
+        watch.due = "2027-06-30".to_owned();
+        assert!(watch.can_save());
+        watch.due = "bad".to_owned();
+        assert!(!watch.can_save());
+
+        let root = std::env::temp_dir().join(format!(
+            "craftward-lockform-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("Cargo.lock"), "").unwrap();
+        assert_eq!(
+            validate_lockfile_relative("yarn.lock", &root),
+            Some("Lockfile must be Cargo.lock or package-lock.json")
+        );
+        assert_eq!(
+            validate_lockfile_relative("missing/Cargo.lock", &root),
+            Some("Lockfile does not exist under source_dir")
+        );
+        assert!(validate_lockfile_relative("Cargo.lock", &root).is_none());
+        assert_eq!(
+            relative_to_dir(&root.join("Cargo.lock"), &root).as_deref(),
+            Some("Cargo.lock")
+        );
+        let form = LockfileForm {
+            path: "Cargo.lock".to_owned(),
+        };
+        assert!(form.can_save(&root));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
