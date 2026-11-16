@@ -2,8 +2,7 @@
 
 Craftward's desktop app (`craftward-app`) shows a portfolio of every project
 in the workspace and a detail page for one project. It uses the same files
-as the command-line tool. A first set of edits goes through the same core
-writers as the CLI.
+as the command-line tool. Edits go through the same core writers as the CLI.
 
 ## Start
 
@@ -33,13 +32,11 @@ See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 
 ## Views
 
-- **Overview:** one card per project, sorted by urgency (open findings by
-  severity, then next due date, then name). A summary strip counts
-  projects, issues, and findings. The portfolio grid keeps column width on
-  a short last row.
-- **Detail:** header, stack, phases with tasks and progress, open issues,
-  open findings (severity, kind, source), and deadlines. Open a card with
-  the mouse or keyboard. Return with **Back** or **Escape**.
+- **Overview:** one card per project, sorted by urgency. **New project** and
+  **Add existing** manage the workspace list. A card menu removes a project
+  from the list only (`craftward.json` stays on disk).
+- **Detail:** header, stack, phases with tasks, open issues, findings, and
+  deadlines. Two columns from 900 px width; one column below that.
 
 **Reload** reloads the workspace, project files, and findings. There is no
 file watcher in this release.
@@ -48,51 +45,54 @@ file watcher in this release.
 
 Supported in this release:
 
-- Change a task status (`open`, `in_progress`, `done`, `dropped`) from the
-  status symbol menu on each task row.
-- Change an issue status (`open`, `in_progress`, `resolved`, `wont_fix`)
-  from the status symbol menu on each open issue.
-- Add a task to a phase (**Add task** at the end of the phase): title and
-  optional due date (`YYYY-MM-DD`).
-- Add an issue (**Add issue** at the end of the issue list): title,
-  severity, optional note.
+- Change task and issue status from the status chip menu.
+- Edit overview header fields (name, status, version, description, tags,
+  source directory, links).
+- Add, edit, and remove phases (removing a phase with tasks is allowed;
+  Undo restores the phase and its tasks).
+- Add, edit, and remove tasks and issues (task: title, due, note; issue:
+  title, severity, URL, note).
+- Create a project (folder + id + name + status), add an existing
+  `craftward.json`, remove a project from the workspace list.
 
-**Save** stays disabled until the form is valid (non-empty title; due date
-empty or a calendar day). **Enter** saves a valid form; **Escape** closes
-the form without writing. Validation and write errors appear next to the
-control that triggered the action; typed input is kept.
+**Save** stays disabled until the form is valid. Field errors stay next to
+the input; drafts keep their text after a failed save. **Escape** closes an
+open form. Every save calls `craftward-core` the same way the CLI does.
 
-Every save calls `craftward-core` the same way the CLI does. After a
-successful write the app reloads the project from disk.
+### Undo
+
+After a successful save a toast appears in the footer for about eight
+seconds: the change summary and **Undo**. Undo restores the previous file
+bytes (or deletes a newly created `craftward.json`) through the fingerprint
+check against the post-save state. Only the latest change can be undone. A
+newer save replaces the toast. No confirmation dialog is shown for
+undoable edits.
 
 ### Conflicts
 
-On load the app remembers a fingerprint of each project file's bytes. Before
-writing it reads the file again. If the bytes differ, nothing is written.
-The UI reports that the file changed outside the app and offers **Reload**.
-See [ADR 0024](adr/0024-editing-from-the-desktop-app.md).
+On load the app remembers a fingerprint of each project file and of
+`workspace.json`. Before writing it reads again. If the bytes differ,
+nothing is written. A sticky banner stays visible while scrolling until
+**Reload** or **Dismiss**. The same banner appears when Undo finds an
+external change. See [ADR 0024](adr/0024-editing-from-the-desktop-app.md).
 
 ## Keyboard
 
-All actions are reachable without a mouse: Tab moves focus, buttons and
-menus activate with Enter/Space, Escape closes an open form or leaves the
-detail view, Reload and Back are ordinary buttons in the top bar.
+Tab moves focus, buttons and menus activate with Enter/Space, Escape closes
+an open form or leaves the detail view, Reload and Back are ordinary
+buttons in the top bar.
 
 ## Theme
 
-Colours match the dark HTML roadmaps (dark background, slightly lighter
-cards, blue accent). Severity and status always include text, not colour
-alone. Status, severity, and kind badges use readable text (and colour for
-severity); decorative symbols are omitted when egui's bundled fonts do not
-include a clear glyph. Text contrast against surfaces is checked in unit
-tests (WCAG AA 4.5:1).
+Colours match the dark HTML roadmaps. Status chips are the menu button
+itself (no double frame). Done and dropped task titles use muted text with
+WCAG AA contrast. Text contrast against surfaces is checked in unit tests.
 
 ## Known limitations
 
-- No delete; no phase, stack, header, or watch-item editing (CLI only).
+- Phase status is derived from tasks (no schema field).
 - No radar run and no network from the app.
-- No file watching; use Reload after CLI changes, or accept the conflict
-  prompt if you edit without reloading.
+- No file watching; use Reload after CLI changes.
 - No window-position persistence (eframe `persistence` is off).
 - Findings appear only after a CLI `radar` run has created `craftward.db`.
 

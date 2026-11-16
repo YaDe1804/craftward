@@ -29,6 +29,7 @@ mod roadmap;
 mod schema;
 mod store;
 mod target_sdk;
+mod undo;
 mod workspace;
 
 pub use date::{
@@ -40,12 +41,15 @@ pub use deadlines::{
     load as load_deadlines, page_url, parse_document, render as render_deadlines, stale_warning,
 };
 pub use edit::{
-    AndroidChanges, ComponentChanges, ContentFingerprint, EditError, EditOutcome, NewComponent,
-    NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_component, add_issue,
+    AndroidChanges, ComponentChanges, ContentFingerprint, EditError, EditOutcome, IssueChanges,
+    LinkChange, LinkListUpdate, NewComponent, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
+    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_component, add_issue,
     add_lockfile, add_phase, add_task, add_watch, content_fingerprint, edit_file,
-    edit_file_if_unchanged, fingerprint_file, id_from_title, remove_component, remove_issue,
-    remove_lockfile, remove_phase, remove_task, remove_watch, render_project, set_android,
-    set_component, set_issue_status, set_project, set_task_status,
+    edit_file_if_unchanged, fingerprint_file, id_from_title, remove_component,
+    remove_file_if_unchanged, remove_issue, remove_lockfile, remove_phase, remove_task,
+    remove_watch, render_project, replace_file_if_unchanged, restore_file_if_unchanged,
+    set_android, set_component, set_issue, set_issue_status, set_phase, set_project, set_task,
+    set_task_status,
 };
 pub use eol::{
     CatalogProduct, Cycle, EolHit, EolOptions, EolReport, check_components, normalize_name,
@@ -88,10 +92,13 @@ pub use store::{
     Severity, StateFilter, StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,
 };
 pub use target_sdk::{Detection, detect as detect_target_sdk};
+pub use undo::{UNDO_VISIBLE_SECS, UndoOffer, UndoSnapshot, UndoState};
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,
-    init_project, list_projects, load_or_empty, load_workspace, project_file, project_file_by_id,
-    remove_project, resolve_entry_path, save_workspace, snapshot,
+    add_project_if_unchanged, init_project, list_projects, load_or_empty, load_workspace,
+    project_file, project_file_by_id, remove_project, remove_project_if_unchanged,
+    resolve_entry_path, save_workspace, save_workspace_if_unchanged, snapshot,
+    workspace_bytes_or_empty,
 };
 
 /// Returns the version of the Craftward core library.

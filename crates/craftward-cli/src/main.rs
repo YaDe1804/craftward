@@ -148,6 +148,10 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                     version,
                     description,
                     source_dir,
+                    tags,
+                    clear_tags,
+                    links,
+                    clear_links,
                 },
         } => {
             if name.is_none()
@@ -155,11 +159,21 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 && version.is_none()
                 && description.is_none()
                 && source_dir.is_none()
+                && tags.is_none()
+                && !clear_tags
+                && links.is_empty()
+                && !clear_links
             {
                 return Err(Failure::Usage(
                     "project set requires at least one option".to_owned(),
                 ));
             }
+            let parsed_links = if links.is_empty() {
+                None
+            } else {
+                Some(parse_link_args(&links)?)
+            };
+            let parsed_tags = tags.map(|text| parse_tags(&text));
             editing::run(
                 editing::Request::SetProject {
                     target: project,
@@ -167,14 +181,18 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                     status: status.map(|value| value.as_str().to_owned()),
                     version: clearable(version),
                     description: clearable(description),
-                    source_dir,
+                    source_dir: clearable(source_dir),
+                    tags: parsed_tags,
+                    clear_tags,
+                    links: parsed_links,
+                    clear_links,
                 },
                 workspace,
             )
         }
-        Command::Phase { command } => editing::run(phase_request(command), workspace),
-        Command::Task { command } => editing::run(task_request(command), workspace),
-        Command::Issue { command } => editing::run(issue_request(command), workspace),
+        Command::Phase { command } => editing::run(phase_request(command)?, workspace),
+        Command::Task { command } => editing::run(task_request(command)?, workspace),
+        Command::Issue { command } => editing::run(issue_request(command)?, workspace),
         Command::Watch { command } => editing::run(watch_request(command), workspace),
         Command::Radar {
             projects,
@@ -271,32 +289,50 @@ fn clearable_stack(value: Option<String>) -> stack::Update {
     }
 }
 
-fn phase_request(command: PhaseCommand) -> editing::Request {
+fn phase_request(command: PhaseCommand) -> Result<editing::Request, Failure> {
     match command {
         PhaseCommand::Add {
             project,
             title,
             id,
             goal,
-        } => editing::Request::AddPhase {
+        } => Ok(editing::Request::AddPhase {
             target: project,
             title,
             id,
             goal,
-        },
+        }),
+        PhaseCommand::Set {
+            project,
+            phase,
+            title,
+            goal,
+        } => {
+            if title.is_none() && goal.is_none() {
+                return Err(Failure::Usage(
+                    "phase set requires at least one of --title or --goal".to_owned(),
+                ));
+            }
+            Ok(editing::Request::SetPhase {
+                target: project,
+                phase,
+                title,
+                goal: clearable(goal),
+            })
+        }
         PhaseCommand::Remove {
             project,
             phase,
             force,
-        } => editing::Request::RemovePhase {
+        } => Ok(editing::Request::RemovePhase {
             target: project,
             phase,
             force,
-        },
+        }),
     }
 }
 
-fn task_request(command: TaskCommand) -> editing::Request {
+fn task_request(command: TaskCommand) -> Result<editing::Request, Failure> {
     match command {
         TaskCommand::Add {
             project,
@@ -306,7 +342,7 @@ fn task_request(command: TaskCommand) -> editing::Request {
             status,
             due,
             note,
-        } => editing::Request::AddTask {
+        } => Ok(editing::Request::AddTask {
             target: project,
             phase,
             title,
@@ -314,41 +350,63 @@ fn task_request(command: TaskCommand) -> editing::Request {
             status: status.map(|value| value.as_str().to_owned()),
             due,
             note,
-        },
+        }),
+        TaskCommand::Set {
+            project,
+            phase,
+            task,
+            title,
+            due,
+            note,
+        } => {
+            if title.is_none() && due.is_none() && note.is_none() {
+                return Err(Failure::Usage(
+                    "task set requires at least one of --title, --due, or --note".to_owned(),
+                ));
+            }
+            Ok(editing::Request::SetTask {
+                target: project,
+                phase,
+                task,
+                title,
+                due: clearable(due),
+                note: clearable(note),
+            })
+        }
         TaskCommand::Status {
             project,
             phase,
             task,
             status,
-        } => editing::Request::SetTaskStatus {
+        } => Ok(editing::Request::SetTaskStatus {
             target: project,
             phase,
             task,
             status: status.as_str().to_owned(),
-        },
+        }),
         TaskCommand::Done {
             project,
             phase,
             task,
-        } => editing::Request::SetTaskStatus {
+        } => Ok(editing::Request::SetTaskStatus {
             target: project,
             phase,
             task,
             status: "done".to_owned(),
-        },
+        }),
         TaskCommand::Remove {
             project,
             phase,
             task,
-        } => editing::Request::RemoveTask {
+        } => Ok(editing::Request::RemoveTask {
             target: project,
             phase,
             task,
-        },
+        }),
     }
 }
 
-fn issue_request(command: IssueCommand) -> editing::Request {
+fn issue_request(command: IssueCommand) -> Result<editing::Request, Failure> {
     match command {
         IssueCommand::Add {
             project,
@@ -357,28 +415,79 @@ fn issue_request(command: IssueCommand) -> editing::Request {
             id,
             url,
             note,
-        } => editing::Request::AddIssue {
+        } => Ok(editing::Request::AddIssue {
             target: project,
             title,
             severity: severity.as_str().to_owned(),
             id,
             url,
             note,
-        },
+        }),
+        IssueCommand::Set {
+            project,
+            issue,
+            title,
+            severity,
+            url,
+            note,
+        } => {
+            if title.is_none() && severity.is_none() && url.is_none() && note.is_none() {
+                return Err(Failure::Usage(
+                    "issue set requires at least one of --title, --severity, --url, or --note"
+                        .to_owned(),
+                ));
+            }
+            Ok(editing::Request::SetIssue {
+                target: project,
+                issue,
+                title,
+                severity: severity.map(|value| value.as_str().to_owned()),
+                url: clearable(url),
+                note: clearable(note),
+            })
+        }
         IssueCommand::Status {
             project,
             issue,
             status,
-        } => editing::Request::SetIssueStatus {
+        } => Ok(editing::Request::SetIssueStatus {
             target: project,
             issue,
             status: status.as_str().to_owned(),
-        },
-        IssueCommand::Remove { project, issue } => editing::Request::RemoveIssue {
+        }),
+        IssueCommand::Remove { project, issue } => Ok(editing::Request::RemoveIssue {
             target: project,
             issue,
-        },
+        }),
     }
+}
+
+fn parse_tags(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn parse_link_args(args: &[String]) -> Result<Vec<(String, String)>, Failure> {
+    let mut links = Vec::with_capacity(args.len());
+    for arg in args {
+        let Some((label, url)) = arg.split_once('=') else {
+            return Err(Failure::Usage(format!(
+                "invalid --link {arg}: expected LABEL=URL"
+            )));
+        };
+        let label = label.trim();
+        let url = url.trim();
+        if label.is_empty() || url.is_empty() {
+            return Err(Failure::Usage(format!(
+                "invalid --link {arg}: expected LABEL=URL"
+            )));
+        }
+        links.push((label.to_owned(), url.to_owned()));
+    }
+    Ok(links)
 }
 
 fn watch_request(command: WatchCommand) -> editing::Request {

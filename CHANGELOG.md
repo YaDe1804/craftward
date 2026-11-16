@@ -9,14 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Desktop editing for task status, issue status, adding a task to a phase,
-  and adding an issue. Writes go through the same `craftward-core` path as
-  the CLI, with a content fingerprint so an external file change is not
-  overwritten. See [ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md)
-  and [docs/desktop.md](docs/desktop.md).
+- Desktop editing with undo toasts (about eight seconds), sticky conflict
+  banners, workspace project create/add/remove, overview header edit, phase
+  add/edit/remove, task and issue add/edit/remove, and shared
+  fingerprint-checked writers for project and workspace files. Core and CLI
+  gain `phase set`, `task set`, `issue set`, header tags/links, and restore
+  helpers. See [ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md) and
+  [docs/desktop.md](docs/desktop.md).
 
 ### Fixed
 
+- Desktop status chips are the menu button itself (no double frame); titles
+  stay column-aligned via a shared chip width.
 - Desktop status and stack symbols use only glyphs present in egui's
   bundled fonts; a unit test fails if a new symbol lacks a glyph.
 - Portfolio status badges shrink to their text width instead of stretching

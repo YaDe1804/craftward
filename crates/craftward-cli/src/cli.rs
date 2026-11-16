@@ -230,9 +230,21 @@ pub(crate) enum ProjectCommand {
         /// New description; pass an empty value to clear.
         #[arg(long)]
         description: Option<String>,
-        /// New source directory path stored in the project file.
+        /// New source directory; pass an empty value to clear.
         #[arg(long = "source-dir")]
         source_dir: Option<String>,
+        /// Comma-separated tags; pass an empty value to clear.
+        #[arg(long)]
+        tags: Option<String>,
+        /// Remove all tags.
+        #[arg(long = "clear-tags")]
+        clear_tags: bool,
+        /// Link as LABEL=URL; repeat for several links (replaces the list).
+        #[arg(long = "link", value_name = "LABEL=URL")]
+        links: Vec<String>,
+        /// Remove all links.
+        #[arg(long = "clear-links")]
+        clear_links: bool,
     },
 }
 
@@ -251,6 +263,22 @@ pub(crate) enum PhaseCommand {
         #[arg(long)]
         id: Option<String>,
         /// Optional phase goal.
+        #[arg(long)]
+        goal: Option<String>,
+    },
+    /// Change a phase title or goal.
+    #[command(long_about = PHASE_SET_ABOUT)]
+    Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Phase id to update.
+        #[arg(value_name = "PHASE")]
+        phase: String,
+        /// New phase title.
+        #[arg(long)]
+        title: Option<String>,
+        /// New goal; pass an empty value to clear.
         #[arg(long)]
         goal: Option<String>,
     },
@@ -293,6 +321,28 @@ pub(crate) enum TaskCommand {
         #[arg(long, value_name = "YYYY-MM-DD")]
         due: Option<String>,
         /// Optional free-form note.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Change a task title, due day, or note.
+    #[command(long_about = TASK_SET_ABOUT)]
+    Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Phase id that owns the task.
+        #[arg(value_name = "PHASE")]
+        phase: String,
+        /// Task id to update.
+        #[arg(value_name = "TASK")]
+        task: String,
+        /// New task title.
+        #[arg(long)]
+        title: Option<String>,
+        /// Due day as YYYY-MM-DD; pass an empty value to clear.
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        due: Option<String>,
+        /// Note; pass an empty value to clear.
         #[arg(long)]
         note: Option<String>,
     },
@@ -361,6 +411,28 @@ pub(crate) enum IssueCommand {
         #[arg(long)]
         url: Option<String>,
         /// Optional free-form note.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Change an issue title, severity, URL, or note.
+    #[command(long_about = ISSUE_SET_ABOUT)]
+    Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Issue id to update.
+        #[arg(value_name = "ISSUE")]
+        issue: String,
+        /// New issue title.
+        #[arg(long)]
+        title: Option<String>,
+        /// New severity.
+        #[arg(long, value_enum)]
+        severity: Option<CliIssueSeverity>,
+        /// Tracker URL; pass an empty value to clear.
+        #[arg(long)]
+        url: Option<String>,
+        /// Note; pass an empty value to clear.
         #[arg(long)]
         note: Option<String>,
     },
@@ -899,28 +971,37 @@ PROJECT is a workspace project id, a craftward.json file, or a directory
 that contains one.";
 
 const PROJECT_ABOUT: &str = "\
-Use the set subcommand to change name, status, version, description, or
-source_dir.";
+Use the set subcommand to change name, status, version, description,
+source_dir, tags, or links.";
 
 const PROJECT_SET_ABOUT: &str = "\
-At least one option is required. An empty --version or --description
-removes that field.";
+At least one option is required. An empty --version, --description,
+--source-dir, or --tags removes that field. --link LABEL=URL may be
+repeated and replaces the whole links list.";
 
 const PHASE_ABOUT: &str = "\
-Use add or remove.";
+Use add, set, or remove.";
 
 const PHASE_ADD_ABOUT: &str = "\
 The plan is created when the project has none. Without --id, the id is
 formed from the title.";
 
+const PHASE_SET_ABOUT: &str = "\
+At least one of --title or --goal is required. An empty --goal clears
+the goal.";
+
 const PHASE_REMOVE_ABOUT: &str = "\
 The phase must have no tasks. --force removes the phase and its tasks.";
 
 const TASK_ABOUT: &str = "\
-Use add, status, done, or remove.";
+Use add, set, status, done, or remove.";
 
 const TASK_ADD_ABOUT: &str = "\
 Without --id, the id is formed from the title. STATUS defaults to open.";
+
+const TASK_SET_ABOUT: &str = "\
+At least one of --title, --due, or --note is required. An empty --due or
+--note clears that field.";
 
 const TASK_STATUS_ABOUT: &str = "\
 STATUS is open, in_progress, done, or dropped.";
@@ -932,10 +1013,14 @@ const TASK_REMOVE_ABOUT: &str = "\
 Removes the task from its phase.";
 
 const ISSUE_ABOUT: &str = "\
-Use add, status, or remove.";
+Use add, set, status, or remove.";
 
 const ISSUE_ADD_ABOUT: &str = "\
 Its status is open. SEVERITY is low, medium, high, or critical.";
+
+const ISSUE_SET_ABOUT: &str = "\
+At least one of --title, --severity, --url, or --note is required. An
+empty --url or --note clears that field.";
 
 const ISSUE_STATUS_ABOUT: &str = "\
 STATUS is open, in_progress, resolved, or wont_fix.";

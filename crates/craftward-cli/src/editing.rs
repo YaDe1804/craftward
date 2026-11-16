@@ -5,10 +5,11 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use craftward_core::{
-    EditError, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_issue,
+    EditError, IssueChanges, LinkChange, LinkListUpdate, NewIssue, NewPhase, NewTask, NewWatch,
+    PhaseChanges, ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_issue,
     add_phase, add_task, add_watch, edit_file, load_from_path, remove_issue, remove_phase,
-    remove_task, remove_watch, render_project, set_issue_status, set_project, set_task_status,
-    utc_date,
+    remove_task, remove_watch, render_project, set_issue, set_issue_status, set_phase, set_project,
+    set_task, set_task_status, utc_date,
 };
 
 use crate::{Failure, resolve_project};
@@ -25,13 +26,23 @@ pub(crate) enum Request {
         status: Option<String>,
         version: Update,
         description: Update,
-        source_dir: Option<String>,
+        source_dir: Update,
+        tags: Option<Vec<String>>,
+        clear_tags: bool,
+        links: Option<Vec<(String, String)>>,
+        clear_links: bool,
     },
     AddPhase {
         target: String,
         title: String,
         id: Option<String>,
         goal: Option<String>,
+    },
+    SetPhase {
+        target: String,
+        phase: String,
+        title: Option<String>,
+        goal: Update,
     },
     RemovePhase {
         target: String,
@@ -46,6 +57,14 @@ pub(crate) enum Request {
         status: Option<String>,
         due: Option<String>,
         note: Option<String>,
+    },
+    SetTask {
+        target: String,
+        phase: String,
+        task: String,
+        title: Option<String>,
+        due: Update,
+        note: Update,
     },
     SetTaskStatus {
         target: String,
@@ -65,6 +84,14 @@ pub(crate) enum Request {
         id: Option<String>,
         url: Option<String>,
         note: Option<String>,
+    },
+    SetIssue {
+        target: String,
+        issue: String,
+        title: Option<String>,
+        severity: Option<String>,
+        url: Update,
+        note: Update,
     },
     SetIssueStatus {
         target: String,
@@ -140,24 +167,7 @@ fn apply(
     updated_on: &str,
 ) -> Result<craftward_core::EditOutcome, EditError> {
     match request {
-        Request::SetProject {
-            name,
-            status,
-            version,
-            description,
-            source_dir,
-            ..
-        } => set_project(
-            project,
-            ProjectChanges {
-                name: name.as_deref(),
-                status: status.as_deref(),
-                version: version.as_update(),
-                description: description.as_update(),
-                source_dir: source_dir.as_deref(),
-            },
-            updated_on,
-        ),
+        Request::SetProject { .. } => apply_set_project(request, project, updated_on),
         Request::AddPhase {
             title, id, goal, ..
         } => add_phase(
@@ -166,6 +176,17 @@ fn apply(
                 title,
                 id: id.as_deref(),
                 goal: goal.as_deref(),
+            },
+            updated_on,
+        ),
+        Request::SetPhase {
+            phase, title, goal, ..
+        } => set_phase(
+            project,
+            phase,
+            PhaseChanges {
+                title: title.as_deref(),
+                goal: goal.as_update(),
             },
             updated_on,
         ),
@@ -192,6 +213,24 @@ fn apply(
             },
             updated_on,
         ),
+        Request::SetTask {
+            phase,
+            task,
+            title,
+            due,
+            note,
+            ..
+        } => set_task(
+            project,
+            phase,
+            task,
+            TaskChanges {
+                title: title.as_deref(),
+                due: due.as_update(),
+                note: note.as_update(),
+            },
+            updated_on,
+        ),
         Request::SetTaskStatus {
             phase,
             task,
@@ -200,12 +239,71 @@ fn apply(
         } => set_task_status(project, phase, task, status, updated_on),
         Request::RemoveTask { phase, task, .. } => remove_task(project, phase, task, updated_on),
         Request::AddIssue { .. }
+        | Request::SetIssue { .. }
         | Request::SetIssueStatus { .. }
         | Request::RemoveIssue { .. }
         | Request::AddWatch { .. }
         | Request::RemoveWatch { .. } => apply_record(request, project, updated_on),
         Request::Show { .. } => unreachable!("show does not change the file"),
     }
+}
+
+fn apply_set_project(
+    request: &Request,
+    project: &craftward_core::Project,
+    updated_on: &str,
+) -> Result<craftward_core::EditOutcome, EditError> {
+    let Request::SetProject {
+        name,
+        status,
+        version,
+        description,
+        source_dir,
+        tags,
+        clear_tags,
+        links,
+        clear_links,
+        ..
+    } = request
+    else {
+        unreachable!("apply_set_project expects SetProject");
+    };
+    let tags_update = if *clear_tags {
+        StringListUpdate::Clear
+    } else if let Some(tags) = tags {
+        StringListUpdate::Set(tags.as_slice())
+    } else {
+        StringListUpdate::Keep
+    };
+    let link_changes: Vec<LinkChange<'_>> = links.as_ref().map_or_default(|items| {
+        items
+            .iter()
+            .map(|(label, url)| LinkChange {
+                label: label.as_str(),
+                url: url.as_str(),
+            })
+            .collect()
+    });
+    let links_update = if *clear_links {
+        LinkListUpdate::Clear
+    } else if links.is_some() {
+        LinkListUpdate::Set(&link_changes)
+    } else {
+        LinkListUpdate::Keep
+    };
+    set_project(
+        project,
+        ProjectChanges {
+            name: name.as_deref(),
+            status: status.as_deref(),
+            version: version.as_update(),
+            description: description.as_update(),
+            source_dir: source_dir.as_update(),
+            tags: tags_update,
+            links: links_update,
+        },
+        updated_on,
+    )
 }
 
 fn apply_record(
@@ -229,6 +327,24 @@ fn apply_record(
                 id: id.as_deref(),
                 url: url.as_deref(),
                 note: note.as_deref(),
+            },
+            updated_on,
+        ),
+        Request::SetIssue {
+            issue,
+            title,
+            severity,
+            url,
+            note,
+            ..
+        } => set_issue(
+            project,
+            issue,
+            IssueChanges {
+                title: title.as_deref(),
+                severity: severity.as_deref(),
+                url: url.as_update(),
+                note: note.as_update(),
             },
             updated_on,
         ),
@@ -258,8 +374,10 @@ fn apply_record(
         Request::Show { .. }
         | Request::SetProject { .. }
         | Request::AddPhase { .. }
+        | Request::SetPhase { .. }
         | Request::RemovePhase { .. }
         | Request::AddTask { .. }
+        | Request::SetTask { .. }
         | Request::SetTaskStatus { .. }
         | Request::RemoveTask { .. } => unreachable!("handled by apply"),
     }
@@ -269,11 +387,14 @@ fn confirmation(request: &Request, created: Option<&str>) -> String {
     match request {
         Request::SetProject { .. } => "updated project".to_owned(),
         Request::AddPhase { .. } => format!("added phase {}", created.unwrap_or("?")),
+        Request::SetPhase { phase, .. } => format!("updated phase {phase}"),
         Request::RemovePhase { phase, .. } => format!("removed phase {phase}"),
         Request::AddTask { .. } => format!("added task {}", created.unwrap_or("?")),
+        Request::SetTask { task, .. } => format!("updated task {task}"),
         Request::SetTaskStatus { task, status, .. } => format!("set task {task} to {status}"),
         Request::RemoveTask { task, .. } => format!("removed task {task}"),
         Request::AddIssue { .. } => format!("added issue {}", created.unwrap_or("?")),
+        Request::SetIssue { issue, .. } => format!("updated issue {issue}"),
         Request::SetIssueStatus { issue, status, .. } => {
             format!("set issue {issue} to {status}")
         }
@@ -311,11 +432,14 @@ impl Request {
             Self::Show { target }
             | Self::SetProject { target, .. }
             | Self::AddPhase { target, .. }
+            | Self::SetPhase { target, .. }
             | Self::RemovePhase { target, .. }
             | Self::AddTask { target, .. }
+            | Self::SetTask { target, .. }
             | Self::SetTaskStatus { target, .. }
             | Self::RemoveTask { target, .. }
             | Self::AddIssue { target, .. }
+            | Self::SetIssue { target, .. }
             | Self::SetIssueStatus { target, .. }
             | Self::RemoveIssue { target, .. }
             | Self::AddWatch { target, .. }
