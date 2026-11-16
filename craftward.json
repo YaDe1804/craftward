@@ -11,7 +11,7 @@
     "developer-tools",
     "open-source"
   ],
-  "updated": "2026-11-15",
+  "updated": "2026-11-16",
   "links": [
     {
       "label": "Repository",
@@ -247,6 +247,11 @@
             "id": "t14",
             "title": "Stack-Befehle: Komponenten und Lockdateien",
             "status": "done"
+          },
+          {
+            "id": "t15",
+            "title": "SeQu-Check v1: 15 Befunde in sechs Paketen behoben",
+            "status": "done"
           }
         ]
       },
@@ -305,7 +310,7 @@
           {
             "id": "t01",
             "title": "Eigenes Theme: Farben, Schrift, Abstände, Karten",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t02",
@@ -330,12 +335,12 @@
           {
             "id": "t06",
             "title": "Ansicht: Portfolio mit allen Projekten und Status",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t07",
             "title": "Ansicht: Projektdetail mit Meilensteinen und Planung",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t08",
@@ -398,6 +403,16 @@
             "id": "t07",
             "title": "Release v0.1.0 auf GitHub",
             "status": "open"
+          },
+          {
+            "id": "t08",
+            "title": "Community Standards auf GitHub vollständig: Code of Conduct, Issue-Vorlagen",
+            "status": "open"
+          },
+          {
+            "id": "t09",
+            "title": "Außenauftritt: r/rust, Show HN, This Week in Rust, Artikel; danach Traffic auswerten",
+            "status": "open"
           }
         ]
       },
@@ -444,5 +459,42 @@
         ]
       }
     ]
-  }
+  },
+  "issues": [
+    {
+      "id": "cli-help-option-docs",
+      "title": "CLI help: options without descriptions, global options mixed into command options",
+      "severity": "low",
+      "status": "open",
+      "note": "Seen in issue add --help and watch add --help. Add help text to every option and show global options in their own section."
+    },
+    {
+      "id": "app-symbol-glyphs",
+      "title": "Desktop app: status and stack symbols render as empty boxes",
+      "severity": "medium",
+      "status": "open",
+      "note": "Glyphs missing in the bundled fonts. Use only covered glyphs; add a test that every symbol used is covered by the fonts."
+    },
+    {
+      "id": "app-badge-width",
+      "title": "Desktop app: status badge stretches over the full card width",
+      "severity": "low",
+      "status": "open"
+    },
+    {
+      "id": "app-grid-last-row",
+      "title": "Desktop app: single card in the last grid row spans all columns",
+      "severity": "low",
+      "status": "open"
+    }
+  ],
+  "watch_items": [
+    {
+      "id": "accesskit-zbus6",
+      "kind": "review",
+      "title": "Check whether accesskit moved to zbus 6 and remove the three deny.toml advisory exceptions",
+      "due": "2027-02-15",
+      "note": "RUSTSEC-2026-0370, -0371, -0372; see ADR 0023"
+    }
+  ]
 }
