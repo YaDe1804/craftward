@@ -472,20 +472,27 @@
       "id": "app-symbol-glyphs",
       "title": "Desktop app: status and stack symbols render as empty boxes",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Glyphs missing in the bundled fonts. Use only covered glyphs; add a test that every symbol used is covered by the fonts."
     },
     {
       "id": "app-badge-width",
       "title": "Desktop app: status badge stretches over the full card width",
       "severity": "low",
-      "status": "open"
+      "status": "resolved"
     },
     {
       "id": "app-grid-last-row",
       "title": "Desktop app: single card in the last grid row spans all columns",
       "severity": "low",
-      "status": "open"
+      "status": "resolved"
+    },
+    {
+      "id": "app-symbol-meaning",
+      "title": "Desktop app: ASCII status symbols are ambiguous ('+' for done and for tool)",
+      "severity": "low",
+      "status": "open",
+      "note": "Use meaningful glyphs available in the bundled fonts (for example check mark, filled and empty circle, half circle); keep the glyph coverage test."
     }
   ],
   "watch_items": [

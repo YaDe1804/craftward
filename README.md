@@ -41,11 +41,13 @@ see [ADR 0022](docs/adr/0022-command-line-parsing-with-clap.md).
 cargo run -p craftward-app --release
 ```
 
-Opens a read-only portfolio window over the same workspace file and
-`craftward.db` as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`,
-platform defaults). `--version` prints the name and version. See
-[docs/desktop.md](docs/desktop.md) and
-[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md).
+Opens a portfolio window over the same workspace file and `craftward.db`
+as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`, platform defaults).
+Task and issue status can be changed, and tasks or issues added, through
+the same writers as the CLI. `--version` prints the name and version. See
+[docs/desktop.md](docs/desktop.md),
+[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md), and
+[ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when

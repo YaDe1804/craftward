@@ -7,10 +7,10 @@
 
 `craftward-app` is a native desktop UI built with eframe 0.37.0 (egui).
 Default features are off. Enabled features are `accesskit`, `default_fonts`,
-`glow`, `wayland`, and `x11`. Persistence is not enabled. The app is
-read-only in this first package: it loads the same workspace file, project
-files, and `craftward.db` as the CLI, using `locate_workspace` /
-`locate_data`, and does not edit files, run radar, or open the network.
+`glow`, `wayland`, and `x11`. Persistence is not enabled. The app loads the
+same workspace file, project files, and `craftward.db` as the CLI, using
+`locate_workspace` / `locate_data`. Editing is introduced in ADR 0024; this
+package still does not run radar or open the network.
 
 ### Renderer
 

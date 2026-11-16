@@ -3,10 +3,11 @@
 use craftward_core::{
     ComponentKind, Issue, IssueSeverity, IssueStatus, Phase, PhaseState, Project, ProjectStatus,
     Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind, days_between,
-    phase_state, snapshot, task_progress, unix_now, utc_day,
+    is_calendar_date, phase_state, snapshot, task_progress, unix_now, utc_day,
 };
 
 use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject, count_by_severity};
+use crate::symbols;
 use crate::theme::{GRID_THREE_COLUMNS_FROM, GRID_TWO_COLUMNS_FROM};
 
 /// Portfolio summary shown above the project cards.
@@ -424,6 +425,170 @@ pub fn grid_columns(available_width: f32) -> usize {
     }
 }
 
+/// Column slots to allocate for a portfolio row.
+///
+/// Always returns `columns` so a short last row keeps each card at the same
+/// width as a full row, instead of stretching a single card across the row.
+#[must_use]
+pub fn grid_row_column_slots(columns: usize, cards_in_row: usize) -> usize {
+    debug_assert!(cards_in_row > 0);
+    debug_assert!(cards_in_row <= columns);
+    columns.max(1)
+}
+
+/// Whether a status badge should expand to the parent width.
+///
+/// Badges shrink to their text. The UI must not stretch them across a card.
+#[must_use]
+pub const fn badge_stretches_to_parent() -> bool {
+    false
+}
+
+/// Draft for adding a task to a phase.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskForm {
+    /// Phase that receives the task.
+    pub phase_id: String,
+    /// Required title.
+    pub title: String,
+    /// Optional due date (`YYYY-MM-DD`), empty when unset.
+    pub due: String,
+}
+
+impl TaskForm {
+    /// Starts an empty form for `phase_id`.
+    #[must_use]
+    pub fn new(phase_id: impl Into<String>) -> Self {
+        Self {
+            phase_id: phase_id.into(),
+            title: String::new(),
+            due: String::new(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error, when the draft is not ready to save.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            return Some("Title is required");
+        }
+        let due = self.due.trim();
+        if !due.is_empty() && !is_calendar_date(due) {
+            return Some("Due date must be YYYY-MM-DD");
+        }
+        None
+    }
+
+    /// Due date for the core API (`None` when blank).
+    #[must_use]
+    pub fn due_for_edit(&self) -> Option<&str> {
+        let due = self.due.trim();
+        if due.is_empty() { None } else { Some(due) }
+    }
+
+    /// Trimmed title for the core API.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+}
+
+/// Draft for adding an issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueForm {
+    /// Required title.
+    pub title: String,
+    /// Severity schema word.
+    pub severity: String,
+    /// Optional note.
+    pub note: String,
+}
+
+impl Default for IssueForm {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            severity: "medium".to_owned(),
+            note: String::new(),
+        }
+    }
+}
+
+impl IssueForm {
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error, when the draft is not ready to save.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            return Some("Title is required");
+        }
+        if !matches!(
+            self.severity.as_str(),
+            "low" | "medium" | "high" | "critical"
+        ) {
+            return Some("Severity must be low, medium, high, or critical");
+        }
+        None
+    }
+
+    /// Trimmed title for the core API.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// Note for the core API (`None` when blank).
+    #[must_use]
+    pub fn note_for_edit(&self) -> Option<&str> {
+        let note = self.note.trim();
+        if note.is_empty() { None } else { Some(note) }
+    }
+}
+
+/// Task status choices for the status menu (schema word + label).
+#[must_use]
+pub fn task_status_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("open", "Open"),
+        ("in_progress", "In progress"),
+        ("done", "Done"),
+        ("dropped", "Dropped"),
+    ]
+}
+
+/// Issue status choices for the status menu (schema word + label).
+#[must_use]
+pub fn issue_status_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("open", "Open"),
+        ("in_progress", "In progress"),
+        ("resolved", "Resolved"),
+        ("wont_fix", "Won't fix"),
+    ]
+}
+
+/// Issue severity choices for the add form.
+#[must_use]
+pub fn issue_severity_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+        ("critical", "Critical"),
+    ]
+}
+
 /// Human label for open issues (singular / plural / none).
 #[must_use]
 pub fn open_issues_label(count: usize) -> String {
@@ -705,7 +870,7 @@ fn deadline_rows(project: &Project, today: &str) -> Vec<DeadlineRow> {
                     rows.push(DeadlineRow {
                         kind: StatusBadge {
                             key: "task",
-                            symbol: "☑",
+                            symbol: symbols::TASK,
                             label: "Task",
                         },
                         title: task.title.clone(),
@@ -742,32 +907,32 @@ fn project_status_badge(status: ProjectStatus) -> StatusBadge {
     match status {
         ProjectStatus::Idea => StatusBadge {
             key: "idea",
-            symbol: "○",
+            symbol: symbols::OPEN,
             label: "Idea",
         },
         ProjectStatus::InDevelopment => StatusBadge {
             key: "in_development",
-            symbol: "◐",
+            symbol: symbols::RUNNING,
             label: "In development",
         },
         ProjectStatus::Released => StatusBadge {
             key: "released",
-            symbol: "●",
+            symbol: symbols::RELEASED,
             label: "Released",
         },
         ProjectStatus::Maintenance => StatusBadge {
             key: "maintenance",
-            symbol: "◇",
+            symbol: symbols::MAINTENANCE,
             label: "Maintenance",
         },
         ProjectStatus::Paused => StatusBadge {
             key: "paused",
-            symbol: "||",
+            symbol: symbols::PAUSED,
             label: "Paused",
         },
         ProjectStatus::Discontinued => StatusBadge {
             key: "discontinued",
-            symbol: "x",
+            symbol: symbols::CLOSED,
             label: "Discontinued",
         },
     }
@@ -777,17 +942,17 @@ fn phase_status_badge(state: PhaseState) -> StatusBadge {
     match state {
         PhaseState::Open => StatusBadge {
             key: "open",
-            symbol: "○",
+            symbol: symbols::OPEN,
             label: "Open",
         },
         PhaseState::InProgress => StatusBadge {
             key: "in_progress",
-            symbol: "◐",
+            symbol: symbols::RUNNING,
             label: "In progress",
         },
         PhaseState::Done => StatusBadge {
             key: "done",
-            symbol: "✓",
+            symbol: symbols::DONE,
             label: "Done",
         },
     }
@@ -797,22 +962,22 @@ fn task_status_badge(status: TaskStatus) -> StatusBadge {
     match status {
         TaskStatus::Open => StatusBadge {
             key: "open",
-            symbol: "○",
+            symbol: symbols::OPEN,
             label: "Open",
         },
         TaskStatus::InProgress => StatusBadge {
             key: "in_progress",
-            symbol: "◐",
+            symbol: symbols::RUNNING,
             label: "In progress",
         },
         TaskStatus::Done => StatusBadge {
             key: "done",
-            symbol: "✓",
+            symbol: symbols::DONE,
             label: "Done",
         },
         TaskStatus::Dropped => StatusBadge {
             key: "dropped",
-            symbol: "–",
+            symbol: symbols::DROPPED,
             label: "Dropped",
         },
     }
@@ -822,22 +987,22 @@ fn issue_status_badge(status: IssueStatus) -> StatusBadge {
     match status {
         IssueStatus::Open => StatusBadge {
             key: "open",
-            symbol: "○",
+            symbol: symbols::OPEN,
             label: "Open",
         },
         IssueStatus::InProgress => StatusBadge {
             key: "in_progress",
-            symbol: "◐",
+            symbol: symbols::RUNNING,
             label: "In progress",
         },
         IssueStatus::Resolved => StatusBadge {
             key: "resolved",
-            symbol: "✓",
+            symbol: symbols::DONE,
             label: "Resolved",
         },
         IssueStatus::WontFix => StatusBadge {
             key: "wont_fix",
-            symbol: "–",
+            symbol: symbols::DROPPED,
             label: "Won't fix",
         },
     }
@@ -847,22 +1012,22 @@ fn issue_severity_badge(severity: IssueSeverity) -> StatusBadge {
     match severity {
         IssueSeverity::Low => StatusBadge {
             key: "low",
-            symbol: "v",
+            symbol: symbols::SEVERITY_LOW,
             label: "Low",
         },
         IssueSeverity::Medium => StatusBadge {
             key: "medium",
-            symbol: "*",
+            symbol: symbols::SEVERITY_MEDIUM,
             label: "Medium",
         },
         IssueSeverity::High => StatusBadge {
             key: "high",
-            symbol: "^",
+            symbol: symbols::SEVERITY_HIGH,
             label: "High",
         },
         IssueSeverity::Critical => StatusBadge {
             key: "critical",
-            symbol: "!",
+            symbol: symbols::SEVERITY_CRITICAL,
             label: "Critical",
         },
     }
@@ -872,27 +1037,27 @@ fn severity_badge(severity: Severity) -> StatusBadge {
     match severity {
         Severity::Critical => StatusBadge {
             key: "critical",
-            symbol: "!",
+            symbol: symbols::SEVERITY_CRITICAL,
             label: "Critical",
         },
         Severity::High => StatusBadge {
             key: "high",
-            symbol: "^",
+            symbol: symbols::SEVERITY_HIGH,
             label: "High",
         },
         Severity::Medium => StatusBadge {
             key: "medium",
-            symbol: "*",
+            symbol: symbols::SEVERITY_MEDIUM,
             label: "Medium",
         },
         Severity::Low => StatusBadge {
             key: "low",
-            symbol: "v",
+            symbol: symbols::SEVERITY_LOW,
             label: "Low",
         },
         Severity::Unknown => StatusBadge {
             key: "unknown",
-            symbol: "?",
+            symbol: symbols::UNKNOWN,
             label: "Unknown",
         },
     }
@@ -900,15 +1065,19 @@ fn severity_badge(severity: Severity) -> StatusBadge {
 
 fn finding_kind_badge(kind: craftward_core::FindingKind) -> StatusBadge {
     let (symbol, label) = match kind {
-        craftward_core::FindingKind::Vulnerability => ("!", "Vulnerability"),
-        craftward_core::FindingKind::Malicious => ("!", "Malicious"),
-        craftward_core::FindingKind::Unmaintained => ("~", "Unmaintained"),
-        craftward_core::FindingKind::Unsound => ("!", "Unsound"),
-        craftward_core::FindingKind::Notice => ("i", "Notice"),
-        craftward_core::FindingKind::Eol => ("!", "End of life"),
-        craftward_core::FindingKind::EolSoon => ("*", "EOL soon"),
-        craftward_core::FindingKind::PlatformDeadline => ("!", "Play deadline"),
-        craftward_core::FindingKind::PlatformDeadlineSoon => ("*", "Play deadline soon"),
+        craftward_core::FindingKind::Vulnerability => (symbols::SEVERITY_CRITICAL, "Vulnerability"),
+        craftward_core::FindingKind::Malicious => (symbols::SEVERITY_CRITICAL, "Malicious"),
+        craftward_core::FindingKind::Unmaintained => (symbols::SOFT, "Unmaintained"),
+        craftward_core::FindingKind::Unsound => (symbols::SEVERITY_CRITICAL, "Unsound"),
+        craftward_core::FindingKind::Notice => (symbols::NOTICE, "Notice"),
+        craftward_core::FindingKind::Eol => (symbols::SEVERITY_CRITICAL, "End of life"),
+        craftward_core::FindingKind::EolSoon => (symbols::SEVERITY_MEDIUM, "EOL soon"),
+        craftward_core::FindingKind::PlatformDeadline => {
+            (symbols::SEVERITY_CRITICAL, "Play deadline")
+        }
+        craftward_core::FindingKind::PlatformDeadlineSoon => {
+            (symbols::SEVERITY_MEDIUM, "Play deadline soon")
+        }
     };
     StatusBadge {
         key: kind.as_str(),
@@ -921,42 +1090,42 @@ fn component_kind_badge(kind: ComponentKind) -> StatusBadge {
     match kind {
         ComponentKind::Platform => StatusBadge {
             key: "platform",
-            symbol: "▣",
+            symbol: symbols::PLATFORM,
             label: "Platform",
         },
         ComponentKind::Language => StatusBadge {
             key: "language",
-            symbol: "Aa",
+            symbol: symbols::LANGUAGE,
             label: "Language",
         },
         ComponentKind::Framework => StatusBadge {
             key: "framework",
-            symbol: "⬡",
+            symbol: symbols::FRAMEWORK,
             label: "Framework",
         },
         ComponentKind::Runtime => StatusBadge {
             key: "runtime",
-            symbol: "▶",
+            symbol: symbols::RUNTIME,
             label: "Runtime",
         },
         ComponentKind::Sdk => StatusBadge {
             key: "sdk",
-            symbol: "⧉",
+            symbol: symbols::SDK,
             label: "SDK",
         },
         ComponentKind::Service => StatusBadge {
             key: "service",
-            symbol: "~",
+            symbol: symbols::SERVICE,
             label: "Service",
         },
         ComponentKind::Tool => StatusBadge {
             key: "tool",
-            symbol: "+",
+            symbol: symbols::TOOL,
             label: "Tool",
         },
         ComponentKind::Other => StatusBadge {
             key: "other",
-            symbol: "·",
+            symbol: symbols::OTHER,
             label: "Other",
         },
     }
@@ -966,22 +1135,22 @@ fn watch_kind_badge(kind: WatchKind) -> StatusBadge {
     match kind {
         WatchKind::Deadline => StatusBadge {
             key: "deadline",
-            symbol: "!",
+            symbol: symbols::SEVERITY_CRITICAL,
             label: "Deadline",
         },
         WatchKind::Expiry => StatusBadge {
             key: "expiry",
-            symbol: "*",
+            symbol: symbols::SEVERITY_MEDIUM,
             label: "Expiry",
         },
         WatchKind::Review => StatusBadge {
             key: "review",
-            symbol: "@",
+            symbol: symbols::REVIEW,
             label: "Review",
         },
         WatchKind::Other => StatusBadge {
             key: "other",
-            symbol: "·",
+            symbol: symbols::OTHER,
             label: "Other",
         },
     }
@@ -997,9 +1166,10 @@ mod tests {
     };
 
     use super::{
-        ProgressView, StatusBadge, build_detail_at, build_portfolio_at, compare_urgency,
-        current_phase_title, grid_columns, open_findings_label, open_issues_label,
-        project_progress, project_status_badge, remaining_label, task_status_badge,
+        IssueForm, ProgressView, StatusBadge, TaskForm, badge_stretches_to_parent, build_detail_at,
+        build_portfolio_at, compare_urgency, current_phase_title, grid_columns,
+        grid_row_column_slots, open_findings_label, open_issues_label, project_progress,
+        project_status_badge, remaining_label, task_status_badge,
     };
     use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
     use crate::view::ProjectCard;
@@ -1160,11 +1330,13 @@ mod tests {
                 LoadedProject {
                     path: PathBuf::from("/tmp/good.json"),
                     project: Ok(sample_project("good", "Good", Some("2026-12-01"))),
+                    fingerprint: Some(craftward_core::content_fingerprint(b"good")),
                     findings: vec![finding("good", Severity::High)],
                 },
                 LoadedProject {
                     path: PathBuf::from("/tmp/bad.json"),
                     project: Err("invalid file".to_owned()),
+                    fingerprint: None,
                     findings: Vec::new(),
                 },
             ],
@@ -1224,7 +1396,49 @@ mod tests {
         assert_eq!(badge.label, "In development");
         assert_ne!(badge.symbol, "");
         let done = task_status_badge(TaskStatus::Done);
-        assert_eq!(done.display(), "✓ Done");
+        assert_eq!(done.display(), format!("{} Done", crate::symbols::DONE));
+    }
+
+    #[test]
+    fn badges_do_not_stretch_to_parent_width() {
+        assert!(!badge_stretches_to_parent());
+    }
+
+    #[test]
+    fn last_grid_row_keeps_full_column_count() {
+        assert_eq!(grid_row_column_slots(3, 1), 3);
+        assert_eq!(grid_row_column_slots(3, 2), 3);
+        assert_eq!(grid_row_column_slots(2, 1), 2);
+        assert_eq!(grid_row_column_slots(1, 1), 1);
+    }
+
+    #[test]
+    fn task_form_requires_title_and_valid_due() {
+        let mut form = TaskForm::new("phase-a");
+        assert!(!form.can_save());
+        assert_eq!(form.validation_message(), Some("Title is required"));
+        form.title = "  Ship it  ".to_owned();
+        assert!(form.can_save());
+        form.due = "15-11-2026".to_owned();
+        assert!(!form.can_save());
+        form.due = "2026-11-15".to_owned();
+        assert!(form.can_save());
+        assert_eq!(form.title_for_edit(), "Ship it");
+        assert_eq!(form.due_for_edit(), Some("2026-11-15"));
+    }
+
+    #[test]
+    fn issue_form_requires_title_and_known_severity() {
+        let mut form = IssueForm::default();
+        assert!(!form.can_save());
+        form.title = "Broken glyph".to_owned();
+        assert!(form.can_save());
+        form.severity = "urgent".to_owned();
+        assert!(!form.can_save());
+        form.severity = "high".to_owned();
+        form.note = "  note  ".to_owned();
+        assert!(form.can_save());
+        assert_eq!(form.note_for_edit(), Some("note"));
     }
 
     #[test]
@@ -1270,6 +1484,7 @@ mod tests {
         let loaded = LoadedProject {
             path: PathBuf::from("/tmp/p.json"),
             project: Ok(project),
+            fingerprint: Some(craftward_core::content_fingerprint(b"p")),
             findings: Vec::new(),
         };
         let detail = build_detail_at(0, &loaded, "2026-11-15");

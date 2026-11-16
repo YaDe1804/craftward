@@ -1,6 +1,8 @@
 //! Desktop application for Craftward.
 
+mod actions;
 mod load;
+mod symbols;
 mod theme;
 mod ui;
 mod view;

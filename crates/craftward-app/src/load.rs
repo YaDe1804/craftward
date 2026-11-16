@@ -5,11 +5,13 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use craftward_core::{
-    DATABASE_FILE, ProcessHost, Project, Severity, StateFilter, StoredFinding, list_findings,
-    list_projects, load_from_path, locate_data, locate_workspace, platform_path,
+    ContentFingerprint, DATABASE_FILE, ProcessHost, Project, Severity, StateFilter, StoredFinding,
+    content_fingerprint, list_findings, list_projects, load_from_str, locate_data,
+    locate_workspace, platform_path,
 };
 use craftward_store::SqliteStore;
 
@@ -31,6 +33,8 @@ pub struct LoadedProject {
     pub path: PathBuf,
     /// Parsed project, or why it could not be loaded.
     pub project: Result<Project, String>,
+    /// Fingerprint of the file bytes when the project loaded successfully.
+    pub fingerprint: Option<ContentFingerprint>,
     /// Open findings for this project's id (empty when the project failed).
     pub findings: Vec<StoredFinding>,
 }
@@ -95,20 +99,7 @@ pub fn load_portfolio() -> LoadedPortfolio {
             };
             let projects = rows
                 .into_iter()
-                .map(|row| {
-                    let project = load_from_path(&row.path).map_err(|error| error.to_string());
-                    let findings = project.as_ref().ok().map_or_else(Vec::new, |loaded| {
-                        findings_by_project
-                            .get(&loaded.id)
-                            .cloned()
-                            .unwrap_or_default()
-                    });
-                    LoadedProject {
-                        path: row.path,
-                        project,
-                        findings,
-                    }
-                })
+                .map(|row| load_project_entry(row.path, &findings_by_project))
                 .collect();
             LoadedPortfolio {
                 workspace_path: Some(workspace_path),
@@ -124,6 +115,51 @@ pub fn load_portfolio() -> LoadedPortfolio {
             database_path,
             database,
             projects: Vec::new(),
+        },
+    }
+}
+
+fn load_project_entry(
+    path: PathBuf,
+    findings_by_project: &BTreeMap<String, Vec<StoredFinding>>,
+) -> LoadedProject {
+    match fs::read(&path) {
+        Ok(bytes) => {
+            let fingerprint = content_fingerprint(&bytes);
+            match String::from_utf8(bytes) {
+                Ok(text) => match load_from_str(&text) {
+                    Ok(project) => {
+                        let findings = findings_by_project
+                            .get(&project.id)
+                            .cloned()
+                            .unwrap_or_default();
+                        LoadedProject {
+                            path,
+                            project: Ok(project),
+                            fingerprint: Some(fingerprint),
+                            findings,
+                        }
+                    }
+                    Err(error) => LoadedProject {
+                        path,
+                        project: Err(error.to_string()),
+                        fingerprint: None,
+                        findings: Vec::new(),
+                    },
+                },
+                Err(error) => LoadedProject {
+                    path,
+                    project: Err(format!("invalid UTF-8 in project file: {error}")),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+            }
+        }
+        Err(error) => LoadedProject {
+            path,
+            project: Err(error.to_string()),
+            fingerprint: None,
+            findings: Vec::new(),
         },
     }
 }

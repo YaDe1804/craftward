@@ -6,8 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
     EditError, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_issue,
-    add_phase, add_task, add_watch, edit_file, load_from_path, remove_issue, remove_phase,
-    remove_task, remove_watch, render_project, set_issue_status, set_project, set_task_status,
+    add_phase, add_task, add_watch, content_fingerprint, edit_file, edit_file_if_unchanged,
+    fingerprint_file, load_from_path, remove_issue, remove_phase, remove_task, remove_watch,
+    render_project, set_issue_status, set_project, set_task_status,
 };
 
 const DAY: &str = "2026-11-15";
@@ -534,5 +535,207 @@ fn invalid_values_name_the_allowed_set() {
             .to_string()
             .contains("deadline, expiry, review, other")
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_edit_refuses_when_fingerprint_drifts() {
+    let root = scratch("conflict");
+    let path = minimal(&root);
+    let fingerprint = fingerprint_file(&path).expect("fingerprint");
+    fs::write(
+        &path,
+        "{\n  \"schema_version\": 1,\n  \"id\": \"demo\",\n  \"name\": \"Changed\",\n  \"status\": \"idea\"\n}\n",
+    )
+    .expect("external change");
+    let before = fs::read(&path).expect("read before");
+    let error = edit_file_if_unchanged(&path, &fingerprint, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: Some("Ignored"),
+                status: None,
+                version: ProjectUpdate::Keep,
+                description: ProjectUpdate::Keep,
+                source_dir: None,
+            },
+            updated,
+        )
+    })
+    .expect_err("conflict");
+    assert!(error.is_conflict(), "{error}");
+    assert_eq!(fs::read(&path).expect("read after"), before);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_edit_writes_when_fingerprint_matches() {
+    let root = scratch("checked-ok");
+    let path = minimal(&root);
+    let fingerprint = fingerprint_file(&path).expect("fingerprint");
+    let outcome = edit_file_if_unchanged(&path, &fingerprint, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: Some("Harbor"),
+                status: None,
+                version: ProjectUpdate::Keep,
+                description: ProjectUpdate::Keep,
+                source_dir: None,
+            },
+            updated,
+        )
+    })
+    .expect("write");
+    assert_eq!(fs::read(&path).expect("disk"), outcome.serialized_bytes());
+    assert_eq!(
+        content_fingerprint(outcome.serialized_bytes()),
+        outcome.fingerprint()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+fn twin_paths(path: &Path) -> (PathBuf, PathBuf) {
+    let app = path.with_extension("app.json");
+    let cli = path.with_extension("cli.json");
+    fs::copy(path, &app).unwrap();
+    fs::copy(path, &cli).unwrap();
+    (app, cli)
+}
+
+fn assert_twins_equal(app: &Path, cli: &Path) {
+    assert_eq!(fs::read(app).unwrap(), fs::read(cli).unwrap());
+}
+
+#[test]
+fn checked_set_task_status_matches_edit_file_bytes() {
+    let root = scratch("parity-task-status");
+    let path = minimal(&root);
+    let phase_id = phase(&path, "Build", Some("build"), None);
+    let task_id = task(&path, &phase_id, "Ship", Some("ship"), None, None, None);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_task_status(project, &phase_id, &task_id, "done", updated)
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_task_status(project, &phase_id, &task_id, "done", updated)
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_set_issue_status_matches_edit_file_bytes() {
+    let root = scratch("parity-issue-status");
+    let path = minimal(&root);
+    let issue_id = issue(&path, "Contrast", "high", Some("contrast"), None, None);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_issue_status(project, &issue_id, "resolved", updated)
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_issue_status(project, &issue_id, "resolved", updated)
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_add_task_matches_edit_file_bytes() {
+    let root = scratch("parity-add-task");
+    let path = minimal(&root);
+    let phase_id = phase(&path, "Build", Some("build"), None);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        add_task(
+            project,
+            NewTask {
+                phase: &phase_id,
+                title: "Ship",
+                id: None,
+                status: None,
+                due: Some("2026-12-01"),
+                note: None,
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        add_task(
+            project,
+            NewTask {
+                phase: &phase_id,
+                title: "Ship",
+                id: None,
+                status: None,
+                due: Some("2026-12-01"),
+                note: None,
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_add_issue_matches_edit_file_bytes() {
+    let root = scratch("parity-add-issue");
+    let path = minimal(&root);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        add_issue(
+            project,
+            NewIssue {
+                title: "Contrast",
+                severity: "medium",
+                id: None,
+                url: None,
+                note: Some("from desktop"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        add_issue(
+            project,
+            NewIssue {
+                title: "Contrast",
+                severity: "medium",
+                id: None,
+                url: None,
+                note: Some("from desktop"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn invalid_change_does_not_write() {
+    let root = scratch("invalid-write");
+    let path = minimal(&root);
+    let before = fs::read(&path).expect("before");
+    let fingerprint = content_fingerprint(&before);
+    let error = edit_file_if_unchanged(&path, &fingerprint, DAY, |project, updated| {
+        set_task_status(project, "missing", "missing", "done", updated)
+    })
+    .expect_err("missing");
+    assert!(!error.is_conflict());
+    assert_eq!(fs::read(&path).expect("after"), before);
     let _ = fs::remove_dir_all(root);
 }

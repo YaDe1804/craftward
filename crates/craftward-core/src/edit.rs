@@ -2,15 +2,18 @@
 //!
 //! Each function copies the project, applies one change, and validates the
 //! copy. [`edit_file`] loads a file, runs one of those functions, and writes
-//! the result only when it is valid.
+//! the result only when it is valid. [`edit_file_if_unchanged`] does the same
+//! after checking that the on-disk bytes still match a fingerprint taken when
+//! the caller last loaded the file.
 
 use std::fmt::Write as _;
+use std::fs;
 use std::path::Path;
 
 use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
 use crate::fs_atomic::write_atomic;
-use crate::load::{load_from_path, load_from_str};
+use crate::load::load_from_str;
 use crate::model::{
     AndroidConfig, AndroidStore, Component, ComponentKind, FormFactor, Issue, IssueSeverity,
     IssueStatus, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
@@ -182,6 +185,46 @@ pub struct EditOutcome {
     serialized: String,
 }
 
+impl EditOutcome {
+    /// Exact bytes that were (or would be) written to disk.
+    #[must_use]
+    pub fn serialized_bytes(&self) -> &[u8] {
+        self.serialized.as_bytes()
+    }
+
+    /// Fingerprint of the written bytes, for the next checked edit.
+    #[must_use]
+    pub fn fingerprint(&self) -> ContentFingerprint {
+        content_fingerprint(self.serialized.as_bytes())
+    }
+}
+
+/// Exact on-disk bytes of a project file at one point in time.
+///
+/// Callers store this when they load a file and pass it to
+/// [`edit_file_if_unchanged`] so a concurrent external change is not overwritten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentFingerprint {
+    bytes: Vec<u8>,
+}
+
+/// Builds a fingerprint from the raw file contents.
+#[must_use]
+pub fn content_fingerprint(bytes: &[u8]) -> ContentFingerprint {
+    ContentFingerprint {
+        bytes: bytes.to_vec(),
+    }
+}
+
+/// Reads `path` and returns its content fingerprint.
+///
+/// # Errors
+///
+/// Returns the I/O error from reading the file.
+pub fn fingerprint_file(path: &Path) -> Result<ContentFingerprint, std::io::Error> {
+    fs::read(path).map(|bytes| content_fingerprint(&bytes))
+}
+
 /// Why a project change was rejected or could not be stored.
 #[derive(Debug)]
 pub enum EditError {
@@ -228,6 +271,10 @@ pub enum EditError {
     Load(LoadError),
     /// The validated text could not be written.
     Write(std::io::Error),
+    /// The file bytes no longer match the fingerprint the caller loaded.
+    ///
+    /// Nothing was written. The caller should reload before trying again.
+    Conflict,
 }
 
 impl std::fmt::Display for EditError {
@@ -281,6 +328,9 @@ impl std::fmt::Display for EditError {
             }
             Self::Load(error) => write!(formatter, "{error}"),
             Self::Write(error) => write!(formatter, "failed to write project file: {error}"),
+            Self::Conflict => {
+                formatter.write_str("project file changed on disk; reload before saving again")
+            }
         }
     }
 }
@@ -294,6 +344,12 @@ impl EditError {
     #[must_use]
     pub const fn is_usage(&self) -> bool {
         matches!(self, Self::Invalid { .. })
+    }
+
+    /// Whether the on-disk file drifted from the caller's fingerprint.
+    #[must_use]
+    pub const fn is_conflict(&self) -> bool {
+        matches!(self, Self::Conflict)
     }
 }
 
@@ -312,7 +368,45 @@ pub fn edit_file(
     updated_on: &str,
     change: impl FnOnce(&Project, &str) -> Result<EditOutcome, EditError>,
 ) -> Result<EditOutcome, EditError> {
-    let project = load_from_path(path).map_err(EditError::Load)?;
+    edit_file_at(path, None, updated_on, change)
+}
+
+/// Like [`edit_file`], but refuses to write when the file bytes no longer match
+/// `expected`.
+///
+/// # Errors
+///
+/// Returns [`EditError::Conflict`] when the fingerprint does not match.
+/// Other errors match [`edit_file`].
+pub fn edit_file_if_unchanged(
+    path: &Path,
+    expected: &ContentFingerprint,
+    updated_on: &str,
+    change: impl FnOnce(&Project, &str) -> Result<EditOutcome, EditError>,
+) -> Result<EditOutcome, EditError> {
+    edit_file_at(path, Some(expected), updated_on, change)
+}
+
+fn edit_file_at(
+    path: &Path,
+    expected: Option<&ContentFingerprint>,
+    updated_on: &str,
+    change: impl FnOnce(&Project, &str) -> Result<EditOutcome, EditError>,
+) -> Result<EditOutcome, EditError> {
+    let bytes = fs::read(path).map_err(|error| EditError::Load(LoadError::Read(error)))?;
+    if let Some(expected) = expected {
+        let current = content_fingerprint(&bytes);
+        if &current != expected {
+            return Err(EditError::Conflict);
+        }
+    }
+    let text = String::from_utf8(bytes).map_err(|error| {
+        EditError::Load(LoadError::Read(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error,
+        )))
+    })?;
+    let project = load_from_str(&text).map_err(EditError::Load)?;
     let outcome = change(&project, updated_on)?;
     write_atomic(path, outcome.serialized.as_bytes()).map_err(EditError::Write)?;
     Ok(outcome)
