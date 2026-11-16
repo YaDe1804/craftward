@@ -669,6 +669,12 @@ fn is_http_url(text: &str) -> bool {
     text.starts_with("http://") || text.starts_with("https://")
 }
 
+/// Whether `text` is a valid project, phase, task, issue, or watch id.
+#[must_use]
+pub fn is_project_id(text: &str) -> bool {
+    is_slug(text)
+}
+
 fn is_slug(text: &str) -> bool {
     let bytes = text.as_bytes();
     let length = bytes.len();

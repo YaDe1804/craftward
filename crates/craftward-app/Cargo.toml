@@ -18,6 +18,8 @@ path = "src/main.rs"
 craftward-core.workspace = true
 craftward-store.workspace = true
 eframe.workspace = true
+rfd.workspace = true
 
 [lints]
 workspace = true
+

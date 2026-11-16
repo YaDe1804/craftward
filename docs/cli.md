@@ -42,10 +42,14 @@ craftward --workspace ./workspace.json add ./app/craftward.json
 
 ## remove
 
-Removes one project id from the workspace. The project file stays on disk.
+Removes one project id from the workspace. Without `--delete-file` the
+project file stays on disk. `--delete-file` deletes only that project's
+`craftward.json` after updating the workspace; the folder and every other
+file are left alone.
 
 ```console
 craftward remove harbor-light
+craftward remove harbor-light --delete-file
 ```
 
 ## list
@@ -145,9 +149,12 @@ craftward show ./app/craftward.json
 
 ## project set
 
-Changes header fields. At least one option is required. `--version ""` and
-`--description ""` remove those fields. `--status` is `idea`,
-`in_development`, `released`, `maintenance`, `paused`, or `discontinued`.
+Changes header fields. At least one option is required. `--version ""`,
+`--description ""`, `--source-dir ""`, and `--tags ""` remove those fields.
+`--clear-tags` and `--clear-links` drop the whole list. `--status` is
+`idea`, `in_development`, `released`, `maintenance`, `paused`, or
+`discontinued`. `--tags` is a comma-separated list. `--link LABEL=URL` may
+be repeated and replaces the whole links list.
 
 A successful change rewrites the whole file: two-space indentation, LF line
 endings, a trailing newline, the field order of the Rust types, and letters
@@ -163,6 +170,7 @@ project rule, such as a blank name, exits 1 and leaves the file untouched.
 craftward project set harbor-light --name "Harbor Light" --status in_development
 craftward project set harbor-light --version 0.5.0
 craftward project set harbor-light --description ""
+craftward project set harbor-light --tags "android,cli" --link Docs=https://example.com
 ```
 
 ## phase
@@ -177,6 +185,9 @@ is already used by a phase, `-2`, `-3`, and so on are appended. A title that
 yields no id is an error and names `--id`. The command prints the id it
 stored.
 
+`phase set` changes `--title` and/or `--goal` on an existing phase. At least
+one of those options is required. An empty `--goal` clears the goal.
+
 `phase remove` deletes a phase only when it has no tasks. Otherwise it exits
 1 and names `--force`. `--force` removes the phase and its tasks.
 
@@ -184,6 +195,7 @@ An unknown phase id exits 1 and lists the phase ids in the file.
 
 ```console
 craftward phase add harbor-light --title "Prüfung"
+craftward phase set harbor-light pruefung --title "Prüfung" --goal "Ship it"
 craftward phase remove harbor-light foundation
 craftward phase remove harbor-light foundation --force
 ```
@@ -195,6 +207,9 @@ defaults to `open`. `--status` is `open`, `in_progress`, `done`, or
 `dropped`. `--due` is `YYYY-MM-DD`. Without `--id`, the id is formed the
 same way as a phase id and must be unique among that phase's tasks.
 
+`task set` changes `--title`, `--due`, and/or `--note`. At least one of
+those options is required. An empty `--due` or `--note` clears that field.
+
 `task status` sets the status. `task done` is `task status` with status
 `done`. `task remove` deletes one task.
 
@@ -203,6 +218,7 @@ status or date exits 2 and lists the allowed values.
 
 ```console
 craftward task add harbor-light foundation --title "Write the schema"
+craftward task set harbor-light foundation schema --due 2026-12-01 --note "Draft"
 craftward task status harbor-light foundation schema in_progress
 craftward task done harbor-light foundation schema
 craftward task remove harbor-light foundation schema
@@ -215,6 +231,10 @@ are required. Severity is `low`, `medium`, `high`, or `critical`. `--url`
 must start with `http://` or `https://`. Without `--id`, the id is formed
 from the title and must be unique among issues.
 
+`issue set` changes `--title`, `--severity`, `--url`, and/or `--note`. At
+least one of those options is required. An empty `--url` or `--note` clears
+that field.
+
 `issue status` sets the status to `open`, `in_progress`, `resolved`, or
 `wont_fix`. `issue remove` deletes one issue.
 
@@ -223,6 +243,7 @@ URL exits 2 and lists the allowed values.
 
 ```console
 craftward issue add harbor-light --title Contrast --severity medium
+craftward issue set harbor-light theme-contrast --severity high --note "WCAG"
 craftward issue status harbor-light theme-contrast in_progress
 craftward issue remove harbor-light theme-contrast
 ```

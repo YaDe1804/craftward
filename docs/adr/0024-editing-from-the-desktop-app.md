@@ -17,12 +17,13 @@ returns a conflict, nothing is written, and the UI shows a sticky banner with
 Reload. After a successful write the app reloads from disk so the view matches
 the saved file.
 
-Destructive or reversible edits do not use confirmation dialogs. Instead the
-app shows a non-blocking toast (about eight seconds) with an Undo control.
-Undo restores the previous bytes through the same fingerprint-checked write
-path. Only the latest change is undoable; a newer save replaces the toast. If
-the file changed outside the app before Undo, the restore is refused and a
-conflict is shown.
+Reversible edits do not use confirmation dialogs. Instead the app shows a
+non-blocking toast (about eight seconds) with an Undo control. Undo restores
+the previous bytes through the same fingerprint-checked write path. Only the
+latest change is undoable; a newer save replaces the toast. If the file
+changed outside the app before Undo, the restore is refused and a conflict is
+shown. Deleting `craftward.json` is irreversible and therefore asks for
+confirmation; see [ADR 0025](0025-native-dialogs-and-clipboard.md).
 
 Every app action has a CLI equivalent. New field editors (`phase set`,
 `task set`, `issue set`, and header tags/links) live in the core and CLI as

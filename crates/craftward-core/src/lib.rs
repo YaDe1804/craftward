@@ -62,7 +62,7 @@ pub use lifecycle::{
     render_finding_list, render_finding_show, render_findings_json, render_ledger_json,
     render_ledger_text, render_show_json, reopen_finding, show_finding,
 };
-pub use load::{load_from_path, load_from_str};
+pub use load::{is_project_id, load_from_path, load_from_str};
 pub use location::{
     Host, LocateError, OsFamily, ProcessHost, WorkspaceLocation, WorkspaceOrigin, locate_cache,
     locate_data, locate_workspace,
@@ -95,8 +95,8 @@ pub use target_sdk::{Detection, detect as detect_target_sdk};
 pub use undo::{UNDO_VISIBLE_SECS, UndoOffer, UndoSnapshot, UndoState};
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,
-    add_project_if_unchanged, init_project, list_projects, load_or_empty, load_workspace,
-    project_file, project_file_by_id, remove_project, remove_project_if_unchanged,
+    add_project_if_unchanged, delete_project_file, init_project, list_projects, load_or_empty,
+    load_workspace, project_file, project_file_by_id, remove_project, remove_project_if_unchanged,
     resolve_entry_path, save_workspace, save_workspace_if_unchanged, snapshot,
     workspace_bytes_or_empty,
 };

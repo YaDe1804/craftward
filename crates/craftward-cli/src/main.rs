@@ -93,11 +93,15 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 Err(error) => Err(Failure::Data(explain_workspace(&error))),
             }
         }
-        Command::Remove { id } => {
+        Command::Remove { id, delete_file } => {
             let workspace = workspace_file(workspace)?;
-            match remove_project(&workspace, &id) {
+            match remove_project(&workspace, &id, delete_file) {
                 Ok(()) => {
-                    println!("removed {id}");
+                    if delete_file {
+                        println!("removed {id} and deleted craftward.json");
+                    } else {
+                        println!("removed {id}");
+                    }
                     Ok(ExitCode::SUCCESS)
                 }
                 Err(error) => Err(Failure::Data(error.to_string())),

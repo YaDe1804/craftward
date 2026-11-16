@@ -2,6 +2,7 @@
 
 mod actions;
 mod load;
+mod picker;
 mod symbols;
 mod theme;
 mod ui;

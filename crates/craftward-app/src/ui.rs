@@ -3,7 +3,7 @@
 use eframe::egui::{
     self, Align, Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Context, CornerRadius,
     Frame, Key, Label, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke,
-    TextEdit, Theme, ThemePreference, Ui, Vec2,
+    TextEdit, Theme, ThemePreference, Ui, UiBuilder, Vec2,
 };
 
 use craftward_core::UndoState;
@@ -15,6 +15,7 @@ use crate::actions::{
     save_task_edit, save_task_status,
 };
 use crate::load::{LoadedPortfolio, LoadedProject, load_portfolio};
+use crate::picker::{PathPicker, PickKind, PickerInbox, RfdPicker};
 use crate::theme::{
     self, ACCENT, BACKGROUND, CARD, CARD_GAP, CARD_INNER, CARD_PADDING, CARD_ROUNDING,
     DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, PAGE_MARGIN, PROGRESS_TRACK, RUNNING,
@@ -25,8 +26,8 @@ use crate::view::{
     PortfolioView, ProgressView, ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm,
     badge_stretches_to_parent, build_detail, build_portfolio, finding_count_badges, grid_columns,
     grid_row_column_slots, issue_severity_choices, issue_status_choices,
-    longest_status_choice_label, open_findings_label, project_status_choices, task_status_choices,
-    task_title_is_muted,
+    longest_status_choice_label, open_findings_label, project_status_choices, project_status_hint,
+    task_status_choices, task_title_is_muted,
 };
 
 /// Which screen is visible.
@@ -147,6 +148,21 @@ struct OverviewEdit {
     add_project: Option<AddProjectForm>,
     /// Sticky banner on the overview.
     banner: Option<String>,
+    /// Confirm deleting craftward.json after removing from the list.
+    delete_file_prompt: Option<DeleteFilePrompt>,
+}
+
+/// Confirm dialog for deleting craftward.json (irreversible).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeleteFilePrompt {
+    /// Project id.
+    id: String,
+    /// Display name.
+    name: String,
+    /// Absolute path of craftward.json.
+    path: String,
+    /// Return to overview after success (true from the detail page).
+    return_overview: bool,
 }
 
 /// Action produced by the detail view widgets.
@@ -196,6 +212,14 @@ enum DetailAction {
     Reload,
     /// Dismiss the sticky banner.
     DismissBanner,
+    /// Remove from the workspace list (undoable; file kept).
+    RemoveFromList { id: String, name: String },
+    /// Confirm deleting craftward.json (irreversible).
+    PromptDeleteFile {
+        id: String,
+        name: String,
+        path: String,
+    },
 }
 
 /// The Craftward desktop application.
@@ -212,6 +236,10 @@ pub struct CraftwardApp {
     overview: OverviewEdit,
     /// Last undoable change.
     undo: UndoState,
+    /// Native path picker.
+    picker: Box<dyn PathPicker>,
+    /// Inbox for background picker results.
+    picker_inbox: PickerInbox,
 }
 
 impl CraftwardApp {
@@ -228,6 +256,8 @@ impl CraftwardApp {
             edit: DetailEdit::default(),
             overview: OverviewEdit::default(),
             undo: UndoState::new(),
+            picker: Box::new(RfdPicker),
+            picker_inbox: PickerInbox::default(),
         }
     }
 
@@ -370,6 +400,17 @@ impl CraftwardApp {
                     save_remove_issue(path, fingerprint, &issue_id, &title)
                 });
             }
+            DetailAction::RemoveFromList { id, name } => {
+                self.remove_from_list(&id, &name, false, true);
+            }
+            DetailAction::PromptDeleteFile { id, name, path } => {
+                self.overview.delete_file_prompt = Some(DeleteFilePrompt {
+                    id,
+                    name,
+                    path,
+                    return_overview: true,
+                });
+            }
         }
     }
 
@@ -438,6 +479,7 @@ impl CraftwardApp {
 impl eframe::App for CraftwardApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.undo.tick(now_secs());
+        self.drain_picker();
         self.handle_escape(ui);
         self.draw_top_bar(ui);
         Panel::bottom("craftward_footer")
@@ -470,13 +512,14 @@ impl CraftwardApp {
                     .font(TYPE.secondary_id())
                     .color(TEXT),
             );
-            if ui
-                .add(Button::new(
-                    RichText::new("Undo")
-                        .font(TYPE.secondary_id())
-                        .color(ACCENT),
-                ))
-                .clicked()
+            if !offer.snapshots.is_empty()
+                && ui
+                    .add(Button::new(
+                        RichText::new("Undo")
+                            .font(TYPE.secondary_id())
+                            .color(ACCENT),
+                    ))
+                    .clicked()
             {
                 match self.undo.undo(now) {
                     Ok(()) => self.reload(),
@@ -507,11 +550,60 @@ impl CraftwardApp {
 }
 
 impl CraftwardApp {
+    fn drain_picker(&mut self) {
+        while let Some(result) = self.picker_inbox.try_recv() {
+            let Some(path) = result.path else {
+                continue;
+            };
+            let text = path.display().to_string();
+            match result.kind {
+                PickKind::Folder => {
+                    if let Some(form) = &mut self.overview.new_project {
+                        form.directory = text;
+                    }
+                }
+                PickKind::ProjectFile | PickKind::ProjectFolder => {
+                    if let Some(form) = &mut self.overview.add_project {
+                        form.path = text;
+                    }
+                }
+            }
+        }
+    }
+
+    fn taken_project_ids(&self) -> Vec<String> {
+        self.portfolio
+            .cards
+            .iter()
+            .filter(|card| !card.id.is_empty())
+            .map(|card| card.id.clone())
+            .collect()
+    }
+
+    fn remove_from_list(&mut self, id: &str, name: &str, delete_file: bool, return_overview: bool) {
+        self.run_workspace_save(|path, fingerprint| {
+            save_remove_from_workspace(path, fingerprint, id, name, delete_file)
+        });
+        if return_overview {
+            self.screen = Screen::Overview;
+            self.edit.clear_all();
+        }
+    }
+
+    fn confirm_delete_file(&mut self) {
+        let Some(prompt) = self.overview.delete_file_prompt.take() else {
+            return;
+        };
+        self.remove_from_list(&prompt.id, &prompt.name, true, prompt.return_overview);
+    }
+
     fn handle_escape(&mut self, ui: &Ui) {
         if !ui.ctx().input(|input| input.key_pressed(Key::Escape)) {
             return;
         }
-        if self.edit.header_form.is_some()
+        if self.overview.delete_file_prompt.is_some() {
+            self.overview.delete_file_prompt = None;
+        } else if self.edit.header_form.is_some()
             || self.edit.phase_form.is_some()
             || self.edit.phase_edit.is_some()
             || self.edit.task_form.is_some()
@@ -583,59 +675,64 @@ impl CraftwardApp {
                     .fill(BACKGROUND)
                     .inner_margin(Margin::same(PAGE_MARGIN)),
             )
-            .show(ui, |ui| match self.screen {
-                Screen::Overview => {
-                    if let Some(index) = self.draw_overview_screen(ui) {
-                        self.edit.clear_all();
-                        self.screen = Screen::Detail { index };
-                    }
+            .show(ui, |ui| {
+                if let Some(prompt) = self.overview.delete_file_prompt.clone() {
+                    self.draw_delete_file_prompt(ui, prompt);
                 }
-                Screen::Detail { index } => {
-                    if let Some(banner) = self.edit.banner.clone() {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(SEVERITY_CRITICAL, &banner);
-                            if ui
-                                .add(Button::new(
-                                    RichText::new("Reload")
-                                        .font(TYPE.secondary_id())
-                                        .color(ACCENT),
-                                ))
-                                .clicked()
-                            {
-                                action = Some(DetailAction::Reload);
-                            }
-                            if ui
-                                .add(Button::new(
-                                    RichText::new("Dismiss")
-                                        .font(TYPE.secondary_id())
-                                        .color(MUTED),
-                                ))
-                                .clicked()
-                            {
-                                action = Some(DetailAction::DismissBanner);
-                            }
-                        });
-                        ui.add_space(8.0);
-                    }
-                    if let Some(project) = self.loaded.projects.get(index) {
-                        let detail = build_detail(index, project);
-                        if action.is_none() {
-                            action = draw_detail(ui, &detail, project, &mut self.edit);
-                        }
-                    } else {
-                        ui.label(
-                            RichText::new("That project is no longer listed.")
-                                .font(TYPE.body_id())
-                                .color(MUTED),
-                        );
-                        if ui
-                            .add(Button::new(
-                                RichText::new("Back").font(TYPE.body_id()).color(ACCENT),
-                            ))
-                            .clicked()
-                        {
-                            self.screen = Screen::Overview;
+                match self.screen {
+                    Screen::Overview => {
+                        if let Some(index) = self.draw_overview_screen(ui) {
                             self.edit.clear_all();
+                            self.screen = Screen::Detail { index };
+                        }
+                    }
+                    Screen::Detail { index } => {
+                        if let Some(banner) = self.edit.banner.clone() {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(SEVERITY_CRITICAL, &banner);
+                                if ui
+                                    .add(Button::new(
+                                        RichText::new("Reload")
+                                            .font(TYPE.secondary_id())
+                                            .color(ACCENT),
+                                    ))
+                                    .clicked()
+                                {
+                                    action = Some(DetailAction::Reload);
+                                }
+                                if ui
+                                    .add(Button::new(
+                                        RichText::new("Dismiss")
+                                            .font(TYPE.secondary_id())
+                                            .color(MUTED),
+                                    ))
+                                    .clicked()
+                                {
+                                    action = Some(DetailAction::DismissBanner);
+                                }
+                            });
+                            ui.add_space(8.0);
+                        }
+                        if let Some(project) = self.loaded.projects.get(index) {
+                            let detail = build_detail(index, project);
+                            if action.is_none() {
+                                action = draw_detail(ui, &detail, project, &mut self.edit);
+                            }
+                        } else {
+                            ui.label(
+                                RichText::new("That project is no longer listed.")
+                                    .font(TYPE.body_id())
+                                    .color(MUTED),
+                            );
+                            if ui
+                                .add(Button::new(
+                                    RichText::new("Back").font(TYPE.body_id()).color(ACCENT),
+                                ))
+                                .clicked()
+                            {
+                                self.screen = Screen::Overview;
+                                self.edit.clear_all();
+                            }
                         }
                     }
                 }
@@ -733,16 +830,63 @@ impl CraftwardApp {
             self.draw_add_project_form(ui, form);
         }
         ui.add_space(CARD_GAP);
-        let (open, remove) = draw_overview(ui, &self.portfolio, &self.overview);
-        if let Some((id, name)) = remove {
-            self.run_workspace_save(|path, fingerprint| {
-                save_remove_from_workspace(path, fingerprint, &id, &name)
-            });
+        let (open, card_action) = draw_overview(ui, &self.portfolio, &self.overview);
+        match card_action {
+            Some(CardAction::RemoveFromList { id, name }) => {
+                self.remove_from_list(&id, &name, false, false);
+            }
+            Some(CardAction::PromptDeleteFile { id, name, index }) => {
+                let path = self
+                    .loaded
+                    .projects
+                    .get(index)
+                    .map_or_default(|project| project.path.display().to_string());
+                self.overview.delete_file_prompt = Some(DeleteFilePrompt {
+                    id,
+                    name,
+                    path,
+                    return_overview: false,
+                });
+            }
+            Some(CardAction::Open | CardAction::None) | None => {}
         }
         open
     }
 
+    fn draw_delete_file_prompt(&mut self, ui: &mut Ui, prompt: DeleteFilePrompt) {
+        ui.group(|ui| {
+            ui.label(
+                RichText::new(format!("Delete craftward.json for {}?", prompt.name))
+                    .font(TYPE.section_id())
+                    .color(HEADING)
+                    .strong(),
+            );
+            ui.colored_label(
+                SEVERITY_CRITICAL,
+                format!(
+                    "This removes the project from the list and permanently deletes only this file. It cannot be undone:\n{}",
+                    prompt.path
+                ),
+            );
+            ui.horizontal(|ui| {
+                if compact_button(ui, "Delete file", SEVERITY_CRITICAL).clicked() {
+                    self.overview.delete_file_prompt = Some(prompt);
+                    self.confirm_delete_file();
+                    return;
+                }
+                if compact_button(ui, "Cancel", MUTED).clicked() {
+                    self.overview.delete_file_prompt = None;
+                    return;
+                }
+                self.overview.delete_file_prompt = Some(prompt);
+            });
+        });
+        ui.add_space(8.0);
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn draw_new_project_form(&mut self, ui: &mut Ui, mut form: NewProjectForm) {
+        let taken = self.taken_project_ids();
         ui.group(|ui| {
             ui.label(
                 RichText::new("New project")
@@ -755,34 +899,79 @@ impl CraftwardApp {
                     .font(TYPE.secondary_id())
                     .color(MUTED),
             );
-            ui.add(
-                TextEdit::singleline(&mut form.directory)
-                    .font(TYPE.body_id())
-                    .desired_width(f32::INFINITY),
-            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut form.directory)
+                        .font(TYPE.body_id())
+                        .desired_width(320.0),
+                );
+                if compact_button(ui, "Browse…", ACCENT).clicked() {
+                    self.picker
+                        .pick_folder(ui.ctx().clone(), self.picker_inbox.sender());
+                }
+            });
+            field_error(ui, form.directory_error());
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Name").font(TYPE.secondary_id()).color(MUTED));
+                let name_before = form.name.clone();
+                ui.add(
+                    TextEdit::singleline(&mut form.name)
+                        .font(TYPE.body_id())
+                        .desired_width(220.0),
+                );
+                if form.name != name_before {
+                    form.suggest_id_from_name();
+                }
+            });
+            field_error(ui, form.name_error());
+
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Id").font(TYPE.secondary_id()).color(MUTED));
-                ui.add(TextEdit::singleline(&mut form.id).font(TYPE.body_id()));
-                ui.label(RichText::new("Name").font(TYPE.secondary_id()).color(MUTED));
-                ui.add(TextEdit::singleline(&mut form.name).font(TYPE.body_id()));
+                let id_before = form.id.clone();
+                ui.add(
+                    TextEdit::singleline(&mut form.id)
+                        .font(TYPE.body_id())
+                        .desired_width(220.0),
+                );
+                if form.id != id_before {
+                    form.mark_id_manual();
+                }
             });
-            ComboBox::from_id_salt("new-project-status")
-                .selected_text(
-                    project_status_choices()
-                        .iter()
-                        .find(|(key, _)| *key == form.status)
-                        .map_or(form.status.as_str(), |(_, label)| *label),
+            ui.label(
+                RichText::new(
+                    "Used in commands such as craftward show <id>. Prefer not to change it later.",
                 )
-                .show_ui(ui, |ui| {
-                    for (key, label) in project_status_choices() {
-                        ui.selectable_value(&mut form.status, (*key).to_owned(), *label);
-                    }
-                });
-            if let Some(message) = form.validation_message() {
-                ui.colored_label(SEVERITY_CRITICAL, message);
-            }
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+            );
+            field_error(ui, form.id_error(&taken));
+
             ui.horizontal(|ui| {
-                let can = form.can_save();
+                ui.label(
+                    RichText::new("Status")
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                );
+                let selected = project_status_choices()
+                    .iter()
+                    .find(|(key, _)| *key == form.status)
+                    .map_or(form.status.as_str(), |(_, label)| *label);
+                ComboBox::from_id_salt("new-project-status")
+                    .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                    .show_ui(ui, |ui| {
+                        for (key, label) in project_status_choices() {
+                            ui.selectable_value(&mut form.status, (*key).to_owned(), *label)
+                                .on_hover_text(project_status_hint(key));
+                        }
+                    })
+                    .response
+                    .on_hover_text(project_status_hint(&form.status));
+            });
+            field_error(ui, form.status_error());
+
+            ui.horizontal(|ui| {
+                let can = form.can_save(&taken);
                 if ui
                     .add_enabled(
                         can,
@@ -797,12 +986,7 @@ impl CraftwardApp {
                     self.overview.new_project = None;
                     return;
                 }
-                if ui
-                    .add(Button::new(
-                        RichText::new("Cancel").font(TYPE.body_id()).color(MUTED),
-                    ))
-                    .clicked()
-                {
+                if compact_button(ui, "Cancel", MUTED).clicked() {
                     self.overview.new_project = None;
                     return;
                 }
@@ -819,11 +1003,21 @@ impl CraftwardApp {
                     .color(HEADING)
                     .strong(),
             );
-            ui.add(
-                TextEdit::singleline(&mut form.path)
-                    .font(TYPE.body_id())
-                    .desired_width(f32::INFINITY),
-            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut form.path)
+                        .font(TYPE.body_id())
+                        .desired_width(320.0),
+                );
+                if compact_button(ui, "Browse folder…", ACCENT).clicked() {
+                    self.picker
+                        .pick_project_folder(ui.ctx().clone(), self.picker_inbox.sender());
+                }
+                if compact_button(ui, "Browse file…", ACCENT).clicked() {
+                    self.picker
+                        .pick_project_file(ui.ctx().clone(), self.picker_inbox.sender());
+                }
+            });
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -839,12 +1033,7 @@ impl CraftwardApp {
                     self.overview.add_project = None;
                     return;
                 }
-                if ui
-                    .add(Button::new(
-                        RichText::new("Cancel").font(TYPE.body_id()).color(MUTED),
-                    ))
-                    .clicked()
-                {
+                if compact_button(ui, "Cancel", MUTED).clicked() {
                     self.overview.add_project = None;
                     return;
                 }
@@ -858,7 +1047,7 @@ fn draw_overview(
     ui: &mut Ui,
     portfolio: &PortfolioView,
     overview: &OverviewEdit,
-) -> (Option<usize>, Option<(String, String)>) {
+) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut remove = None;
     ScrollArea::vertical().show(ui, |ui| {
@@ -885,23 +1074,23 @@ fn draw_overview(
         for card in &portfolio.cards {
             row.push(card);
             if row.len() == columns {
-                let (opened, removed) = draw_card_row(ui, &row, columns);
+                let (opened, action) = draw_card_row(ui, &row, columns);
                 if opened.is_some() {
                     open = opened;
                 }
-                if removed.is_some() {
-                    remove = removed;
+                if action.is_some() {
+                    remove = action;
                 }
                 row.clear();
             }
         }
         if !row.is_empty() {
-            let (opened, removed) = draw_card_row(ui, &row, columns);
+            let (opened, action) = draw_card_row(ui, &row, columns);
             if opened.is_some() {
                 open = opened;
             }
-            if removed.is_some() {
-                remove = removed;
+            if action.is_some() {
+                remove = action;
             }
         }
     });
@@ -912,29 +1101,39 @@ fn draw_card_row(
     ui: &mut Ui,
     cards: &[&ProjectCard],
     columns: usize,
-) -> (Option<usize>, Option<(String, String)>) {
+) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
-    let mut remove = None;
+    let mut action = None;
     let slots = grid_row_column_slots(columns, cards.len());
     ui.columns(slots, |cols| {
         for (column, card) in cols.iter_mut().zip(cards.iter()) {
             match draw_card(column, card) {
                 CardAction::Open => open = Some(card.index),
-                CardAction::Remove => {
-                    remove = Some((card.id.clone(), card.name.clone()));
+                next
+                @ (CardAction::RemoveFromList { .. } | CardAction::PromptDeleteFile { .. }) => {
+                    action = Some(next);
                 }
                 CardAction::None => {}
             }
         }
     });
     ui.add_space(CARD_GAP);
-    (open, remove)
+    (open, action)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CardAction {
     None,
     Open,
-    Remove,
+    RemoveFromList {
+        id: String,
+        name: String,
+    },
+    PromptDeleteFile {
+        id: String,
+        name: String,
+        index: usize,
+    },
 }
 
 fn draw_summary(ui: &mut Ui, summary: &crate::view::PortfolioSummary) {
@@ -962,126 +1161,158 @@ fn draw_summary(ui: &mut Ui, summary: &crate::view::PortfolioSummary) {
 
 #[allow(clippy::too_many_lines)]
 fn draw_card(ui: &mut Ui, card: &ProjectCard) -> CardAction {
-    let mut remove = false;
-    let response = card_frame()
-        .stroke(Stroke::new(1.0, LINE))
-        .show(ui, |ui| {
-            ui.set_min_height(168.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(&card.name)
-                        .font(TYPE.title_id())
-                        .color(TEXT)
-                        .strong(),
-                );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button(
-                        RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
-                        |ui| {
+    let mut menu_action = CardAction::None;
+    // Card click sense is registered *under* children (UiBuilder::sense), so the
+    // ··· menu_button keeps pointer/keyboard priority and can open its popup.
+    let response = ui
+        .scope_builder(
+            UiBuilder::new()
+                .id_salt(("project_card", card.id.as_str()))
+                .sense(Sense::click()),
+            |ui| {
+                card_frame()
+                    .stroke(Stroke::new(1.0, LINE))
+                    .show(ui, |ui| {
+                        ui.set_min_height(168.0);
+                        ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("Removes the project from the list only. craftward.json stays on disk.")
+                                RichText::new(&card.name)
+                                    .font(TYPE.title_id())
+                                    .color(TEXT)
+                                    .strong(),
+                            );
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.menu_button(
+                                    RichText::new("···")
+                                        .font(TYPE.secondary_id())
+                                        .color(MUTED),
+                                    |ui| {
+                                        if ui
+                                            .button(
+                                                RichText::new("Remove from list")
+                                                    .font(TYPE.body_id())
+                                                    .color(TEXT),
+                                            )
+                                            .on_hover_text(
+                                                "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
+                                            )
+                                            .clicked()
+                                        {
+                                            menu_action = CardAction::RemoveFromList {
+                                                id: card.id.clone(),
+                                                name: card.name.clone(),
+                                            };
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .button(
+                                                RichText::new("Remove and delete craftward.json…")
+                                                    .font(TYPE.body_id())
+                                                    .color(TEXT),
+                                            )
+                                            .on_hover_text(
+                                                "Asks for confirmation. Deleting craftward.json cannot be undone.",
+                                            )
+                                            .clicked()
+                                        {
+                                            menu_action = CardAction::PromptDeleteFile {
+                                                id: card.id.clone(),
+                                                name: card.name.clone(),
+                                                index: card.index,
+                                            };
+                                            ui.close();
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                        if let Some(status) = &card.status {
+                            draw_badge(ui, status, None);
+                        }
+                        if let Some(version) = &card.version {
+                            ui.label(
+                                RichText::new(format!("Version {version}"))
                                     .font(TYPE.secondary_id())
                                     .color(MUTED),
                             );
-                            if ui
-                                .button(
-                                    RichText::new("Remove from list")
-                                        .font(TYPE.body_id())
-                                        .color(TEXT),
-                                )
-                                .clicked()
-                            {
-                                remove = true;
-                                ui.close();
-                            }
-                        },
-                    );
-                });
-            });
-            if let Some(status) = &card.status {
-                draw_badge(ui, status, None);
-            }
-            if let Some(version) = &card.version {
-                ui.label(
-                    RichText::new(format!("Version {version}"))
-                        .font(TYPE.secondary_id())
-                        .color(MUTED),
-                );
-            }
-            if !card.id.is_empty() {
-                ui.label(
-                    RichText::new(&card.id)
-                        .font(TYPE.secondary_id())
-                        .color(MUTED),
-                )
-                .on_hover_text(format!("Project id: {}", card.id));
-            }
+                        }
+                        if !card.id.is_empty() {
+                            ui.label(
+                                RichText::new(&card.id)
+                                    .font(TYPE.secondary_id())
+                                    .color(MUTED),
+                            )
+                            .on_hover_text(format!("Project id: {}", card.id));
+                        }
 
-            if let Some(error) = &card.load_error {
-                ui.add_space(6.0);
-                ui.colored_label(SEVERITY_CRITICAL, format!("Error: {error}"));
-                return;
-            }
+                        if let Some(error) = &card.load_error {
+                            ui.add_space(6.0);
+                            ui.colored_label(SEVERITY_CRITICAL, format!("Error: {error}"));
+                            return;
+                        }
 
-            ui.add_space(6.0);
-            draw_progress(ui, card.progress);
-            ui.add_space(4.0);
+                        ui.add_space(6.0);
+                        draw_progress(ui, card.progress);
+                        ui.add_space(4.0);
 
-            if let Some(phase) = &card.current_phase {
-                ui.label(
-                    RichText::new(format!("Current phase: {phase}"))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
-                );
-            }
-            if let Some(due) = &card.next_due {
-                let remaining = card
-                    .next_due_remaining
-                    .as_deref()
-                    .map_or(String::new(), |text| format!(" ({text})"));
-                ui.label(
-                    RichText::new(format!("Next due: {due}{remaining}"))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
-                );
-            }
-            if let Some(sdk) = card.target_sdk {
-                ui.label(
-                    RichText::new(format!("Android targetSdk: {sdk}"))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
-                );
-            }
+                        if let Some(phase) = &card.current_phase {
+                            ui.label(
+                                RichText::new(format!("Current phase: {phase}"))
+                                    .font(TYPE.body_id())
+                                    .color(TEXT),
+                            );
+                        }
+                        if let Some(due) = &card.next_due {
+                            let remaining = card
+                                .next_due_remaining
+                                .as_deref()
+                                .map_or(String::new(), |text| format!(" ({text})"));
+                            ui.label(
+                                RichText::new(format!("Next due: {due}{remaining}"))
+                                    .font(TYPE.body_id())
+                                    .color(TEXT),
+                            );
+                        }
+                        if let Some(sdk) = card.target_sdk {
+                            ui.label(
+                                RichText::new(format!("Android targetSdk: {sdk}"))
+                                    .font(TYPE.body_id())
+                                    .color(TEXT),
+                            );
+                        }
 
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(&card.open_issues_label)
-                    .font(TYPE.body_id())
-                    .color(MUTED),
-            );
-            if card.finding_badges.is_empty() {
-                ui.label(
-                    RichText::new(open_findings_label(0))
-                        .font(TYPE.body_id())
-                        .color(MUTED),
-                );
-            } else {
-                ui.horizontal_wrapped(|ui| {
-                    for (badge, count) in &card.finding_badges {
-                        draw_badge(ui, badge, Some(*count));
-                    }
-                });
-            }
-        })
-        .response
-        .interact(Sense::click());
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(&card.open_issues_label)
+                                .font(TYPE.body_id())
+                                .color(MUTED),
+                        );
+                        if card.finding_badges.is_empty() {
+                            ui.label(
+                                RichText::new(open_findings_label(0))
+                                    .font(TYPE.body_id())
+                                    .color(MUTED),
+                            );
+                        } else {
+                            ui.horizontal_wrapped(|ui| {
+                                for (badge, count) in &card.finding_badges {
+                                    draw_badge(ui, badge, Some(*count));
+                                }
+                            });
+                        }
+                    });
+            },
+        )
+        .response;
 
-    if remove {
-        return CardAction::Remove;
+    if !matches!(menu_action, CardAction::None) {
+        return menu_action;
     }
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+    // Enter on the focused card opens the project; Enter on the focused ···
+    // button is handled by egui's menu_button and opens the menu instead.
     if response.clicked()
         || (response.has_focus() && ui.input(|input| input.key_pressed(Key::Enter)))
     {
@@ -1099,12 +1330,37 @@ fn draw_detail(
 ) -> Option<DetailAction> {
     let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
-        ui.label(
-            RichText::new(&detail.name)
-                .font(TYPE.title_id())
-                .color(TEXT)
-                .strong(),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&detail.name)
+                    .font(TYPE.title_id())
+                    .color(TEXT)
+                    .strong(),
+            );
+            if detail.load_error.is_none() && !detail.id.is_empty() {
+                if compact_button(ui, "Remove from list", MUTED)
+                    .on_hover_text(
+                        "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
+                    )
+                    .clicked()
+                {
+                    action = Some(DetailAction::RemoveFromList {
+                        id: detail.id.clone(),
+                        name: detail.name.clone(),
+                    });
+                }
+                if compact_button(ui, "Delete craftward.json…", MUTED)
+                    .on_hover_text("Asks for confirmation. Deleting the file cannot be undone.")
+                    .clicked()
+                {
+                    action = Some(DetailAction::PromptDeleteFile {
+                        id: detail.id.clone(),
+                        name: detail.name.clone(),
+                        path: detail.path.clone(),
+                    });
+                }
+            }
+        });
         ui.label(
             RichText::new(&detail.path)
                 .font(TYPE.secondary_id())
@@ -1268,15 +1524,7 @@ fn draw_overview_readonly(
             ui.add(Label::new(RichText::new(description).font(TYPE.body_id()).color(MUTED)).wrap());
         });
     }
-    if editable
-        && ui
-            .add(Button::new(
-                RichText::new("Edit")
-                    .font(TYPE.secondary_id())
-                    .color(ACCENT),
-            ))
-            .clicked()
-    {
+    if editable && compact_button(ui, "Edit", ACCENT).clicked() {
         edit.close_forms();
         edit.header_form = Some(HeaderForm::from_detail(detail));
     }
@@ -1397,14 +1645,7 @@ fn draw_phases_panel(
                         if let Some(next) = draw_task_form(ui, edit) {
                             action = Some(next);
                         }
-                    } else if ui
-                        .add(Button::new(
-                            RichText::new("Add task")
-                                .font(TYPE.secondary_id())
-                                .color(ACCENT),
-                        ))
-                        .clicked()
-                    {
+                    } else if compact_button(ui, "Add task", ACCENT).clicked() {
                         edit.close_forms();
                         edit.task_form = Some(TaskForm::new(phase.id.clone()));
                     }
@@ -1417,14 +1658,7 @@ fn draw_phases_panel(
                 if let Some(next) = draw_phase_add_form(ui, edit) {
                     action = Some(next);
                 }
-            } else if ui
-                .add(Button::new(
-                    RichText::new("Add phase")
-                        .font(TYPE.secondary_id())
-                        .color(ACCENT),
-                ))
-                .clicked()
-            {
+            } else if compact_button(ui, "Add phase", ACCENT).clicked() {
                 edit.close_forms();
                 edit.phase_form = Some(PhaseForm::default());
             }
@@ -1633,14 +1867,7 @@ fn draw_issues_panel(
                 if let Some(next) = draw_issue_form(ui, edit) {
                     action = Some(next);
                 }
-            } else if ui
-                .add(Button::new(
-                    RichText::new("Add issue")
-                        .font(TYPE.secondary_id())
-                        .color(ACCENT),
-                ))
-                .clicked()
-            {
+            } else if compact_button(ui, "Add issue", ACCENT).clicked() {
                 edit.close_forms();
                 edit.issue_form = Some(IssueForm::default());
             }
@@ -2186,6 +2413,17 @@ fn field_error(ui: &mut Ui, message: Option<&str>) {
     if let Some(message) = message {
         ui.colored_label(SEVERITY_CRITICAL, message);
     }
+}
+
+/// Button that stays content-sized even inside a justified column.
+fn compact_button(ui: &mut Ui, label: &str, colour: Color32) -> egui::Response {
+    let mut response = None;
+    ui.horizontal(|ui| {
+        response = Some(ui.add(Button::new(
+            RichText::new(label).font(TYPE.secondary_id()).color(colour),
+        )));
+    });
+    response.expect("horizontal always runs")
 }
 
 fn draw_form_actions(
