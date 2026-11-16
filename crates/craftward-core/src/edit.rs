@@ -142,6 +142,19 @@ pub struct IssueChanges<'a> {
     pub note: ProjectUpdate<'a>,
 }
 
+/// Fields accepted by [`set_watch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchChanges<'a> {
+    /// New title, when one was given.
+    pub title: Option<&'a str>,
+    /// New kind word, when one was given.
+    pub kind: Option<&'a str>,
+    /// New due day, when one was given (`YYYY-MM-DD`).
+    pub due: Option<&'a str>,
+    /// Note. [`ProjectUpdate::Clear`] removes it.
+    pub note: ProjectUpdate<'a>,
+}
+
 /// A phase to append.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NewPhase<'a> {
@@ -940,6 +953,37 @@ pub fn add_watch(
             note: watch.note.map(str::to_owned),
         });
     commit(next, updated_on, Some(id))
+}
+
+/// Changes fields of one watch item.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the watch id is unknown, or
+/// [`EditError::Invalid`] for a bad kind or date.
+pub fn set_watch(
+    project: &Project,
+    watch_id: &str,
+    changes: WatchChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let items = next.watch_items.as_mut();
+    let Some(items) = items else {
+        return Err(missing("watch", watch_id, Vec::new()));
+    };
+    let index = item_index(items.iter().map(|item| item.id.as_str()), watch_id, "watch")?;
+    if let Some(title) = changes.title {
+        title.clone_into(&mut items[index].title);
+    }
+    if let Some(kind) = changes.kind {
+        items[index].kind = parse_watch_kind(kind)?;
+    }
+    if let Some(due) = changes.due {
+        items[index].due = require_date(due)?;
+    }
+    apply_text(&mut items[index].note, changes.note);
+    commit(next, updated_on, None)
 }
 
 /// Removes one watch item.

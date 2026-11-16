@@ -355,7 +355,7 @@
           {
             "id": "t10",
             "title": "Bearbeiten in der App, Speichern zurück in die craftward.json",
-            "status": "in_progress"
+            "status": "done"
           },
           {
             "id": "t11",
@@ -498,57 +498,92 @@
       "id": "app-status-chip-frame",
       "title": "Desktop app: status chips have a double frame and titles are not aligned",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Chip sits inside a larger box; the title next to 'In progress' starts further right than next to 'Done'."
     },
     {
       "id": "app-save-feedback",
       "title": "Desktop app: confirm every change with an undo notice",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "After each saved change show a non-blocking notice at the bottom, e.g. 'Status of <task> set to In progress - Undo', visible for about 8 seconds. Undo restores the previous state through the same write path. No confirmation dialog for reversible changes. Conflict errors shown as a prominent banner."
     },
     {
       "id": "app-clipboard",
       "title": "Desktop app: copy and paste (Ctrl+C / Ctrl+V) do not work",
       "severity": "high",
-      "status": "open",
+      "status": "resolved",
       "note": "Probably the eframe clipboard feature was dropped when default features were disabled in AP9. Check, enable and test on Windows, Linux (X11 and Wayland) and macOS."
     },
     {
       "id": "app-folder-picker",
       "title": "Desktop app: no folder picker when creating or adding a project",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Paths must be typed. Add a native folder and file dialog (candidate: rfd, check licenses and package count first); keep the text field as an alternative."
     },
     {
       "id": "app-project-id-hint",
       "title": "Desktop app: unclear what to enter as project id",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Suggest the id from the name (lowercase, hyphens), explain below the field what it is for (CLI commands), allow overriding."
     },
     {
       "id": "app-card-menu-click",
       "title": "Desktop app: card menu button opens the project instead of the menu",
       "severity": "high",
-      "status": "open",
+      "status": "resolved",
       "note": "The click on the menu button is handled by the clickable card. Remove from list is therefore unreachable."
     },
     {
       "id": "app-remove-from-detail",
       "title": "Desktop app: remove project from the detail page, optionally delete its file",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Offer Remove from list in the detail page header as well. Optional checkbox 'also delete craftward.json from disk', only with a confirmation dialog because it cannot be undone."
     },
     {
       "id": "app-button-width",
       "title": "Desktop app: Edit, Add phase and Add issue buttons stretch over the full width",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Should be compact like Back and Reload."
+    },
+    {
+      "id": "app-android-labels",
+      "title": "Desktop app: Android values shown as raw ids (google_play, phone)",
+      "severity": "low",
+      "status": "open",
+      "note": "Show readable labels in the stack section and in the Android form."
+    },
+    {
+      "id": "app-lockfile-relative",
+      "title": "Desktop app: lockfile picker returns an absolute path that the field rejects",
+      "severity": "medium",
+      "status": "open",
+      "note": "Convert the picked path to a path relative to source_dir (or the project folder when source_dir is missing). Show an error only when the file lies outside that folder."
+    },
+    {
+      "id": "app-source-dir-explain",
+      "title": "Desktop app: difference between project file folder and source folder is unclear",
+      "severity": "medium",
+      "status": "open",
+      "note": "New project form: 'Folder for craftward.json' and an optional 'Source folder (if the code lives elsewhere)', both with a folder picker and a one-line explanation. Header form: source_dir field has no Browse button yet; add the folder picker and the same explanation there."
+    },
+    {
+      "id": "cli-show-stack",
+      "title": "CLI: show does not print the stack (components, lockfiles, android)",
+      "severity": "medium",
+      "status": "open",
+      "note": "The desktop app shows the stack, craftward show omits it entirely."
+    },
+    {
+      "id": "app-date-format",
+      "title": "Desktop app: show and enter dates in the user's format (DD.MM.YYYY for German)",
+      "severity": "medium",
+      "status": "open",
+      "note": "Keep ISO YYYY-MM-DD in craftward.json and in the CLI. In the app, display and accept dates according to the system locale until the language setting exists. Consider a calendar picker for date fields."
     }
   ],
   "watch_items": [

@@ -143,7 +143,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: IssueCommand,
     },
-    /// Add or remove a watch item.
+    /// Add, update, or remove a watch item.
     #[command(long_about = WATCH_ABOUT)]
     Watch {
         #[command(subcommand)]
@@ -485,6 +485,28 @@ pub(crate) enum WatchCommand {
         #[arg(long)]
         id: Option<String>,
         /// Optional free-form note.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Change a watch item's title, kind, due day, or note.
+    #[command(long_about = WATCH_SET_ABOUT)]
+    Set {
+        /// Workspace id, craftward.json path, or directory that contains one.
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Watch item id to update.
+        #[arg(value_name = "WATCH")]
+        watch: String,
+        /// New reminder title.
+        #[arg(long)]
+        title: Option<String>,
+        /// New kind of dated reminder.
+        #[arg(long, value_enum)]
+        kind: Option<CliWatchKind>,
+        /// Due day as YYYY-MM-DD.
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        due: Option<String>,
+        /// Note; pass an empty value to clear.
         #[arg(long)]
         note: Option<String>,
     },
@@ -1034,10 +1056,14 @@ const ISSUE_REMOVE_ABOUT: &str = "\
 Removes the issue from the project.";
 
 const WATCH_ABOUT: &str = "\
-Use add or remove.";
+Use add, set, or remove.";
 
 const WATCH_ADD_ABOUT: &str = "\
 KIND is deadline, expiry, review, or other.";
+
+const WATCH_SET_ABOUT: &str = "\
+At least one of --title, --kind, --due, or --note is required. An empty
+--note clears that field.";
 
 const WATCH_REMOVE_ABOUT: &str = "\
 Removes the watch item from the project.";

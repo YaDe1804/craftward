@@ -216,6 +216,24 @@ fn issue_and_watch_commands_edit_a_temporary_file() {
         ],
     );
     assert!(watch.contains("added watch renew-domain"));
+    let updated_watch = succeed(
+        &root,
+        &[
+            "watch",
+            "set",
+            file,
+            "renew-domain",
+            "--title",
+            "Renew the domain",
+            "--kind",
+            "deadline",
+            "--due",
+            "2027-07-01",
+            "--note",
+            "",
+        ],
+    );
+    assert!(updated_watch.contains("updated watch renew-domain"));
     succeed(
         &root,
         &[
@@ -240,7 +258,7 @@ fn issue_and_watch_commands_edit_a_temporary_file() {
         "{view}"
     );
     assert!(
-        view.contains("watch renew-domain [expiry] Renew domain"),
+        view.contains("watch renew-domain [deadline] Renew the domain"),
         "{view}"
     );
     let _ = fs::remove_dir_all(root);
@@ -417,6 +435,7 @@ fn every_edit_command_has_help() {
         &["issue", "remove", "--help"],
         &["watch", "--help"],
         &["watch", "add", "--help"],
+        &["watch", "set", "--help"],
         &["watch", "remove", "--help"],
     ];
     for command in commands {

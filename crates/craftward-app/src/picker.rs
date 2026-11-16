@@ -18,6 +18,8 @@ pub enum PickKind {
     ProjectFile,
     /// Existing directory that contains `craftward.json`.
     ProjectFolder,
+    /// Existing lockfile (`Cargo.lock` or `package-lock.json`).
+    Lockfile,
 }
 
 /// One completed picker result.
@@ -39,6 +41,9 @@ pub trait PathPicker: Send {
 
     /// Opens a folder dialog for an existing project directory.
     fn pick_project_folder(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a file dialog for a supported lockfile.
+    fn pick_lockfile(&self, ctx: Context, tx: Sender<PickResult>);
 }
 
 /// Production picker that uses `rfd` on a worker thread.
@@ -68,6 +73,15 @@ impl PathPicker for RfdPicker {
             rfd::FileDialog::new()
                 .set_title("Choose folder that contains craftward.json")
                 .pick_folder()
+        });
+    }
+
+    fn pick_lockfile(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::Lockfile, || {
+            rfd::FileDialog::new()
+                .set_title("Choose lockfile")
+                .add_filter("Lockfiles", &["lock", "json"])
+                .pick_file()
         });
     }
 }
@@ -149,6 +163,14 @@ impl PathPicker for FakePicker {
     fn pick_project_folder(&self, ctx: Context, tx: Sender<PickResult>) {
         let _ = tx.send(PickResult {
             kind: PickKind::ProjectFolder,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_lockfile(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::Lockfile,
             path: self.take_next(),
         });
         ctx.request_repaint();

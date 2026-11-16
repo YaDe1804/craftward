@@ -255,11 +255,16 @@ required. Kind is `deadline`, `expiry`, `review`, or `other`. `--due` is
 `YYYY-MM-DD`. Without `--id`, the id is formed from the title and must be
 unique among watch items.
 
+`watch set` changes `--title`, `--kind`, `--due`, and/or `--note`. At
+least one of those options is required. An empty `--note` clears that
+field.
+
 `watch remove` deletes one watch item. An unknown id exits 1 and lists the
 watch ids. A bad kind or date exits 2 and lists the allowed values.
 
 ```console
 craftward watch add harbor-light --kind expiry --title "Renew domain" --due 2027-06-30
+craftward watch set harbor-light renew-domain --kind deadline --due 2027-07-01 --note ""
 craftward watch remove harbor-light domain-renewal
 ```
 

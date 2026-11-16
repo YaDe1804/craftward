@@ -6,11 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
     EditError, IssueChanges, LinkListUpdate, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
-    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_issue, add_phase, add_task,
-    add_watch, content_fingerprint, edit_file, edit_file_if_unchanged, fingerprint_file,
-    load_from_path, remove_issue, remove_phase, remove_task, remove_watch, render_project,
-    restore_file_if_unchanged, set_issue, set_issue_status, set_phase, set_project, set_task,
-    set_task_status,
+    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, WatchChanges, add_issue,
+    add_phase, add_task, add_watch, content_fingerprint, edit_file, edit_file_if_unchanged,
+    fingerprint_file, load_from_path, remove_issue, remove_phase, remove_task, remove_watch,
+    render_project, restore_file_if_unchanged, set_issue, set_issue_status, set_phase, set_project,
+    set_task, set_task_status, set_watch,
 };
 
 const DAY: &str = "2026-11-15";
@@ -269,6 +269,20 @@ fn issues_and_watches_can_be_added_updated_and_removed() {
         ),
         "domain"
     );
+    edit_file(&path, DAY, |project, updated| {
+        set_watch(
+            project,
+            "domain",
+            WatchChanges {
+                title: Some("Renew the domain"),
+                kind: Some("deadline"),
+                due: Some("2027-07-01"),
+                note: ProjectUpdate::Clear,
+            },
+            updated,
+        )
+    })
+    .expect("set watch");
     assert_eq!(
         watch(
             &path,
@@ -288,7 +302,7 @@ fn issues_and_watches_can_be_added_updated_and_removed() {
     let text = render_project(&project);
     assert!(text.contains("issues\n  none"), "{text}");
     assert!(
-        text.contains("watch domain [expiry] Renew domain"),
+        text.contains("watch domain [deadline] Renew the domain"),
         "{text}"
     );
     assert_eq!(project.updated.as_deref(), Some(DAY));
@@ -853,6 +867,52 @@ fn checked_set_issue_matches_edit_file_bytes() {
                 severity: Some("critical"),
                 url: ProjectUpdate::Set("https://example.com/i"),
                 note: ProjectUpdate::Set("see ticket"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_set_watch_matches_edit_file_bytes() {
+    let root = scratch("parity-set-watch");
+    let path = minimal(&root);
+    let watch_id = watch(
+        &path,
+        "expiry",
+        "Renew domain",
+        "2027-06-30",
+        Some("domain"),
+        Some("Registrar"),
+    );
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_watch(
+            project,
+            &watch_id,
+            WatchChanges {
+                title: Some("Renew the domain"),
+                kind: Some("deadline"),
+                due: Some("2027-07-01"),
+                note: ProjectUpdate::Clear,
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_watch(
+            project,
+            &watch_id,
+            WatchChanges {
+                title: Some("Renew the domain"),
+                kind: Some("deadline"),
+                due: Some("2027-07-01"),
+                note: ProjectUpdate::Clear,
             },
             updated,
         )

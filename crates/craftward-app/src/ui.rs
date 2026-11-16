@@ -9,10 +9,12 @@ use eframe::egui::{
 use craftward_core::UndoState;
 
 use crate::actions::{
-    SaveResult, now_secs, save_add_project, save_header, save_issue_edit, save_issue_status,
-    save_new_issue, save_new_phase, save_new_project, save_new_task, save_phase_edit,
-    save_remove_from_workspace, save_remove_issue, save_remove_phase, save_remove_task,
-    save_task_edit, save_task_status,
+    SaveResult, now_secs, save_add_lockfile, save_add_project, save_android, save_component_edit,
+    save_header, save_issue_edit, save_issue_status, save_new_component, save_new_issue,
+    save_new_phase, save_new_project, save_new_task, save_new_watch, save_phase_edit,
+    save_remove_component, save_remove_from_workspace, save_remove_issue, save_remove_lockfile,
+    save_remove_phase, save_remove_task, save_remove_watch, save_task_edit, save_task_status,
+    save_watch_edit,
 };
 use crate::load::{LoadedPortfolio, LoadedProject, load_portfolio};
 use crate::picker::{PathPicker, PickKind, PickerInbox, RfdPicker};
@@ -22,12 +24,15 @@ use crate::theme::{
     SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, TEXT, TYPE,
 };
 use crate::view::{
-    AddProjectForm, FindingRow, HeaderForm, IssueEditForm, IssueForm, NewProjectForm, PhaseForm,
-    PortfolioView, ProgressView, ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm,
-    badge_stretches_to_parent, build_detail, build_portfolio, finding_count_badges, grid_columns,
+    AddProjectForm, AndroidForm, ComponentEditForm, ComponentForm, FindingRow, HeaderForm,
+    IssueEditForm, IssueForm, LockfileForm, NewProjectForm, PhaseForm, PortfolioView, ProgressView,
+    ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm, WatchEditForm, WatchForm,
+    android_store_choices, badge_stretches_to_parent, build_detail, build_portfolio,
+    component_kind_choices, finding_count_badges, form_factor_choices, grid_columns,
     grid_row_column_slots, issue_severity_choices, issue_status_choices,
-    longest_status_choice_label, open_findings_label, project_status_choices, project_status_hint,
-    task_status_choices, task_title_is_muted,
+    longest_status_choice_label, open_findings_label, project_source_dir, project_status_choices,
+    project_status_hint, relative_to_dir, task_status_choices, task_title_is_muted,
+    watch_kind_choices,
 };
 
 /// Which screen is visible.
@@ -77,6 +82,19 @@ enum ErrorSite {
         /// Issue id.
         issue_id: String,
     },
+    /// New or edit component form.
+    ComponentForm,
+    /// Lockfile add form.
+    LockfileForm,
+    /// Android edit form.
+    AndroidForm,
+    /// New watch form.
+    WatchForm,
+    /// Watch edit form.
+    WatchEdit {
+        /// Watch id.
+        watch_id: String,
+    },
 }
 
 /// Detail-view editing widgets (no egui types).
@@ -96,6 +114,18 @@ struct DetailEdit {
     task_edit: Option<(String, String, TaskEditForm)>,
     /// Edit issue form (`issue_id`, draft).
     issue_edit: Option<(String, IssueEditForm)>,
+    /// New component form.
+    component_form: Option<ComponentForm>,
+    /// Edit component form (`name`, draft).
+    component_edit: Option<(String, ComponentEditForm)>,
+    /// Add lockfile form.
+    lockfile_form: Option<LockfileForm>,
+    /// Android edit form.
+    android_form: Option<AndroidForm>,
+    /// New watch form.
+    watch_form: Option<WatchForm>,
+    /// Edit watch form (`watch_id`, draft).
+    watch_edit: Option<(String, WatchEditForm)>,
     /// Sticky conflict / error banner (survives scrolling).
     banner: Option<String>,
     /// Last save error message.
@@ -121,6 +151,12 @@ impl DetailEdit {
         self.phase_edit = None;
         self.task_edit = None;
         self.issue_edit = None;
+        self.component_form = None;
+        self.component_edit = None;
+        self.lockfile_form = None;
+        self.android_form = None;
+        self.watch_form = None;
+        self.watch_edit = None;
         self.clear_message();
     }
 
@@ -208,6 +244,26 @@ enum DetailAction {
     SaveIssueEdit,
     /// Remove an issue.
     RemoveIssue { issue_id: String, title: String },
+    /// Persist a new component.
+    SaveComponent,
+    /// Persist a component edit.
+    SaveComponentEdit,
+    /// Remove a component.
+    RemoveComponent { name: String },
+    /// Persist a new lockfile path.
+    SaveLockfile,
+    /// Open the native lockfile picker.
+    BrowseLockfile,
+    /// Remove a lockfile path.
+    RemoveLockfile { path: String },
+    /// Persist Android settings.
+    SaveAndroid,
+    /// Persist a new watch item.
+    SaveWatch,
+    /// Persist a watch edit.
+    SaveWatchEdit,
+    /// Remove a watch item.
+    RemoveWatch { watch_id: String, title: String },
     /// Reload after a conflict.
     Reload,
     /// Dismiss the sticky banner.
@@ -400,6 +456,76 @@ impl CraftwardApp {
                     save_remove_issue(path, fingerprint, &issue_id, &title)
                 });
             }
+            DetailAction::SaveComponent => {
+                let Some(form) = self.edit.component_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::ComponentForm, |path, fingerprint| {
+                    save_new_component(path, fingerprint, &form)
+                });
+            }
+            DetailAction::SaveComponentEdit => {
+                let Some((name, form)) = self.edit.component_edit.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::ComponentForm, |path, fingerprint| {
+                    save_component_edit(path, fingerprint, &name, &form)
+                });
+            }
+            DetailAction::RemoveComponent { name } => {
+                self.run_save(index, ErrorSite::ComponentForm, |path, fingerprint| {
+                    save_remove_component(path, fingerprint, &name)
+                });
+            }
+            DetailAction::SaveLockfile => {
+                let Some(form) = self.edit.lockfile_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::LockfileForm, |path, fingerprint| {
+                    save_add_lockfile(path, fingerprint, &form)
+                });
+            }
+            DetailAction::BrowseLockfile => {}
+            DetailAction::RemoveLockfile { path } => {
+                self.run_save(index, ErrorSite::LockfileForm, |file, fingerprint| {
+                    save_remove_lockfile(file, fingerprint, &path)
+                });
+            }
+            DetailAction::SaveAndroid => {
+                let Some(form) = self.edit.android_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::AndroidForm, |path, fingerprint| {
+                    save_android(path, fingerprint, &form)
+                });
+            }
+            DetailAction::SaveWatch => {
+                let Some(form) = self.edit.watch_form.clone() else {
+                    return;
+                };
+                self.run_save(index, ErrorSite::WatchForm, |path, fingerprint| {
+                    save_new_watch(path, fingerprint, &form)
+                });
+            }
+            DetailAction::SaveWatchEdit => {
+                let Some((watch_id, form)) = self.edit.watch_edit.clone() else {
+                    return;
+                };
+                let site = ErrorSite::WatchEdit {
+                    watch_id: watch_id.clone(),
+                };
+                self.run_save(index, site, |path, fingerprint| {
+                    save_watch_edit(path, fingerprint, &watch_id, &form)
+                });
+            }
+            DetailAction::RemoveWatch { watch_id, title } => {
+                let site = ErrorSite::WatchEdit {
+                    watch_id: watch_id.clone(),
+                };
+                self.run_save(index, site, |path, fingerprint| {
+                    save_remove_watch(path, fingerprint, &watch_id, &title)
+                });
+            }
             DetailAction::RemoveFromList { id, name } => {
                 self.remove_from_list(&id, &name, false, true);
             }
@@ -495,7 +621,12 @@ impl eframe::App for CraftwardApp {
             });
         let action = self.draw_central(ui);
         if let (Screen::Detail { index }, Some(action)) = (self.screen, action) {
-            self.apply_detail_action(index, action);
+            if matches!(action, DetailAction::BrowseLockfile) {
+                self.picker
+                    .pick_lockfile(ui.ctx().clone(), self.picker_inbox.sender());
+            } else {
+                self.apply_detail_action(index, action);
+            }
         }
     }
 }
@@ -567,8 +698,24 @@ impl CraftwardApp {
                         form.path = text;
                     }
                 }
+                PickKind::Lockfile => {
+                    let relative = self.relative_lockfile_pick(&path).unwrap_or(text);
+                    if let Some(form) = &mut self.edit.lockfile_form {
+                        form.path = relative;
+                    }
+                }
             }
         }
+    }
+
+    fn relative_lockfile_pick(&self, absolute: &std::path::Path) -> Option<String> {
+        let Screen::Detail { index } = self.screen else {
+            return None;
+        };
+        let loaded = self.loaded.projects.get(index)?;
+        let project = loaded.project.as_ref().ok()?;
+        let source = project_source_dir(&loaded.path, project);
+        relative_to_dir(absolute, &source)
     }
 
     fn taken_project_ids(&self) -> Vec<String> {
@@ -610,6 +757,12 @@ impl CraftwardApp {
             || self.edit.task_edit.is_some()
             || self.edit.issue_form.is_some()
             || self.edit.issue_edit.is_some()
+            || self.edit.component_form.is_some()
+            || self.edit.component_edit.is_some()
+            || self.edit.lockfile_form.is_some()
+            || self.edit.android_form.is_some()
+            || self.edit.watch_form.is_some()
+            || self.edit.watch_edit.is_some()
         {
             self.edit.close_forms();
         } else if matches!(self.screen, Screen::Detail { .. }) {
@@ -1438,40 +1591,25 @@ fn draw_detail_left(
     });
 
     ui.add_space(CARD_GAP);
-    section(ui, "Stack", detail.components.is_empty(), |ui| {
-        for component in &detail.components {
-            ui.horizontal(|ui| {
-                draw_badge(ui, &component.kind, None);
-                let version = component
-                    .version
-                    .as_ref()
-                    .map_or(String::new(), |value| format!(" {value}"));
-                ui.add(
-                    Label::new(
-                        RichText::new(format!("{}{version}", component.name))
-                            .font(TYPE.body_id())
-                            .color(TEXT),
-                    )
-                    .wrap(),
-                );
-            });
+    let stack_empty = detail.components.is_empty()
+        && detail.lockfiles.is_empty()
+        && detail.android.is_none()
+        && edit.component_form.is_none()
+        && edit.component_edit.is_none()
+        && edit.lockfile_form.is_none()
+        && edit.android_form.is_none();
+    section(ui, "Stack", stack_empty && !editable, |ui| {
+        if let Some(next) = draw_stack_section(ui, detail, edit, editable) {
+            action = Some(next);
         }
     });
 
     ui.add_space(CARD_GAP);
-    section(ui, "Deadlines", detail.deadlines.is_empty(), |ui| {
-        for row in &detail.deadlines {
-            ui.horizontal(|ui| {
-                draw_badge(ui, &row.kind, None);
-                ui.add(
-                    Label::new(
-                        RichText::new(format!("{} — {} ({})", row.title, row.due, row.remaining))
-                            .font(TYPE.body_id())
-                            .color(TEXT),
-                    )
-                    .wrap(),
-                );
-            });
+    let deadlines_empty =
+        detail.deadlines.is_empty() && edit.watch_form.is_none() && edit.watch_edit.is_none();
+    section(ui, "Deadlines", deadlines_empty && !editable, |ui| {
+        if let Some(next) = draw_deadlines_section(ui, detail, edit, editable) {
+            action = Some(next);
         }
     });
 
@@ -1481,6 +1619,237 @@ fn draw_detail_left(
             draw_finding(ui, finding);
         }
     });
+    action
+}
+
+#[allow(clippy::too_many_lines)]
+fn draw_stack_section(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = None;
+    if edit.component_edit.is_some() {
+        if let Some(next) = draw_component_edit_form(ui, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+    if edit.component_form.is_some() {
+        if let Some(next) = draw_component_form(ui, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+    if edit.lockfile_form.is_some() {
+        if let Some(next) = draw_lockfile_form(ui, detail, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+    if edit.android_form.is_some() {
+        if let Some(next) = draw_android_form(ui, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+
+    for component in &detail.components {
+        ui.horizontal(|ui| {
+            draw_badge(ui, &component.kind, None);
+            let version = component
+                .version
+                .as_ref()
+                .map_or(String::new(), |value| format!(" {value}"));
+            let eol = component
+                .eol_product
+                .as_ref()
+                .map_or(String::new(), |value| format!(" · eol:{value}"));
+            ui.add(
+                Label::new(
+                    RichText::new(format!("{}{version}{eol}", component.name))
+                        .font(TYPE.body_id())
+                        .color(TEXT),
+                )
+                .wrap(),
+            );
+            if editable {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.menu_button(
+                        RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
+                        |ui| {
+                            if ui.button("Edit").clicked() {
+                                edit.close_forms();
+                                edit.component_edit = Some((
+                                    component.name.clone(),
+                                    ComponentEditForm::from_component(component),
+                                ));
+                                ui.close();
+                            }
+                            if ui.button("Remove").clicked() {
+                                action = Some(DetailAction::RemoveComponent {
+                                    name: component.name.clone(),
+                                });
+                                ui.close();
+                            }
+                        },
+                    );
+                });
+            }
+        });
+    }
+
+    if !detail.lockfiles.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Lockfiles")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        for path in &detail.lockfiles {
+            ui.horizontal(|ui| {
+                ui.add(Label::new(RichText::new(path).font(TYPE.body_id()).color(TEXT)).wrap());
+                if editable {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.menu_button(
+                            RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
+                            |ui| {
+                                if ui.button("Remove").clicked() {
+                                    action =
+                                        Some(DetailAction::RemoveLockfile { path: path.clone() });
+                                    ui.close();
+                                }
+                            },
+                        );
+                    });
+                }
+            });
+        }
+    }
+
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new("Android")
+            .font(TYPE.secondary_id())
+            .color(HEADING)
+            .strong(),
+    );
+    if let Some(android) = &detail.android {
+        ui.label(
+            RichText::new(format!(
+                "targetSdk {} · minSdk {} · {} · {}",
+                android
+                    .target_sdk
+                    .map_or_else(|| "—".to_owned(), |value| value.to_string()),
+                android
+                    .min_sdk
+                    .map_or_else(|| "—".to_owned(), |value| value.to_string()),
+                android.form_factor,
+                android.store
+            ))
+            .font(TYPE.body_id())
+            .color(TEXT),
+        );
+        if !android.detect_from.is_empty() {
+            ui.label(
+                RichText::new(format!("detect_from: {}", android.detect_from.join(", ")))
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+        }
+    } else {
+        ui.label(
+            RichText::new("Not set")
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        );
+    }
+
+    if editable {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if compact_button(ui, "Add component", ACCENT).clicked() {
+                edit.close_forms();
+                edit.component_form = Some(ComponentForm::default());
+            }
+            if compact_button(ui, "Add lockfile", ACCENT).clicked() {
+                edit.close_forms();
+                edit.lockfile_form = Some(LockfileForm::default());
+            }
+            if compact_button(ui, "Edit Android", ACCENT).clicked() {
+                edit.close_forms();
+                edit.android_form = Some(AndroidForm::from_detail(detail.android.as_ref()));
+            }
+        });
+    }
+    action
+}
+
+fn draw_deadlines_section(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+    editable: bool,
+) -> Option<DetailAction> {
+    let mut action = None;
+    if edit.watch_edit.is_some() {
+        if let Some(next) = draw_watch_edit_form(ui, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+    if edit.watch_form.is_some() {
+        if let Some(next) = draw_watch_form(ui, edit) {
+            action = Some(next);
+        }
+        return action;
+    }
+
+    for row in &detail.deadlines {
+        ui.horizontal(|ui| {
+            draw_badge(ui, &row.kind, None);
+            ui.add(
+                Label::new(
+                    RichText::new(format!("{} — {} ({})", row.title, row.due, row.remaining))
+                        .font(TYPE.body_id())
+                        .color(TEXT),
+                )
+                .wrap(),
+            );
+            if editable && let Some(watch_id) = &row.watch_id {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.menu_button(
+                        RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
+                        |ui| {
+                            if ui.button("Edit").clicked() {
+                                edit.close_forms();
+                                edit.watch_edit =
+                                    Some((watch_id.clone(), WatchEditForm::from_deadline(row)));
+                                ui.close();
+                            }
+                            if ui.button("Remove").clicked() {
+                                action = Some(DetailAction::RemoveWatch {
+                                    watch_id: watch_id.clone(),
+                                    title: row.title.clone(),
+                                });
+                                ui.close();
+                            }
+                        },
+                    );
+                });
+            }
+        });
+    }
+
+    if editable {
+        ui.add_space(6.0);
+        if compact_button(ui, "Add", ACCENT).clicked() {
+            edit.close_forms();
+            edit.watch_form = Some(WatchForm::default());
+        }
+    }
     action
 }
 
@@ -2397,6 +2766,458 @@ fn draw_issue_edit_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailActi
         return None;
     }
     if matches!(&edit.error_site, Some(ErrorSite::IssueEdit { .. })) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_component_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    {
+        let form = edit.component_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("New component")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Kind").font(TYPE.secondary_id()).color(MUTED));
+            let selected = component_kind_choices()
+                .iter()
+                .find(|(key, _)| *key == form.kind)
+                .map_or(form.kind.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("new-component-kind")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in component_kind_choices() {
+                        ui.selectable_value(&mut form.kind, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        form_labelled_line(ui, "Name", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.name)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        field_error(ui, form.validation_message());
+        form_labelled_line(ui, "Version", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.version)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        form_labelled_line(ui, "eol_product", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.eol_product)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            )
+            .on_hover_text("Product id on endoflife.date for support-end checks");
+        });
+        can_save = form.can_save();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveComponent);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveComponent,
+        &mut cancel,
+    );
+    if cancel {
+        edit.component_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::ComponentForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_component_edit_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    let name;
+    {
+        let (component_name, form) = edit.component_edit.as_mut()?;
+        name = component_name.clone();
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("Edit {name}"))
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        form_labelled_line(ui, "Version", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.version)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        form_labelled_line(ui, "Note", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.note)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        form_labelled_line(ui, "eol_product", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.eol_product)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            )
+            .on_hover_text("Product id on endoflife.date for support-end checks");
+        });
+        can_save = ComponentEditForm::can_save();
+    }
+    let _ = name;
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveComponentEdit);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveComponentEdit,
+        &mut cancel,
+    );
+    if cancel {
+        edit.component_edit = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::ComponentForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_lockfile_form(
+    ui: &mut Ui,
+    detail: &ProjectDetail,
+    edit: &mut DetailEdit,
+) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    {
+        let form = edit.lockfile_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Add lockfile")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        if detail.source_dir.is_none() {
+            ui.label(
+                RichText::new("source_dir is not set; paths resolve from the project file folder")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+        }
+        form_labelled_line(ui, "Path", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.path)
+                    .font(TYPE.body_id())
+                    .desired_width(200.0),
+            );
+            if compact_button(ui, "Browse…", MUTED).clicked() {
+                action = Some(DetailAction::BrowseLockfile);
+            }
+        });
+        let project_file = std::path::Path::new(&detail.path);
+        let resolved = match detail.source_dir.as_deref() {
+            Some(stored) if craftward_core::is_portable_absolute(stored) => {
+                std::path::PathBuf::from(stored)
+            }
+            Some(stored) => project_file.parent().unwrap_or(project_file).join(stored),
+            None => project_file.parent().map_or_else(
+                || std::path::PathBuf::from("."),
+                std::path::Path::to_path_buf,
+            ),
+        };
+        field_error(ui, form.validation_message(&resolved));
+        can_save = form.can_save(&resolved);
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveLockfile);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveLockfile,
+        &mut cancel,
+    );
+    if cancel {
+        edit.lockfile_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::LockfileForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_android_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    {
+        let form = edit.android_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Android")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        form_labelled_line(ui, "target_sdk", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.target_sdk)
+                    .font(TYPE.body_id())
+                    .desired_width(100.0),
+            );
+        });
+        form_labelled_line(ui, "min_sdk", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.min_sdk)
+                    .font(TYPE.body_id())
+                    .desired_width(100.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("form_factor")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let selected = form_factor_choices()
+                .iter()
+                .find(|(key, _)| *key == form.form_factor)
+                .map_or(form.form_factor.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("android-form-factor")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in form_factor_choices() {
+                        ui.selectable_value(&mut form.form_factor, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("store")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let selected = android_store_choices()
+                .iter()
+                .find(|(key, _)| *key == form.store)
+                .map_or(form.store.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("android-store")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in android_store_choices() {
+                        ui.selectable_value(&mut form.store, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        ui.label(
+            RichText::new("detect_from (one path per line)")
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        );
+        ui.add(
+            TextEdit::multiline(&mut form.detect_from)
+                .font(TYPE.body_id())
+                .desired_width(260.0)
+                .desired_rows(3),
+        );
+        field_error(ui, form.validation_message());
+        can_save = form.can_save();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveAndroid);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveAndroid,
+        &mut cancel,
+    );
+    if cancel {
+        edit.android_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::AndroidForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_watch_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    {
+        let form = edit.watch_form.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("New watch item")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Kind").font(TYPE.secondary_id()).color(MUTED));
+            let selected = watch_kind_choices()
+                .iter()
+                .find(|(key, _)| *key == form.kind)
+                .map_or(form.kind.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("new-watch-kind")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in watch_kind_choices() {
+                        ui.selectable_value(&mut form.kind, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        form_labelled_line(ui, "Title", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.title)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        form_labelled_line(ui, "Due", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.due)
+                    .font(TYPE.body_id())
+                    .desired_width(120.0)
+                    .hint_text("YYYY-MM-DD"),
+            );
+        });
+        form_labelled_line(ui, "Note", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.note)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        field_error(ui, form.validation_message());
+        can_save = form.can_save();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveWatch);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveWatch,
+        &mut cancel,
+    );
+    if cancel {
+        edit.watch_form = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::WatchForm)) {
+        draw_inline_error(ui, edit, &mut action);
+    }
+    action
+}
+
+fn draw_watch_edit_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+    let mut action = None;
+    let mut cancel = false;
+    let can_save;
+    {
+        let (_id, form) = edit.watch_edit.as_mut()?;
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Edit watch item")
+                .font(TYPE.secondary_id())
+                .color(HEADING)
+                .strong(),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Kind").font(TYPE.secondary_id()).color(MUTED));
+            let selected = watch_kind_choices()
+                .iter()
+                .find(|(key, _)| *key == form.kind)
+                .map_or(form.kind.as_str(), |(_, label)| *label)
+                .to_owned();
+            ComboBox::from_id_salt("edit-watch-kind")
+                .selected_text(RichText::new(selected).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    for (key, label) in watch_kind_choices() {
+                        ui.selectable_value(&mut form.kind, (*key).to_owned(), *label);
+                    }
+                });
+        });
+        form_labelled_line(ui, "Title", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.title)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        form_labelled_line(ui, "Due", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.due)
+                    .font(TYPE.body_id())
+                    .desired_width(120.0)
+                    .hint_text("YYYY-MM-DD"),
+            );
+        });
+        form_labelled_line(ui, "Note", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.note)
+                    .font(TYPE.body_id())
+                    .desired_width(220.0),
+            );
+        });
+        field_error(ui, form.validation_message());
+        can_save = form.can_save();
+    }
+    if can_save && ui.input(|input| input.key_pressed(Key::Enter)) {
+        action = Some(DetailAction::SaveWatchEdit);
+    }
+    draw_form_actions(
+        ui,
+        can_save,
+        &mut action,
+        DetailAction::SaveWatchEdit,
+        &mut cancel,
+    );
+    if cancel {
+        edit.watch_edit = None;
+        edit.clear_message();
+        return None;
+    }
+    if matches!(&edit.error_site, Some(ErrorSite::WatchEdit { .. })) {
         draw_inline_error(ui, edit, &mut action);
     }
     action

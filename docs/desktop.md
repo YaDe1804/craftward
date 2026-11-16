@@ -57,6 +57,13 @@ Supported in this release:
   Undo restores the phase and its tasks).
 - Add, edit, and remove tasks and issues (task: title, due, note; issue:
   title, severity, URL, note).
+- Stack: add, edit, and remove components (kind, name, version,
+  eol_product); add and remove lockfiles (path relative to `source_dir`,
+  native Browse dialog, must exist as `Cargo.lock` or `package-lock.json`);
+  edit Android (`target_sdk`, `min_sdk`, `form_factor`, `store`,
+  `detect_from`).
+- Watch items in the Deadlines section: add, edit, and remove (kind,
+  title, due, note). Task due dates in that list stay display-only.
 - Create a project (folder + id + name + status; id is suggested from the
   name until edited by hand), add an existing `craftward.json`, remove a
   project from the workspace list (optionally delete only that

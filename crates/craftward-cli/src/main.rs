@@ -197,7 +197,7 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
         Command::Phase { command } => editing::run(phase_request(command)?, workspace),
         Command::Task { command } => editing::run(task_request(command)?, workspace),
         Command::Issue { command } => editing::run(issue_request(command)?, workspace),
-        Command::Watch { command } => editing::run(watch_request(command), workspace),
+        Command::Watch { command } => editing::run(watch_request(command)?, workspace),
         Command::Radar {
             projects,
             refresh,
@@ -494,7 +494,7 @@ fn parse_link_args(args: &[String]) -> Result<Vec<(String, String)>, Failure> {
     Ok(links)
 }
 
-fn watch_request(command: WatchCommand) -> editing::Request {
+fn watch_request(command: WatchCommand) -> Result<editing::Request, Failure> {
     match command {
         WatchCommand::Add {
             project,
@@ -503,18 +503,41 @@ fn watch_request(command: WatchCommand) -> editing::Request {
             due,
             id,
             note,
-        } => editing::Request::AddWatch {
+        } => Ok(editing::Request::AddWatch {
             target: project,
             kind: kind.as_str().to_owned(),
             title,
             due,
             id,
             note,
-        },
-        WatchCommand::Remove { project, watch } => editing::Request::RemoveWatch {
+        }),
+        WatchCommand::Set {
+            project,
+            watch,
+            title,
+            kind,
+            due,
+            note,
+        } => {
+            if title.is_none() && kind.is_none() && due.is_none() && note.is_none() {
+                return Err(Failure::Usage(
+                    "watch set requires at least one of --title, --kind, --due, or --note"
+                        .to_owned(),
+                ));
+            }
+            Ok(editing::Request::SetWatch {
+                target: project,
+                watch,
+                title,
+                kind: kind.map(|value| value.as_str().to_owned()),
+                due,
+                note: clearable(note),
+            })
+        }
+        WatchCommand::Remove { project, watch } => Ok(editing::Request::RemoveWatch {
             target: project,
             watch,
-        },
+        }),
     }
 }
 
