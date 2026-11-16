@@ -33,9 +33,14 @@ See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 ## Views
 
 - **Overview:** one card per project, sorted by urgency. **New project** and
-  **Add existing** manage the workspace list. A card menu removes a project
-  from the list only (`craftward.json` stays on disk).
-- **Detail:** header, stack, phases with tasks, open issues, findings, and
+  **Add existing** manage the workspace list (text fields plus optional
+  native Browse dialogs). **Remove from list** runs immediately with an
+  undo toast (ADR 0024); **Remove and delete craftward.json…** asks for
+  confirmation because file deletion cannot be undone. Clicking the ···
+  menu button opens the card menu (Enter does the same when that button is
+  focused); clicking the rest of the card opens the project.
+- **Detail:** header (including **Remove from list** and **Delete
+  craftward.json…**), stack, phases with tasks, open issues, findings, and
   deadlines. Two columns from 900 px width; one column below that.
 
 **Reload** reloads the workspace, project files, and findings. There is no
@@ -52,8 +57,10 @@ Supported in this release:
   Undo restores the phase and its tasks).
 - Add, edit, and remove tasks and issues (task: title, due, note; issue:
   title, severity, URL, note).
-- Create a project (folder + id + name + status), add an existing
-  `craftward.json`, remove a project from the workspace list.
+- Create a project (folder + id + name + status; id is suggested from the
+  name until edited by hand), add an existing `craftward.json`, remove a
+  project from the workspace list (optionally delete only that
+  `craftward.json`).
 
 **Save** stays disabled until the form is valid. Field errors stay next to
 the input; drafts keep their text after a failed save. **Escape** closes an
@@ -80,7 +87,8 @@ external change. See [ADR 0024](adr/0024-editing-from-the-desktop-app.md).
 
 Tab moves focus, buttons and menus activate with Enter/Space, Escape closes
 an open form or leaves the detail view, Reload and Back are ordinary
-buttons in the top bar.
+buttons in the top bar. Ctrl/Cmd+C, V, X, and A work in text fields; selected
+labels can be copied when the OS clipboard feature is enabled.
 
 ## Theme
 
@@ -97,4 +105,5 @@ WCAG AA contrast. Text contrast against surfaces is checked in unit tests.
 - Findings appear only after a CLI `radar` run has created `craftward.db`.
 
 Architecture: [ADR 0023](adr/0023-desktop-app-with-eframe.md),
-[ADR 0024](adr/0024-editing-from-the-desktop-app.md).
+[ADR 0024](adr/0024-editing-from-the-desktop-app.md),
+[ADR 0025](adr/0025-native-dialogs-and-clipboard.md).

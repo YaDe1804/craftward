@@ -120,6 +120,8 @@ pub enum WorkspaceError {
     DuplicateId(String),
     /// `remove` found no readable project with this id.
     UnknownId(String),
+    /// `--delete-file` / delete was asked for a path that is not `craftward.json`.
+    NotProjectFile(PathBuf),
     /// The workspace file bytes no longer match the caller's fingerprint.
     Conflict,
 }
@@ -169,6 +171,11 @@ impl std::fmt::Display for WorkspaceError {
             }
             Self::DuplicateId(id) => write!(formatter, "project id is already listed: {id}"),
             Self::UnknownId(id) => write!(formatter, "unknown project id: {id}"),
+            Self::NotProjectFile(path) => write!(
+                formatter,
+                "refusing to delete anything except craftward.json: {}",
+                path.display()
+            ),
             Self::Conflict => {
                 formatter.write_str("workspace file changed on disk; reload before saving again")
             }
@@ -189,6 +196,7 @@ impl std::error::Error for WorkspaceError {
             | Self::DuplicatePath(_)
             | Self::DuplicateId(_)
             | Self::UnknownId(_)
+            | Self::NotProjectFile(_)
             | Self::Conflict => None,
         }
     }
@@ -337,6 +345,7 @@ pub fn remove_project_if_unchanged(
     workspace_file: &Path,
     id: &str,
     expected_bytes: &[u8],
+    delete_file: bool,
 ) -> Result<Vec<u8>, WorkspaceError> {
     let mut workspace = match load_workspace(workspace_file) {
         Ok(workspace) => workspace,
@@ -351,12 +360,17 @@ pub fn remove_project_if_unchanged(
     }) else {
         return Err(WorkspaceError::UnknownId(id.to_owned()));
     };
+    let project_path = resolve_entry_path(workspace_file, &workspace.projects[index].path);
     let current = workspace_bytes_or_empty(workspace_file)?;
     if current.as_slice() != expected_bytes {
         return Err(WorkspaceError::Conflict);
     }
     workspace.projects.remove(index);
-    save_workspace_if_unchanged(workspace_file, expected_bytes, &workspace)
+    let written = save_workspace_if_unchanged(workspace_file, expected_bytes, &workspace)?;
+    if delete_file {
+        delete_project_file(&project_path)?;
+    }
+    Ok(written)
 }
 
 /// Creates `directory/craftward.json` with only the required fields.
@@ -467,14 +481,21 @@ pub fn project_file_by_id(workspace_file: &Path, id: &str) -> Result<PathBuf, Wo
 
 /// Removes the workspace entry whose project id is `id`.
 ///
-/// The project file is not deleted. Entries that cannot be read are skipped,
-/// because their id is unknown.
+/// When `delete_file` is true, deletes that entry's `craftward.json` after the
+/// workspace write. The parent directory and every other file are left alone.
+/// Entries that cannot be read are skipped, because their id is unknown.
 ///
 /// # Errors
 ///
 /// Returns [`WorkspaceError::UnknownId`] when no readable entry has that id,
 /// including when the workspace file does not exist.
-pub fn remove_project(workspace_file: &Path, id: &str) -> Result<(), WorkspaceError> {
+/// Returns [`WorkspaceError::NotProjectFile`] when `delete_file` is set and the
+/// listed path is not named `craftward.json`.
+pub fn remove_project(
+    workspace_file: &Path,
+    id: &str,
+    delete_file: bool,
+) -> Result<(), WorkspaceError> {
     let mut workspace = match load_workspace(workspace_file) {
         Ok(workspace) => workspace,
         Err(WorkspaceError::Read(error)) if error.kind() == ErrorKind::NotFound => {
@@ -488,8 +509,33 @@ pub fn remove_project(workspace_file: &Path, id: &str) -> Result<(), WorkspaceEr
     }) else {
         return Err(WorkspaceError::UnknownId(id.to_owned()));
     };
+    let project_path = resolve_entry_path(workspace_file, &workspace.projects[index].path);
     workspace.projects.remove(index);
-    save_workspace(workspace_file, &workspace)
+    save_workspace(workspace_file, &workspace)?;
+    if delete_file {
+        delete_project_file(&project_path)?;
+    }
+    Ok(())
+}
+
+/// Deletes `path` only when its file name is `craftward.json`.
+///
+/// # Errors
+///
+/// Returns [`WorkspaceError::NotProjectFile`] for any other name, or
+/// [`WorkspaceError::Write`] when deletion fails. A missing file is success.
+pub fn delete_project_file(path: &Path) -> Result<(), WorkspaceError> {
+    let is_project_file = path
+        .file_name()
+        .is_some_and(|name| name == PROJECT_FILE_NAME);
+    if !is_project_file {
+        return Err(WorkspaceError::NotProjectFile(path.to_path_buf()));
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(WorkspaceError::Write(error)),
+    }
 }
 
 /// Builds the overview for every entry.

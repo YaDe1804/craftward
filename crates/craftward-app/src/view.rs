@@ -1031,6 +1031,8 @@ pub struct NewProjectForm {
     pub name: String,
     /// Lifecycle status schema word.
     pub status: String,
+    /// When true, id is no longer overwritten from the name.
+    pub id_manual: bool,
 }
 
 impl Default for NewProjectForm {
@@ -1040,36 +1042,89 @@ impl Default for NewProjectForm {
             id: String::new(),
             name: String::new(),
             status: "idea".to_owned(),
+            id_manual: false,
         }
     }
 }
 
 impl NewProjectForm {
-    /// Whether Save may run.
+    /// Whether Save may run for `taken_ids` already in the workspace.
     #[must_use]
-    pub fn can_save(&self) -> bool {
-        self.validation_message().is_none()
+    pub fn can_save(&self, taken_ids: &[String]) -> bool {
+        self.validation_message(taken_ids).is_none()
     }
 
-    /// Human validation error.
-    #[must_use]
-    pub fn validation_message(&self) -> Option<&'static str> {
-        if self.directory.trim().is_empty() {
-            return Some("Folder is required");
+    /// Syncs the id from the name when the id has not been edited by hand.
+    pub fn suggest_id_from_name(&mut self) {
+        if self.id_manual {
+            return;
         }
-        if self.id.trim().is_empty() {
+        self.id = craftward_core::id_from_title(self.name.trim()).unwrap_or_default();
+    }
+
+    /// Marks the id as hand-edited so further name changes leave it alone.
+    pub fn mark_id_manual(&mut self) {
+        self.id_manual = true;
+    }
+
+    /// Folder field error.
+    #[must_use]
+    pub fn directory_error(&self) -> Option<&'static str> {
+        if self.directory.trim().is_empty() {
+            Some("Folder is required")
+        } else {
+            None
+        }
+    }
+
+    /// Name field error.
+    #[must_use]
+    pub fn name_error(&self) -> Option<&'static str> {
+        if self.name.trim().is_empty() {
+            Some("Name is required")
+        } else {
+            None
+        }
+    }
+
+    /// Id field error, including duplicates in `taken_ids`.
+    #[must_use]
+    pub fn id_error(&self, taken_ids: &[String]) -> Option<&'static str> {
+        let id = self.id.trim();
+        if id.is_empty() {
             return Some("Id is required");
         }
-        if self.name.trim().is_empty() {
-            return Some("Name is required");
+        if !craftward_core::is_project_id(id) {
+            return Some(
+                "Id must be 1–64 characters from a-z, 0-9, and hyphen, and must not start or end with a hyphen",
+            );
         }
-        if !project_status_choices()
+        if taken_ids.iter().any(|taken| taken == id) {
+            return Some("Id is already in the workspace");
+        }
+        None
+    }
+
+    /// Status field error.
+    #[must_use]
+    pub fn status_error(&self) -> Option<&'static str> {
+        if project_status_choices()
             .iter()
             .any(|(key, _)| *key == self.status.as_str())
         {
-            return Some("Status is not a known lifecycle value");
+            None
+        } else {
+            Some("Status is not a known lifecycle value")
         }
-        None
+    }
+
+    /// Human validation error (first field error).
+    #[must_use]
+    pub fn validation_message(&self, taken_ids: &[String]) -> Option<&'static str> {
+        self.directory_error()
+            .or_else(|| self.name_error())
+            .or_else(|| self.id_error(taken_ids))
+            .or_else(|| self.status_error())
     }
 
     /// Trimmed id.
@@ -1082,6 +1137,20 @@ impl NewProjectForm {
     #[must_use]
     pub fn name_for_edit(&self) -> &str {
         self.name.trim()
+    }
+}
+
+/// Short explanation of each lifecycle status for form tooltips.
+#[must_use]
+pub fn project_status_hint(status: &str) -> &'static str {
+    match status {
+        "idea" => "Early idea; not actively built yet.",
+        "in_development" => "Actively being built.",
+        "released" => "Shipped to users.",
+        "maintenance" => "Stable; only fixes and small updates.",
+        "paused" => "On hold for now.",
+        "discontinued" => "No longer maintained.",
+        _ => "Project lifecycle status.",
     }
 }
 
@@ -1737,12 +1806,12 @@ mod tests {
     };
 
     use super::{
-        HeaderForm, IssueEditForm, IssueForm, PhaseForm, ProgressView, StatusBadge, TaskEditForm,
-        TaskForm, badge_stretches_to_parent, build_detail_at, build_portfolio_at, compare_urgency,
-        current_phase_title, grid_columns, grid_row_column_slots, issue_status_badge,
-        issue_status_choices, longest_status_choice_label, open_findings_label, open_issues_label,
-        project_progress, project_status_badge, remaining_label, task_status_badge,
-        task_status_choices, task_title_is_muted,
+        HeaderForm, IssueEditForm, IssueForm, NewProjectForm, PhaseForm, ProgressView, StatusBadge,
+        TaskEditForm, TaskForm, badge_stretches_to_parent, build_detail_at, build_portfolio_at,
+        compare_urgency, current_phase_title, grid_columns, grid_row_column_slots,
+        issue_status_badge, issue_status_choices, longest_status_choice_label, open_findings_label,
+        open_issues_label, project_progress, project_status_badge, remaining_label,
+        task_status_badge, task_status_choices, task_title_is_muted,
     };
     use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
     use crate::view::ProjectCard;
@@ -2058,6 +2127,32 @@ mod tests {
         form.note = "  note  ".to_owned();
         assert!(form.can_save());
         assert_eq!(form.note_for_edit(), Some("note"));
+    }
+
+    #[test]
+    fn new_project_form_suggests_id_until_manual_edit() {
+        let mut form = NewProjectForm {
+            name: "Harbor Light".to_owned(),
+            ..NewProjectForm::default()
+        };
+        form.suggest_id_from_name();
+        assert_eq!(form.id, "harbor-light");
+        form.name = "Prüfung".to_owned();
+        form.suggest_id_from_name();
+        assert_eq!(form.id, "pruefung");
+        form.id = "custom".to_owned();
+        form.mark_id_manual();
+        form.name = "Other".to_owned();
+        form.suggest_id_from_name();
+        assert_eq!(form.id, "custom");
+        let taken = vec!["custom".to_owned()];
+        assert_eq!(
+            form.id_error(&taken),
+            Some("Id is already in the workspace")
+        );
+        form.id = "ok-id".to_owned();
+        form.directory = "/tmp/p".to_owned();
+        assert!(form.can_save(&[]));
     }
 
     #[test]

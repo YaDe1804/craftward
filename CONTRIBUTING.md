@@ -86,7 +86,9 @@ other hard checks) and ignore only specific RustSec ids under
 in an ADR and remove advisory ignores when the upstream dependency that
 pulled them in is fixed (Dependabot usually surfaces that). See
 [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md) for the egui font and
-accesskit/zbus examples.
+accesskit/zbus examples, and
+[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md) for BSL-1.0 on the
+clipboard path.
 
 ## Adding a CLI command
 

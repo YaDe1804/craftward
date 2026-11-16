@@ -37,6 +37,9 @@ pub enum SaveResult {
 
 impl SaveResult {
     /// Builds an undo offer when this was a successful save.
+    ///
+    /// An empty snapshot list still shows the toast (message + Dismiss) but
+    /// has no Undo action — used when a file deletion is irreversible.
     #[must_use]
     pub fn undo_offer(&self, now_secs: u64) -> Option<UndoOffer> {
         match self {
@@ -377,7 +380,7 @@ pub fn save_new_project(
     workspace_fingerprint: &ContentFingerprint,
     form: &NewProjectForm,
 ) -> SaveResult {
-    if let Some(message) = form.validation_message() {
+    if let Some(message) = form.validation_message(&[]) {
         return failed(message);
     }
     let directory = PathBuf::from(form.directory.trim());
@@ -471,28 +474,47 @@ pub fn save_add_project(
     }
 }
 
-/// Removes a project from the workspace list (does not delete craftward.json).
+/// Removes a project from the workspace list.
+///
+/// When `delete_file` is true, also deletes that project's `craftward.json`.
+/// File deletion is irreversible; no undo snapshot is offered for that path.
 #[must_use]
 pub fn save_remove_from_workspace(
     workspace_file: &Path,
     workspace_fingerprint: &ContentFingerprint,
     project_id: &str,
     project_name: &str,
+    delete_file: bool,
 ) -> SaveResult {
     let previous = match workspace_bytes_or_empty(workspace_file) {
         Ok(bytes) => bytes,
         Err(error) => return failed(error.to_string()),
     };
-    match remove_project_if_unchanged(workspace_file, project_id, workspace_fingerprint.as_bytes())
-    {
-        Ok(written) => SaveResult::Saved {
-            message: format!("Removed {project_name} from the list (craftward.json kept on disk)"),
-            snapshots: vec![UndoSnapshot {
-                path: workspace_file.to_path_buf(),
-                previous_bytes: Some(previous),
-                expected: content_fingerprint(&written),
-            }],
-        },
+    match remove_project_if_unchanged(
+        workspace_file,
+        project_id,
+        workspace_fingerprint.as_bytes(),
+        delete_file,
+    ) {
+        Ok(written) => {
+            let message = if delete_file {
+                format!("Removed {project_name} and deleted craftward.json")
+            } else {
+                format!("Removed {project_name} from the list (craftward.json kept on disk)")
+            };
+            // Undo restores the workspace entry only. A deleted craftward.json
+            // is not restored (the confirmation dialog names that irreversibility).
+            let snapshots = if delete_file {
+                Vec::new()
+            } else {
+                vec![UndoSnapshot {
+                    path: workspace_file.to_path_buf(),
+                    previous_bytes: Some(previous),
+                    expected: content_fingerprint(&written),
+                }]
+            };
+            SaveResult::Saved { message, snapshots }
+        }
         Err(error) => SaveResult::Failed {
             message: error.to_string(),
             conflict: error.is_conflict(),

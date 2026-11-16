@@ -103,6 +103,59 @@ fn commands_round_trip_in_a_temporary_workspace() {
             .unwrap()
             .contains("no projects")
     );
+    assert!(
+        app.join("craftward.json").is_file(),
+        "remove without --delete-file keeps the file"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn remove_delete_file_removes_only_craftward_json() {
+    let root = scratch("remove-delete");
+    let workspace = workspace_arg(&root);
+    let app = root.join("app");
+    fs::create_dir_all(&app).unwrap();
+    let sibling = app.join("notes.txt");
+    fs::write(&sibling, "keep\n").unwrap();
+    let init = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "init",
+            app.to_str().unwrap(),
+            "--id",
+            "harbor-light",
+            "--name",
+            "Harbor Light",
+        ],
+    );
+    assert!(init.status.success());
+    let add = run(
+        &root,
+        &["--workspace", &workspace, "add", app.to_str().unwrap()],
+    );
+    assert!(add.status.success());
+    let remove = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "remove",
+            "harbor-light",
+            "--delete-file",
+        ],
+    );
+    assert!(
+        remove.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    assert!(String::from_utf8_lossy(&remove.stdout).contains("deleted craftward.json"));
+    assert!(!app.join("craftward.json").exists());
+    assert!(sibling.is_file());
+    assert!(app.is_dir());
     let _ = fs::remove_dir_all(root);
 }
 

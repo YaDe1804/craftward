@@ -276,10 +276,38 @@ fn add_and_remove_update_the_registry() {
     );
     let duplicate = add_project(&workspace, &project_dir.join("craftward.json")).expect_err("dup");
     assert!(matches!(duplicate, WorkspaceError::DuplicatePath(_)));
-    remove_project(&workspace, "harbor-light").expect("remove");
+    remove_project(&workspace, "harbor-light", false).expect("remove");
     assert_eq!(load_workspace(&workspace).unwrap().projects.len(), 0);
-    let missing = remove_project(&workspace, "harbor-light").expect_err("gone");
+    let missing = remove_project(&workspace, "harbor-light", false).expect_err("gone");
     assert!(matches!(missing, WorkspaceError::UnknownId(_)));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn remove_can_delete_only_craftward_json() {
+    let root = scratch("delete-file");
+    let project_dir = root.join("app");
+    fs::create_dir_all(&project_dir).unwrap();
+    let sibling = project_dir.join("notes.txt");
+    fs::write(&sibling, "keep me\n").unwrap();
+    init_project(
+        &project_dir,
+        "harbor-light",
+        "Harbor Light",
+        ProjectStatus::Idea,
+    )
+    .unwrap();
+    let project_file = project_dir.join("craftward.json");
+    assert!(project_file.is_file());
+    let workspace = root.join("workspace.json");
+    add_project(&workspace, &project_dir).unwrap();
+    remove_project(&workspace, "harbor-light", true).expect("remove+delete");
+    assert_eq!(load_workspace(&workspace).unwrap().projects.len(), 0);
+    assert!(!project_file.exists(), "craftward.json must be deleted");
+    assert!(sibling.is_file(), "sibling files must stay");
+    assert!(project_dir.is_dir(), "project folder must stay");
+    let refused = craftward_core::delete_project_file(&sibling).expect_err("not json");
+    assert!(matches!(refused, WorkspaceError::NotProjectFile(_)));
     let _ = fs::remove_dir_all(root);
 }
 

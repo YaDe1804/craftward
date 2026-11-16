@@ -5,20 +5,33 @@ developers who maintain many projects. It shows status, plans, and bugs across
 all projects. Its maintenance radar reports required updates, vulnerabilities,
 and platform deadlines.
 
-Target platforms are Windows, Linux, and macOS.
-
 ## Status
 
 Pre-alpha, no usable release yet.
 
-## Planned features
+## Features
 
-- A cross-project view of status, plans, and bugs
-- A maintenance radar for required updates, vulnerabilities, and platform deadlines
-- A desktop application and a command-line interface
-- Windows, Linux, and macOS from the first release
+### Command-line interface (`craftward-cli`)
 
-Accepted design decisions are recorded in [`docs/adr/`](docs/adr/).
+- Workspace registry: `init`, `add`, `remove` (optional `--delete-file`),
+  `list`, `workspace path`, `validate`
+- Project edits: `show`, `project set`, `phase` / `task` / `issue` / `watch`,
+  `stack` (including Android targetSdk fields)
+- Versioned HTML roadmaps (`roadmap`)
+- Maintenance radar (`radar`) against OSV and endoflife.date, local findings
+  (`findings`), and Google Play target-API deadlines (`deadlines`)
+
+### Desktop application (`craftward-app`)
+
+- Portfolio overview and per-project detail over the same workspace file and
+  `craftward.db` as the CLI
+- Create, add, and remove projects; edit header, phases, tasks, and issues
+  through the same writers as the CLI, with undo toasts and conflict banners
+- Native folder/file dialogs and OS clipboard (see
+  [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md))
+
+Target platforms are Windows, Linux, and macOS. Accepted design decisions are
+recorded in [`docs/adr/`](docs/adr/README.md).
 
 ## Build
 
@@ -45,11 +58,12 @@ Opens a portfolio window over the same workspace file and `craftward.db`
 as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`, platform defaults).
 The desktop app edits through the same writers as the CLI, with undo
 toasts and fingerprint conflicts. Projects can be created, added, or
-removed from the workspace list; task and issue status and remove are
+removed from the workspace list; header, phase, task, and issue edits are
 available in the detail view. `--version` prints the name and version. See
 [docs/desktop.md](docs/desktop.md),
-[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md), and
-[ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md).
+[ADR 0023](docs/adr/0023-desktop-app-with-eframe.md),
+[ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md), and
+[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when
@@ -99,7 +113,7 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
-- [Architecture decisions](docs/adr/)
+- [Architecture decisions](docs/adr/README.md)
 - [Project file format](docs/file-format.md)
 - [Workspace file](docs/workspace-format.md)
 - [Command-line interface](docs/cli.md)

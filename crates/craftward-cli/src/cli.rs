@@ -79,6 +79,9 @@ pub(crate) enum Command {
         /// Workspace project id to remove from the registry.
         #[arg(value_name = "ID")]
         id: String,
+        /// Also delete that project's craftward.json (never the folder).
+        #[arg(long = "delete-file")]
+        delete_file: bool,
     },
     /// Show every project in the workspace.
     #[command(long_about = LIST_ABOUT)]
@@ -939,7 +942,9 @@ PATH is a craftward.json file or a directory that contains one. The file
 must be valid. A path or project id that is already listed is rejected.";
 
 const REMOVE_ABOUT: &str = "\
-The project file is not deleted.";
+Without --delete-file the project file stays on disk. --delete-file removes
+only that craftward.json after updating the workspace; the folder and every
+other file are left alone.";
 
 const LIST_ABOUT: &str = "\
 Open tasks and open issues are those marked open or in_progress. The next
