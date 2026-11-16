@@ -79,10 +79,14 @@ pub struct StatusBadge {
 }
 
 impl StatusBadge {
-    /// Combined badge text (`◐ In development`).
+    /// Combined badge text (`√ Done`), or the label alone when there is no symbol.
     #[must_use]
     pub fn display(&self) -> String {
-        format!("{} {}", self.symbol, self.label)
+        if self.symbol.is_empty() {
+            self.label.to_owned()
+        } else {
+            format!("{} {}", self.symbol, self.label)
+        }
     }
 }
 
@@ -423,6 +427,22 @@ pub fn grid_columns(available_width: f32) -> usize {
     } else {
         1
     }
+}
+
+/// Longest choice label in a status menu (drives the shared chip column width).
+#[must_use]
+pub fn longest_status_choice_label(choices: &[(&'static str, &'static str)]) -> &'static str {
+    choices
+        .iter()
+        .map(|(_, label)| *label)
+        .max_by_key(|label| label.chars().count())
+        .unwrap_or("")
+}
+
+/// Whether a task title should use the muted colour (done / dropped).
+#[must_use]
+pub fn task_title_is_muted(status_key: &str) -> bool {
+    matches!(status_key, "done" | "dropped")
 }
 
 /// Column slots to allocate for a portfolio row.
@@ -1065,18 +1085,20 @@ fn severity_badge(severity: Severity) -> StatusBadge {
 
 fn finding_kind_badge(kind: craftward_core::FindingKind) -> StatusBadge {
     let (symbol, label) = match kind {
-        craftward_core::FindingKind::Vulnerability => (symbols::SEVERITY_CRITICAL, "Vulnerability"),
-        craftward_core::FindingKind::Malicious => (symbols::SEVERITY_CRITICAL, "Malicious"),
-        craftward_core::FindingKind::Unmaintained => (symbols::SOFT, "Unmaintained"),
-        craftward_core::FindingKind::Unsound => (symbols::SEVERITY_CRITICAL, "Unsound"),
-        craftward_core::FindingKind::Notice => (symbols::NOTICE, "Notice"),
-        craftward_core::FindingKind::Eol => (symbols::SEVERITY_CRITICAL, "End of life"),
-        craftward_core::FindingKind::EolSoon => (symbols::SEVERITY_MEDIUM, "EOL soon"),
+        craftward_core::FindingKind::Vulnerability => {
+            (symbols::KIND_VULNERABILITY, "Vulnerability")
+        }
+        craftward_core::FindingKind::Malicious => (symbols::KIND_MALICIOUS, "Malicious"),
+        craftward_core::FindingKind::Unmaintained => (symbols::KIND_UNMAINTAINED, "Unmaintained"),
+        craftward_core::FindingKind::Unsound => (symbols::KIND_UNSOUND, "Unsound"),
+        craftward_core::FindingKind::Notice => (symbols::KIND_NOTICE, "Notice"),
+        craftward_core::FindingKind::Eol => (symbols::KIND_EOL, "End of life"),
+        craftward_core::FindingKind::EolSoon => (symbols::KIND_EOL_SOON, "EOL soon"),
         craftward_core::FindingKind::PlatformDeadline => {
-            (symbols::SEVERITY_CRITICAL, "Play deadline")
+            (symbols::KIND_PLATFORM_DEADLINE, "Play deadline")
         }
         craftward_core::FindingKind::PlatformDeadlineSoon => {
-            (symbols::SEVERITY_MEDIUM, "Play deadline soon")
+            (symbols::KIND_PLATFORM_DEADLINE_SOON, "Play deadline soon")
         }
     };
     StatusBadge {
@@ -1135,22 +1157,22 @@ fn watch_kind_badge(kind: WatchKind) -> StatusBadge {
     match kind {
         WatchKind::Deadline => StatusBadge {
             key: "deadline",
-            symbol: symbols::SEVERITY_CRITICAL,
+            symbol: symbols::WATCH_DEADLINE,
             label: "Deadline",
         },
         WatchKind::Expiry => StatusBadge {
             key: "expiry",
-            symbol: symbols::SEVERITY_MEDIUM,
+            symbol: symbols::WATCH_EXPIRY,
             label: "Expiry",
         },
         WatchKind::Review => StatusBadge {
             key: "review",
-            symbol: symbols::REVIEW,
+            symbol: symbols::WATCH_REVIEW,
             label: "Review",
         },
         WatchKind::Other => StatusBadge {
             key: "other",
-            symbol: symbols::OTHER,
+            symbol: symbols::WATCH_OTHER,
             label: "Other",
         },
     }
@@ -1161,15 +1183,17 @@ mod tests {
     use std::path::PathBuf;
 
     use craftward_core::{
-        AndroidConfig, FindingKind, FindingState, Plan, Project, ProjectStatus, Severity, Stack,
-        StoredFinding, Task, TaskStatus,
+        AndroidConfig, FindingKind, FindingState, IssueStatus, Plan, Project, ProjectStatus,
+        Severity, Stack, StoredFinding, Task, TaskStatus,
     };
 
     use super::{
         IssueForm, ProgressView, StatusBadge, TaskForm, badge_stretches_to_parent, build_detail_at,
         build_portfolio_at, compare_urgency, current_phase_title, grid_columns,
-        grid_row_column_slots, open_findings_label, open_issues_label, project_progress,
-        project_status_badge, remaining_label, task_status_badge,
+        grid_row_column_slots, issue_status_badge, issue_status_choices,
+        longest_status_choice_label, open_findings_label, open_issues_label, project_progress,
+        project_status_badge, remaining_label, task_status_badge, task_status_choices,
+        task_title_is_muted,
     };
     use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
     use crate::view::ProjectCard;
@@ -1394,9 +1418,53 @@ mod tests {
         let badge = project_status_badge(ProjectStatus::InDevelopment);
         assert_eq!(badge.key, "in_development");
         assert_eq!(badge.label, "In development");
-        assert_ne!(badge.symbol, "");
+        assert_eq!(badge.display(), "In development");
         let done = task_status_badge(TaskStatus::Done);
-        assert_eq!(done.display(), format!("{} Done", crate::symbols::DONE));
+        assert_eq!(done.display(), "Done");
+        assert_eq!(done.symbol, "");
+    }
+
+    #[test]
+    fn every_status_has_non_empty_display_text() {
+        let task_badges = [
+            task_status_badge(TaskStatus::Open),
+            task_status_badge(TaskStatus::InProgress),
+            task_status_badge(TaskStatus::Done),
+            task_status_badge(TaskStatus::Dropped),
+        ];
+        for badge in task_badges {
+            assert!(!badge.label.is_empty(), "empty label for {}", badge.key);
+            assert!(
+                !badge.display().is_empty(),
+                "empty display for {}",
+                badge.key
+            );
+        }
+        let issue_badges = [
+            issue_status_badge(IssueStatus::Open),
+            issue_status_badge(IssueStatus::InProgress),
+            issue_status_badge(IssueStatus::Resolved),
+            issue_status_badge(IssueStatus::WontFix),
+        ];
+        for badge in issue_badges {
+            assert!(!badge.label.is_empty(), "empty label for {}", badge.key);
+            assert!(
+                !badge.display().is_empty(),
+                "empty display for {}",
+                badge.key
+            );
+        }
+        assert_eq!(
+            longest_status_choice_label(task_status_choices()),
+            "In progress"
+        );
+        assert_eq!(
+            longest_status_choice_label(issue_status_choices()),
+            "In progress"
+        );
+        assert!(task_title_is_muted("done"));
+        assert!(task_title_is_muted("dropped"));
+        assert!(!task_title_is_muted("open"));
     }
 
     #[test]

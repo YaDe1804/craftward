@@ -82,8 +82,10 @@ detail view, Reload and Back are ordinary buttons in the top bar.
 
 Colours match the dark HTML roadmaps (dark background, slightly lighter
 cards, blue accent). Severity and status always include text, not colour
-alone. Symbols use only glyphs covered by egui's bundled fonts. Text
-contrast against surfaces is checked in unit tests (WCAG AA 4.5:1).
+alone. Status, severity, and kind badges use readable text (and colour for
+severity); decorative symbols are omitted when egui's bundled fonts do not
+include a clear glyph. Text contrast against surfaces is checked in unit
+tests (WCAG AA 4.5:1).
 
 ## Known limitations
 

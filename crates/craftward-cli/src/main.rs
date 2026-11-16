@@ -81,7 +81,7 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
             id,
             name,
             status,
-        } => run_init(directory.as_deref(), &id, &name, status),
+        } => run_init(directory.as_deref(), &id, &name, status.into()),
         Command::Add { path } => {
             let workspace = workspace_file(workspace)?;
             let input = absolute_from_cwd(&platform_path(&path))?;
@@ -164,7 +164,7 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 editing::Request::SetProject {
                     target: project,
                     name,
-                    status,
+                    status: status.map(|value| value.as_str().to_owned()),
                     version: clearable(version),
                     description: clearable(description),
                     source_dir,
@@ -219,7 +219,7 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 None => findings::Request::List(findings::ListRequest {
                     projects,
                     state: state.into(),
-                    kind,
+                    kind: kind.map(|value| value.as_str().to_owned()),
                     json,
                     data_dir: cli.data_dir.clone(),
                 }),
@@ -311,7 +311,7 @@ fn task_request(command: TaskCommand) -> editing::Request {
             phase,
             title,
             id,
-            status,
+            status: status.map(|value| value.as_str().to_owned()),
             due,
             note,
         },
@@ -324,7 +324,7 @@ fn task_request(command: TaskCommand) -> editing::Request {
             target: project,
             phase,
             task,
-            status,
+            status: status.as_str().to_owned(),
         },
         TaskCommand::Done {
             project,
@@ -360,7 +360,7 @@ fn issue_request(command: IssueCommand) -> editing::Request {
         } => editing::Request::AddIssue {
             target: project,
             title,
-            severity,
+            severity: severity.as_str().to_owned(),
             id,
             url,
             note,
@@ -372,7 +372,7 @@ fn issue_request(command: IssueCommand) -> editing::Request {
         } => editing::Request::SetIssueStatus {
             target: project,
             issue,
-            status,
+            status: status.as_str().to_owned(),
         },
         IssueCommand::Remove { project, issue } => editing::Request::RemoveIssue {
             target: project,
@@ -392,7 +392,7 @@ fn watch_request(command: WatchCommand) -> editing::Request {
             note,
         } => editing::Request::AddWatch {
             target: project,
-            kind,
+            kind: kind.as_str().to_owned(),
             title,
             due,
             id,
@@ -416,7 +416,7 @@ fn stack_request(command: StackCommand) -> stack::Request {
             eol_product,
         } => stack::Request::Add(stack::AddRequest {
             project,
-            kind,
+            kind: kind.as_str().to_owned(),
             name,
             version,
             note,
@@ -456,8 +456,8 @@ fn stack_request(command: StackCommand) -> stack::Request {
             project,
             target_sdk: clearable_stack(target_sdk),
             min_sdk: clearable_stack(min_sdk),
-            form_factor,
-            store,
+            form_factor: form_factor.map(|value| value.as_str().to_owned()),
+            store: store.map(|value| value.as_str().to_owned()),
             detect_from,
             clear_detect_from,
         }),

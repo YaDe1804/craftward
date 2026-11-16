@@ -355,7 +355,7 @@
           {
             "id": "t10",
             "title": "Bearbeiten in der App, Speichern zurück in die craftward.json",
-            "status": "open"
+            "status": "in_progress"
           },
           {
             "id": "t11",
@@ -465,7 +465,7 @@
       "id": "cli-help-option-docs",
       "title": "CLI help: options without descriptions, global options mixed into command options",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Seen in issue add --help and watch add --help. Add help text to every option and show global options in their own section."
     },
     {
@@ -491,8 +491,22 @@
       "id": "app-symbol-meaning",
       "title": "Desktop app: ASCII status symbols are ambiguous ('+' for done and for tool)",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Use meaningful glyphs available in the bundled fonts (for example check mark, filled and empty circle, half circle); keep the glyph coverage test."
+    },
+    {
+      "id": "app-status-chip-frame",
+      "title": "Desktop app: status chips have a double frame and titles are not aligned",
+      "severity": "low",
+      "status": "open",
+      "note": "Chip sits inside a larger box; the title next to 'In progress' starts further right than next to 'Done'."
+    },
+    {
+      "id": "app-save-feedback",
+      "title": "Desktop app: confirm every change with an undo notice",
+      "severity": "medium",
+      "status": "open",
+      "note": "After each saved change show a non-blocking notice at the bottom, e.g. 'Status of <task> set to In progress - Undo', visible for about 8 seconds. Undo restores the previous state through the same write path. No confirmation dialog for reversible changes. Conflict errors shown as a prominent banner."
     }
   ],
   "watch_items": [
