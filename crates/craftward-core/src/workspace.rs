@@ -120,6 +120,8 @@ pub enum WorkspaceError {
     DuplicateId(String),
     /// `remove` found no readable project with this id.
     UnknownId(String),
+    /// The workspace file bytes no longer match the caller's fingerprint.
+    Conflict,
 }
 
 impl std::fmt::Display for WorkspaceError {
@@ -167,6 +169,9 @@ impl std::fmt::Display for WorkspaceError {
             }
             Self::DuplicateId(id) => write!(formatter, "project id is already listed: {id}"),
             Self::UnknownId(id) => write!(formatter, "unknown project id: {id}"),
+            Self::Conflict => {
+                formatter.write_str("workspace file changed on disk; reload before saving again")
+            }
         }
     }
 }
@@ -183,8 +188,17 @@ impl std::error::Error for WorkspaceError {
             | Self::MissingProject(_)
             | Self::DuplicatePath(_)
             | Self::DuplicateId(_)
-            | Self::UnknownId(_) => None,
+            | Self::UnknownId(_)
+            | Self::Conflict => None,
         }
+    }
+}
+
+impl WorkspaceError {
+    /// Whether the on-disk workspace drifted from the caller's fingerprint.
+    #[must_use]
+    pub const fn is_conflict(&self) -> bool {
+        matches!(self, Self::Conflict)
     }
 }
 
@@ -230,6 +244,119 @@ pub fn load_or_empty(path: &Path) -> Result<Workspace, WorkspaceError> {
 pub fn save_workspace(path: &Path, workspace: &Workspace) -> Result<(), WorkspaceError> {
     let text = format_workspace(workspace)?;
     write_atomic(path, text.as_bytes()).map_err(WorkspaceError::Write)
+}
+
+/// Bytes of an existing workspace file, or the canonical empty registry when
+/// the file is missing.
+///
+/// # Errors
+///
+/// Returns a read error other than not-found.
+pub fn workspace_bytes_or_empty(path: &Path) -> Result<Vec<u8>, WorkspaceError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            Ok(format_workspace(&Workspace::empty())?.into_bytes())
+        }
+        Err(error) => Err(WorkspaceError::Read(error)),
+    }
+}
+
+/// Writes `workspace` when the on-disk bytes still match `expected_bytes`.
+///
+/// A missing file is treated as the canonical empty registry for the check.
+///
+/// # Errors
+///
+/// Returns [`WorkspaceError::Conflict`] when the bytes do not match.
+pub fn save_workspace_if_unchanged(
+    path: &Path,
+    expected_bytes: &[u8],
+    workspace: &Workspace,
+) -> Result<Vec<u8>, WorkspaceError> {
+    let current = workspace_bytes_or_empty(path)?;
+    if current.as_slice() != expected_bytes {
+        return Err(WorkspaceError::Conflict);
+    }
+    let text = format_workspace(workspace)?;
+    write_atomic(path, text.as_bytes()).map_err(WorkspaceError::Write)?;
+    Ok(text.into_bytes())
+}
+
+/// Like [`add_project`], but refuses to write when the workspace drifted.
+///
+/// # Errors
+///
+/// Same as [`add_project`], plus [`WorkspaceError::Conflict`].
+pub fn add_project_if_unchanged(
+    workspace_file: &Path,
+    input: &Path,
+    expected_bytes: &[u8],
+) -> Result<(String, Vec<u8>), WorkspaceError> {
+    let project_file = project_file(input)?;
+    let project =
+        load_from_path(&project_file).map_err(|source| WorkspaceError::InvalidProject {
+            path: project_file.clone(),
+            source,
+        })?;
+    let mut workspace = load_or_empty(workspace_file)?;
+    let new_full = canonical_file(&project_file);
+    for entry in &workspace.projects {
+        let existing = resolve_entry_path(workspace_file, &entry.path);
+        if same_file(&existing, &new_full) {
+            return Err(WorkspaceError::DuplicatePath(project_file));
+        }
+        if let Ok(listed) = load_from_path(&existing)
+            && listed.id == project.id
+        {
+            return Err(WorkspaceError::DuplicateId(project.id));
+        }
+    }
+    let current = workspace_bytes_or_empty(workspace_file)?;
+    if current.as_slice() != expected_bytes {
+        return Err(WorkspaceError::Conflict);
+    }
+    if let Some(parent) = workspace_file.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(WorkspaceError::Write)?;
+    }
+    let stored = path_to_store(workspace_file, &project_file);
+    let id = project.id.clone();
+    workspace.projects.push(WorkspaceEntry { path: stored });
+    let written = save_workspace_if_unchanged(workspace_file, expected_bytes, &workspace)?;
+    Ok((id, written))
+}
+
+/// Like [`remove_project`], but refuses to write when the workspace drifted.
+///
+/// # Errors
+///
+/// Same as [`remove_project`], plus [`WorkspaceError::Conflict`].
+pub fn remove_project_if_unchanged(
+    workspace_file: &Path,
+    id: &str,
+    expected_bytes: &[u8],
+) -> Result<Vec<u8>, WorkspaceError> {
+    let mut workspace = match load_workspace(workspace_file) {
+        Ok(workspace) => workspace,
+        Err(WorkspaceError::Read(error)) if error.kind() == ErrorKind::NotFound => {
+            return Err(WorkspaceError::UnknownId(id.to_owned()));
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(index) = workspace.projects.iter().position(|entry| {
+        let path = resolve_entry_path(workspace_file, &entry.path);
+        load_from_path(&path).is_ok_and(|project| project.id == id)
+    }) else {
+        return Err(WorkspaceError::UnknownId(id.to_owned()));
+    };
+    let current = workspace_bytes_or_empty(workspace_file)?;
+    if current.as_slice() != expected_bytes {
+        return Err(WorkspaceError::Conflict);
+    }
+    workspace.projects.remove(index);
+    save_workspace_if_unchanged(workspace_file, expected_bytes, &workspace)
 }
 
 /// Creates `directory/craftward.json` with only the required fields.

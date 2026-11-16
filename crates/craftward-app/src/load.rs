@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use craftward_core::{
     ContentFingerprint, DATABASE_FILE, ProcessHost, Project, Severity, StateFilter, StoredFinding,
     content_fingerprint, list_findings, list_projects, load_from_str, locate_data,
-    locate_workspace, platform_path,
+    locate_workspace, platform_path, workspace_bytes_or_empty,
 };
 use craftward_store::SqliteStore;
 
@@ -44,6 +44,8 @@ pub struct LoadedProject {
 pub struct LoadedPortfolio {
     /// Absolute workspace file path, when it could be resolved.
     pub workspace_path: Option<PathBuf>,
+    /// Fingerprint of workspace.json bytes (empty registry when the file is missing).
+    pub workspace_fingerprint: Option<ContentFingerprint>,
     /// Why the workspace file could not be used.
     pub workspace_error: Option<String>,
     /// Absolute path of `craftward.db`, when the data directory resolved.
@@ -85,11 +87,15 @@ pub fn load_portfolio() -> LoadedPortfolio {
 
     match workspace {
         Ok(workspace_path) => {
+            let workspace_fingerprint = workspace_bytes_or_empty(&workspace_path)
+                .ok()
+                .map(|bytes| content_fingerprint(&bytes));
             let rows = match list_projects(&workspace_path) {
                 Ok(rows) => rows,
                 Err(error) => {
                     return LoadedPortfolio {
                         workspace_path: Some(workspace_path),
+                        workspace_fingerprint,
                         workspace_error: Some(error.to_string()),
                         database_path,
                         database,
@@ -103,6 +109,7 @@ pub fn load_portfolio() -> LoadedPortfolio {
                 .collect();
             LoadedPortfolio {
                 workspace_path: Some(workspace_path),
+                workspace_fingerprint,
                 workspace_error: None,
                 database_path,
                 database,
@@ -111,6 +118,7 @@ pub fn load_portfolio() -> LoadedPortfolio {
         }
         Err(message) => LoadedPortfolio {
             workspace_path: None,
+            workspace_fingerprint: None,
             workspace_error: Some(message),
             database_path,
             database,

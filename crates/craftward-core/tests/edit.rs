@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
-    EditError, NewIssue, NewPhase, NewTask, NewWatch, ProjectChanges, ProjectUpdate, add_issue,
-    add_phase, add_task, add_watch, content_fingerprint, edit_file, edit_file_if_unchanged,
-    fingerprint_file, load_from_path, remove_issue, remove_phase, remove_task, remove_watch,
-    render_project, set_issue_status, set_project, set_task_status,
+    EditError, IssueChanges, LinkListUpdate, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
+    ProjectChanges, ProjectUpdate, StringListUpdate, TaskChanges, add_issue, add_phase, add_task,
+    add_watch, content_fingerprint, edit_file, edit_file_if_unchanged, fingerprint_file,
+    load_from_path, remove_issue, remove_phase, remove_task, remove_watch, render_project,
+    restore_file_if_unchanged, set_issue, set_issue_status, set_phase, set_project, set_task,
+    set_task_status,
 };
 
 const DAY: &str = "2026-11-15";
@@ -41,7 +43,9 @@ fn changes<'a>() -> ProjectChanges<'a> {
         status: None,
         version: ProjectUpdate::Keep,
         description: ProjectUpdate::Keep,
-        source_dir: None,
+        source_dir: ProjectUpdate::Keep,
+        tags: StringListUpdate::Keep,
+        links: LinkListUpdate::Keep,
     }
 }
 
@@ -144,7 +148,7 @@ fn header_fields_can_be_set_and_cleared() {
         fields.status = Some("in_development");
         fields.version = ProjectUpdate::Set("0.5.0");
         fields.description = ProjectUpdate::Set("Notes");
-        fields.source_dir = Some("src");
+        fields.source_dir = ProjectUpdate::Set("src");
         set_project(project, fields, updated)
     })
     .expect("set header");
@@ -557,7 +561,9 @@ fn checked_edit_refuses_when_fingerprint_drifts() {
                 status: None,
                 version: ProjectUpdate::Keep,
                 description: ProjectUpdate::Keep,
-                source_dir: None,
+                source_dir: ProjectUpdate::Keep,
+                tags: StringListUpdate::Keep,
+                links: LinkListUpdate::Keep,
             },
             updated,
         )
@@ -581,7 +587,9 @@ fn checked_edit_writes_when_fingerprint_matches() {
                 status: None,
                 version: ProjectUpdate::Keep,
                 description: ProjectUpdate::Keep,
-                source_dir: None,
+                source_dir: ProjectUpdate::Keep,
+                tags: StringListUpdate::Keep,
+                links: LinkListUpdate::Keep,
             },
             updated,
         )
@@ -737,5 +745,158 @@ fn invalid_change_does_not_write() {
     .expect_err("missing");
     assert!(!error.is_conflict());
     assert_eq!(fs::read(&path).expect("after"), before);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_set_phase_matches_edit_file_bytes() {
+    let root = scratch("parity-set-phase");
+    let path = minimal(&root);
+    let phase_id = phase(&path, "Build", Some("build"), Some("Ship"));
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_phase(
+            project,
+            &phase_id,
+            PhaseChanges {
+                title: Some("Build hard"),
+                goal: ProjectUpdate::Clear,
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_phase(
+            project,
+            &phase_id,
+            PhaseChanges {
+                title: Some("Build hard"),
+                goal: ProjectUpdate::Clear,
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_set_task_matches_edit_file_bytes() {
+    let root = scratch("parity-set-task");
+    let path = minimal(&root);
+    let phase_id = phase(&path, "Build", Some("build"), None);
+    let task_id = task(&path, &phase_id, "Ship", Some("ship"), None, None, None);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_task(
+            project,
+            &phase_id,
+            &task_id,
+            TaskChanges {
+                title: Some("Ship it"),
+                due: ProjectUpdate::Set("2026-12-01"),
+                note: ProjectUpdate::Set("go"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_task(
+            project,
+            &phase_id,
+            &task_id,
+            TaskChanges {
+                title: Some("Ship it"),
+                due: ProjectUpdate::Set("2026-12-01"),
+                note: ProjectUpdate::Set("go"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_set_issue_matches_edit_file_bytes() {
+    let root = scratch("parity-set-issue");
+    let path = minimal(&root);
+    let issue_id = issue(&path, "Contrast", "high", Some("contrast"), None, None);
+    let (app, cli) = twin_paths(&path);
+    let fingerprint = fingerprint_file(&app).unwrap();
+    edit_file_if_unchanged(&app, &fingerprint, DAY, |project, updated| {
+        set_issue(
+            project,
+            &issue_id,
+            IssueChanges {
+                title: Some("Contrast bug"),
+                severity: Some("critical"),
+                url: ProjectUpdate::Set("https://example.com/i"),
+                note: ProjectUpdate::Set("see ticket"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    edit_file(&cli, DAY, |project, updated| {
+        set_issue(
+            project,
+            &issue_id,
+            IssueChanges {
+                title: Some("Contrast bug"),
+                severity: Some("critical"),
+                url: ProjectUpdate::Set("https://example.com/i"),
+                note: ProjectUpdate::Set("see ticket"),
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    assert_twins_equal(&app, &cli);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn restore_file_round_trip_and_conflict() {
+    let root = scratch("restore-bytes");
+    let path = minimal(&root);
+    let before = fs::read(&path).unwrap();
+    let fingerprint = content_fingerprint(&before);
+    let outcome = edit_file_if_unchanged(&path, &fingerprint, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: Some("Harbor"),
+                ..changes()
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    restore_file_if_unchanged(&path, &outcome.fingerprint(), &before).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let after = edit_file_if_unchanged(&path, &fingerprint, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: Some("Harbor"),
+                ..changes()
+            },
+            updated,
+        )
+    })
+    .unwrap();
+    fs::write(&path, b"external\n").unwrap();
+    assert!(
+        restore_file_if_unchanged(&path, &after.fingerprint(), &before)
+            .unwrap_err()
+            .is_conflict()
+    );
     let _ = fs::remove_dir_all(root);
 }

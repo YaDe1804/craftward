@@ -507,6 +507,48 @@
       "severity": "medium",
       "status": "open",
       "note": "After each saved change show a non-blocking notice at the bottom, e.g. 'Status of <task> set to In progress - Undo', visible for about 8 seconds. Undo restores the previous state through the same write path. No confirmation dialog for reversible changes. Conflict errors shown as a prominent banner."
+    },
+    {
+      "id": "app-clipboard",
+      "title": "Desktop app: copy and paste (Ctrl+C / Ctrl+V) do not work",
+      "severity": "high",
+      "status": "open",
+      "note": "Probably the eframe clipboard feature was dropped when default features were disabled in AP9. Check, enable and test on Windows, Linux (X11 and Wayland) and macOS."
+    },
+    {
+      "id": "app-folder-picker",
+      "title": "Desktop app: no folder picker when creating or adding a project",
+      "severity": "medium",
+      "status": "open",
+      "note": "Paths must be typed. Add a native folder and file dialog (candidate: rfd, check licenses and package count first); keep the text field as an alternative."
+    },
+    {
+      "id": "app-project-id-hint",
+      "title": "Desktop app: unclear what to enter as project id",
+      "severity": "medium",
+      "status": "open",
+      "note": "Suggest the id from the name (lowercase, hyphens), explain below the field what it is for (CLI commands), allow overriding."
+    },
+    {
+      "id": "app-card-menu-click",
+      "title": "Desktop app: card menu button opens the project instead of the menu",
+      "severity": "high",
+      "status": "open",
+      "note": "The click on the menu button is handled by the clickable card. Remove from list is therefore unreachable."
+    },
+    {
+      "id": "app-remove-from-detail",
+      "title": "Desktop app: remove project from the detail page, optionally delete its file",
+      "severity": "medium",
+      "status": "open",
+      "note": "Offer Remove from list in the detail page header as well. Optional checkbox 'also delete craftward.json from disk', only with a confirmation dialog because it cannot be undone."
+    },
+    {
+      "id": "app-button-width",
+      "title": "Desktop app: Edit, Add phase and Add issue buttons stretch over the full width",
+      "severity": "low",
+      "status": "open",
+      "note": "Should be compact like Back and Reload."
     }
   ],
   "watch_items": [

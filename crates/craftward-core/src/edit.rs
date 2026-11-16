@@ -16,7 +16,7 @@ use crate::fs_atomic::write_atomic;
 use crate::load::load_from_str;
 use crate::model::{
     AndroidConfig, AndroidStore, Component, ComponentKind, FormFactor, Issue, IssueSeverity,
-    IssueStatus, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
+    IssueStatus, Link, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
     WatchKind,
 };
 use crate::workspace::format_project;
@@ -59,6 +59,37 @@ pub enum ProjectUpdate<'a> {
     Clear,
 }
 
+/// One link to store through [`set_project`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkChange<'a> {
+    /// Text shown for the link.
+    pub label: &'a str,
+    /// Address starting with `http://` or `https://`.
+    pub url: &'a str,
+}
+
+/// Replace, clear, or leave a string list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringListUpdate<'a> {
+    /// Leave the field as it is.
+    Keep,
+    /// Store these values. An empty slice clears the field.
+    Set(&'a [String]),
+    /// Remove the field.
+    Clear,
+}
+
+/// Replace, clear, or leave the links list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkListUpdate<'a> {
+    /// Leave the field as it is.
+    Keep,
+    /// Store these links. An empty slice clears the field.
+    Set(&'a [LinkChange<'a>]),
+    /// Remove the field.
+    Clear,
+}
+
 /// Fields accepted by [`set_project`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectChanges<'a> {
@@ -70,8 +101,45 @@ pub struct ProjectChanges<'a> {
     pub version: ProjectUpdate<'a>,
     /// Description. [`ProjectUpdate::Clear`] removes it.
     pub description: ProjectUpdate<'a>,
-    /// New source directory, when one was given.
-    pub source_dir: Option<&'a str>,
+    /// `source_dir`. [`ProjectUpdate::Clear`] removes it.
+    pub source_dir: ProjectUpdate<'a>,
+    /// Tags list.
+    pub tags: StringListUpdate<'a>,
+    /// Links list.
+    pub links: LinkListUpdate<'a>,
+}
+
+/// Fields accepted by [`set_phase`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhaseChanges<'a> {
+    /// New title, when one was given.
+    pub title: Option<&'a str>,
+    /// Goal. [`ProjectUpdate::Clear`] removes it.
+    pub goal: ProjectUpdate<'a>,
+}
+
+/// Fields accepted by [`set_task`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskChanges<'a> {
+    /// New title, when one was given.
+    pub title: Option<&'a str>,
+    /// Due day. [`ProjectUpdate::Clear`] removes it.
+    pub due: ProjectUpdate<'a>,
+    /// Note. [`ProjectUpdate::Clear`] removes it.
+    pub note: ProjectUpdate<'a>,
+}
+
+/// Fields accepted by [`set_issue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IssueChanges<'a> {
+    /// New title, when one was given.
+    pub title: Option<&'a str>,
+    /// New severity word, when one was given.
+    pub severity: Option<&'a str>,
+    /// Tracker URL. [`ProjectUpdate::Clear`] removes it.
+    pub url: ProjectUpdate<'a>,
+    /// Note. [`ProjectUpdate::Clear`] removes it.
+    pub note: ProjectUpdate<'a>,
 }
 
 /// A phase to append.
@@ -206,6 +274,14 @@ impl EditOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentFingerprint {
     bytes: Vec<u8>,
+}
+
+impl ContentFingerprint {
+    /// Raw bytes that form this fingerprint.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 /// Builds a fingerprint from the raw file contents.
@@ -387,6 +463,66 @@ pub fn edit_file_if_unchanged(
     edit_file_at(path, Some(expected), updated_on, change)
 }
 
+/// Replaces `path` with `new_bytes` when the on-disk bytes still match `expected`.
+///
+/// # Errors
+///
+/// Returns [`EditError::Conflict`] when the fingerprint does not match, or
+/// [`EditError::Load`] / [`EditError::Write`] on I/O failure.
+pub fn replace_file_if_unchanged(
+    path: &Path,
+    expected: &ContentFingerprint,
+    new_bytes: &[u8],
+) -> Result<ContentFingerprint, EditError> {
+    let bytes = fs::read(path).map_err(|error| EditError::Load(LoadError::Read(error)))?;
+    if &content_fingerprint(&bytes) != expected {
+        return Err(EditError::Conflict);
+    }
+    write_atomic(path, new_bytes).map_err(EditError::Write)?;
+    Ok(content_fingerprint(new_bytes))
+}
+
+/// Restores `previous_bytes` when the on-disk bytes still match `expected`.
+///
+/// Used by desktop undo after a successful edit. `expected` is the fingerprint
+/// taken after that edit.
+///
+/// # Errors
+///
+/// Same as [`replace_file_if_unchanged`].
+pub fn restore_file_if_unchanged(
+    path: &Path,
+    expected: &ContentFingerprint,
+    previous_bytes: &[u8],
+) -> Result<ContentFingerprint, EditError> {
+    replace_file_if_unchanged(path, expected, previous_bytes)
+}
+
+/// Deletes `path` when the on-disk bytes still match `expected`.
+///
+/// Used to undo creation of a new project file.
+///
+/// # Errors
+///
+/// Returns [`EditError::Conflict`] when the fingerprint does not match or the
+/// file is already missing, or [`EditError::Write`] when deletion fails.
+pub fn remove_file_if_unchanged(
+    path: &Path,
+    expected: &ContentFingerprint,
+) -> Result<(), EditError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(EditError::Conflict);
+        }
+        Err(error) => return Err(EditError::Load(LoadError::Read(error))),
+    };
+    if &content_fingerprint(&bytes) != expected {
+        return Err(EditError::Conflict);
+    }
+    fs::remove_file(path).map_err(EditError::Write)
+}
+
 fn edit_file_at(
     path: &Path,
     expected: Option<&ContentFingerprint>,
@@ -440,9 +576,118 @@ pub fn set_project(
         ProjectUpdate::Set(text) => next.description = Some(text.to_owned()),
         ProjectUpdate::Clear => next.description = None,
     }
-    if let Some(source_dir) = changes.source_dir {
-        next.source_dir = Some(source_dir.to_owned());
+    apply_text(&mut next.source_dir, changes.source_dir);
+    match changes.tags {
+        StringListUpdate::Keep => {}
+        StringListUpdate::Clear | StringListUpdate::Set([]) => next.tags = None,
+        StringListUpdate::Set(tags) => next.tags = Some(tags.to_vec()),
     }
+    match changes.links {
+        LinkListUpdate::Keep => {}
+        LinkListUpdate::Clear | LinkListUpdate::Set([]) => next.links = None,
+        LinkListUpdate::Set(links) => {
+            let mut parsed = Vec::with_capacity(links.len());
+            for link in links {
+                parsed.push(Link {
+                    label: link.label.to_owned(),
+                    url: require_url(link.url)?,
+                });
+            }
+            next.links = Some(parsed);
+        }
+    }
+    commit(next, updated_on, None)
+}
+
+/// Updates one phase's title and/or goal.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the phase id is unknown.
+pub fn set_phase(
+    project: &Project,
+    phase_id: &str,
+    changes: PhaseChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let index = phase_index(&next, phase_id)?;
+    let Some(phases) = next.plan.as_mut().map(|plan| &mut plan.phases) else {
+        return Err(missing("phase", phase_id, Vec::new()));
+    };
+    if let Some(title) = changes.title {
+        title.clone_into(&mut phases[index].title);
+    }
+    apply_text(&mut phases[index].goal, changes.goal);
+    commit(next, updated_on, None)
+}
+
+/// Updates one task's title, due day, and/or note.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the phase or task is unknown, or
+/// [`EditError::Invalid`] for a bad due date.
+pub fn set_task(
+    project: &Project,
+    phase_id: &str,
+    task_id: &str,
+    changes: TaskChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let phase = phase_index(&next, phase_id)?;
+    let Some(plan) = next.plan.as_mut() else {
+        return Err(missing("phase", phase_id, Vec::new()));
+    };
+    let tasks = &mut plan.phases[phase].tasks;
+    let task = task_index(tasks, task_id)?;
+    if let Some(title) = changes.title {
+        title.clone_into(&mut tasks[task].title);
+    }
+    match changes.due {
+        ProjectUpdate::Keep => {}
+        ProjectUpdate::Clear => tasks[task].due = None,
+        ProjectUpdate::Set(text) => tasks[task].due = Some(require_date(text)?),
+    }
+    apply_text(&mut tasks[task].note, changes.note);
+    commit(next, updated_on, None)
+}
+
+/// Updates one issue's title, severity, URL, and/or note.
+///
+/// # Errors
+///
+/// Returns [`EditError::NotFound`] when the issue is unknown, or
+/// [`EditError::Invalid`] for a bad severity or URL.
+pub fn set_issue(
+    project: &Project,
+    issue_id: &str,
+    changes: IssueChanges<'_>,
+    updated_on: &str,
+) -> Result<EditOutcome, EditError> {
+    let mut next = project.clone();
+    let issues = next.issues.as_mut();
+    let Some(issues) = issues else {
+        return Err(missing("issue", issue_id, Vec::new()));
+    };
+    let index = item_index(
+        issues.iter().map(|issue| issue.id.as_str()),
+        issue_id,
+        "issue",
+    )?;
+    if let Some(title) = changes.title {
+        title.clone_into(&mut issues[index].title);
+    }
+    if let Some(severity) = changes.severity {
+        issues[index].severity = parse_severity(severity)?;
+    }
+    match changes.url {
+        ProjectUpdate::Keep => {}
+        ProjectUpdate::Clear => issues[index].url = None,
+        ProjectUpdate::Set(text) => issues[index].url = optional_url(Some(text))?,
+    }
+    apply_text(&mut issues[index].note, changes.note);
     commit(next, updated_on, None)
 }
 
@@ -1292,11 +1537,12 @@ fn require_date(value: &str) -> Result<String, EditError> {
 }
 
 fn optional_url(value: Option<&str>) -> Result<Option<String>, EditError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
+    value.map(require_url).transpose()
+}
+
+fn require_url(value: &str) -> Result<String, EditError> {
     if value.starts_with("http://") || value.starts_with("https://") {
-        Ok(Some(value.to_owned()))
+        Ok(value.to_owned())
     } else {
         Err(EditError::Invalid {
             field: "url",

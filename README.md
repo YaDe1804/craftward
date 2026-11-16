@@ -43,8 +43,10 @@ cargo run -p craftward-app --release
 
 Opens a portfolio window over the same workspace file and `craftward.db`
 as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`, platform defaults).
-Task and issue status can be changed, and tasks or issues added, through
-the same writers as the CLI. `--version` prints the name and version. See
+The desktop app edits through the same writers as the CLI, with undo
+toasts and fingerprint conflicts. Projects can be created, added, or
+removed from the workspace list; task and issue status and remove are
+available in the detail view. `--version` prints the name and version. See
 [docs/desktop.md](docs/desktop.md),
 [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md), and
 [ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md).

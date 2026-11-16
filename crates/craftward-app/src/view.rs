@@ -149,6 +149,10 @@ pub struct IssueRow {
     pub severity: StatusBadge,
     /// Status badge.
     pub status: StatusBadge,
+    /// Tracker URL when set.
+    pub url: Option<String>,
+    /// Note when set.
+    pub note: Option<String>,
 }
 
 /// One task row inside a phase.
@@ -162,6 +166,8 @@ pub struct TaskRow {
     pub status: StatusBadge,
     /// Due date when set.
     pub due: Option<String>,
+    /// Note when set.
+    pub note: Option<String>,
 }
 
 /// One phase block.
@@ -237,6 +243,14 @@ pub struct ProjectDetail {
     pub overview_fields: Vec<FieldRow>,
     /// Description.
     pub description: Option<String>,
+    /// `current_version` when set.
+    pub version: Option<String>,
+    /// `source_dir` when set.
+    pub source_dir: Option<String>,
+    /// Tags for the header form.
+    pub tags: Vec<String>,
+    /// Links as `(label, url)` for the header form.
+    pub links: Vec<(String, String)>,
     /// Overall progress.
     pub progress: ProgressView,
     /// Stored Android `target_sdk` when set.
@@ -387,6 +401,15 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
                 status,
                 overview_fields,
                 description: project.description.clone(),
+                version: project.current_version.clone(),
+                source_dir: project.source_dir.clone(),
+                tags: project.tags.clone().unwrap_or_default(),
+                links: project.links.as_ref().map_or_default(|links| {
+                    links
+                        .iter()
+                        .map(|link| (link.label.clone(), link.url.clone()))
+                        .collect()
+                }),
                 progress: project_progress(project),
                 target_sdk,
                 components: component_rows(project),
@@ -406,6 +429,10 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
             status: None,
             overview_fields: Vec::new(),
             description: None,
+            version: None,
+            source_dir: None,
+            tags: Vec::new(),
+            links: Vec::new(),
             progress: ProgressView::empty(),
             target_sdk: None,
             components: Vec::new(),
@@ -526,6 +553,8 @@ pub struct IssueForm {
     pub title: String,
     /// Severity schema word.
     pub severity: String,
+    /// Optional tracker URL.
+    pub url: String,
     /// Optional note.
     pub note: String,
 }
@@ -535,6 +564,7 @@ impl Default for IssueForm {
         Self {
             title: String::new(),
             severity: "medium".to_owned(),
+            url: String::new(),
             note: String::new(),
         }
     }
@@ -559,6 +589,10 @@ impl IssueForm {
         ) {
             return Some("Severity must be low, medium, high, or critical");
         }
+        let url = self.url.trim();
+        if !(url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) {
+            return Some("URL must start with http:// or https://");
+        }
         None
     }
 
@@ -568,11 +602,523 @@ impl IssueForm {
         self.title.trim()
     }
 
+    /// URL for the core API (`None` when blank).
+    #[must_use]
+    pub fn url_for_edit(&self) -> Option<&str> {
+        let url = self.url.trim();
+        if url.is_empty() { None } else { Some(url) }
+    }
+
     /// Note for the core API (`None` when blank).
     #[must_use]
     pub fn note_for_edit(&self) -> Option<&str> {
         let note = self.note.trim();
         if note.is_empty() { None } else { Some(note) }
+    }
+}
+
+/// Draft for editing overview header fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderForm {
+    /// Display name.
+    pub name: String,
+    /// Lifecycle status schema word.
+    pub status: String,
+    /// Version string (empty clears).
+    pub version: String,
+    /// Description (empty clears).
+    pub description: String,
+    /// Source directory (empty clears).
+    pub source_dir: String,
+    /// Comma-separated tags.
+    pub tags: String,
+    /// Links, one `Label|URL` per line.
+    pub links: String,
+}
+
+impl HeaderForm {
+    /// Fills the form from a loaded detail view.
+    #[must_use]
+    pub fn from_detail(detail: &ProjectDetail) -> Self {
+        let status = detail
+            .status
+            .as_ref()
+            .map_or("idea", |badge| badge.key)
+            .to_owned();
+        Self {
+            name: detail.name.clone(),
+            status,
+            version: detail.version.clone().unwrap_or_default(),
+            description: detail.description.clone().unwrap_or_default(),
+            source_dir: detail.source_dir.clone().unwrap_or_default(),
+            tags: detail.tags.join(", "),
+            links: detail
+                .links
+                .iter()
+                .map(|(label, url)| format!("{label}|{url}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Name field error.
+    #[must_use]
+    pub fn name_error(&self) -> Option<&'static str> {
+        if self.name.trim().is_empty() {
+            Some("Name is required")
+        } else {
+            None
+        }
+    }
+
+    /// Status field error.
+    #[must_use]
+    pub fn status_error(&self) -> Option<&'static str> {
+        if project_status_choices()
+            .iter()
+            .any(|(key, _)| *key == self.status.as_str())
+        {
+            None
+        } else {
+            Some("Status is not a known lifecycle value")
+        }
+    }
+
+    /// Links field error.
+    #[must_use]
+    pub fn links_error(&self) -> Option<&'static str> {
+        for line in self.links.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Some((label, url)) = line.split_once('|') else {
+                return Some("Each link must be Label|URL");
+            };
+            if label.trim().is_empty() || url.trim().is_empty() {
+                return Some("Each link must be Label|URL");
+            }
+            let url = url.trim();
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Some("Link URL must start with http:// or https://");
+            }
+        }
+        None
+    }
+
+    /// Human validation error (first field error).
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        self.name_error()
+            .or_else(|| self.status_error())
+            .or_else(|| self.links_error())
+    }
+
+    /// Trimmed name.
+    #[must_use]
+    pub fn name_for_edit(&self) -> &str {
+        self.name.trim()
+    }
+
+    /// Version update for the core API.
+    #[must_use]
+    pub fn version_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.version)
+    }
+
+    /// Description update for the core API.
+    #[must_use]
+    pub fn description_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.description)
+    }
+
+    /// Source directory update for the core API.
+    #[must_use]
+    pub fn source_dir_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.source_dir)
+    }
+
+    /// Parsed tags.
+    #[must_use]
+    pub fn tags_for_edit(&self) -> Vec<String> {
+        self.tags
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Parsed links as `(label, url)`.
+    #[must_use]
+    pub fn links_for_edit(&self) -> Vec<(String, String)> {
+        self.links
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return None;
+                }
+                let (label, url) = line.split_once('|')?;
+                Some((label.trim().to_owned(), url.trim().to_owned()))
+            })
+            .collect()
+    }
+}
+
+/// Draft for adding or editing a phase.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PhaseForm {
+    /// Optional explicit id (add only); empty means form from title.
+    pub id: String,
+    /// Phase title.
+    pub title: String,
+    /// Optional goal.
+    pub goal: String,
+}
+
+impl PhaseForm {
+    /// Starts an edit form from an existing phase.
+    #[must_use]
+    pub fn from_phase(phase: &PhaseBlock) -> Self {
+        Self {
+            id: phase.id.clone(),
+            title: phase.title.clone(),
+            goal: phase.goal.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Title field error.
+    #[must_use]
+    pub fn title_error(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            Some("Title is required")
+        } else {
+            None
+        }
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        self.title_error()
+    }
+
+    /// Trimmed title.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// Explicit id for add (`None` when blank).
+    #[must_use]
+    pub fn id_for_edit(&self) -> Option<&str> {
+        let id = self.id.trim();
+        if id.is_empty() { None } else { Some(id) }
+    }
+
+    /// Goal for add (`None` when blank).
+    #[must_use]
+    pub fn goal_for_edit(&self) -> Option<&str> {
+        let goal = self.goal.trim();
+        if goal.is_empty() { None } else { Some(goal) }
+    }
+
+    /// Goal update for `set_phase`.
+    #[must_use]
+    pub fn goal_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.goal)
+    }
+}
+
+/// Draft for editing an existing task.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskEditForm {
+    /// Task title.
+    pub title: String,
+    /// Due day.
+    pub due: String,
+    /// Note.
+    pub note: String,
+}
+
+impl TaskEditForm {
+    /// Starts an edit form from an existing task.
+    #[must_use]
+    pub fn from_task(task: &TaskRow) -> Self {
+        Self {
+            title: task.title.clone(),
+            due: task.due.clone().unwrap_or_default(),
+            note: task.note.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Title field error.
+    #[must_use]
+    pub fn title_error(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            Some("Title is required")
+        } else {
+            None
+        }
+    }
+
+    /// Due field error.
+    #[must_use]
+    pub fn due_error(&self) -> Option<&'static str> {
+        let due = self.due.trim();
+        if !due.is_empty() && !is_calendar_date(due) {
+            Some("Due date must be YYYY-MM-DD")
+        } else {
+            None
+        }
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        self.title_error().or_else(|| self.due_error())
+    }
+
+    /// Trimmed title.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// Due update.
+    #[must_use]
+    pub fn due_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.due)
+    }
+
+    /// Note update.
+    #[must_use]
+    pub fn note_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.note)
+    }
+}
+
+/// Draft for editing an existing issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueEditForm {
+    /// Issue title.
+    pub title: String,
+    /// Severity schema word.
+    pub severity: String,
+    /// Tracker URL.
+    pub url: String,
+    /// Note.
+    pub note: String,
+}
+
+impl Default for IssueEditForm {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            severity: "medium".to_owned(),
+            url: String::new(),
+            note: String::new(),
+        }
+    }
+}
+
+impl IssueEditForm {
+    /// Starts an edit form from an existing issue.
+    #[must_use]
+    pub fn from_issue(issue: &IssueRow) -> Self {
+        Self {
+            title: issue.title.clone(),
+            severity: issue.severity.key.to_owned(),
+            url: issue.url.clone().unwrap_or_default(),
+            note: issue.note.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Title field error.
+    #[must_use]
+    pub fn title_error(&self) -> Option<&'static str> {
+        if self.title.trim().is_empty() {
+            Some("Title is required")
+        } else {
+            None
+        }
+    }
+
+    /// Severity field error.
+    #[must_use]
+    pub fn severity_error(&self) -> Option<&'static str> {
+        if matches!(
+            self.severity.as_str(),
+            "low" | "medium" | "high" | "critical"
+        ) {
+            None
+        } else {
+            Some("Severity must be low, medium, high, or critical")
+        }
+    }
+
+    /// URL field error.
+    #[must_use]
+    pub fn url_error(&self) -> Option<&'static str> {
+        let url = self.url.trim();
+        if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+            None
+        } else {
+            Some("URL must start with http:// or https://")
+        }
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        self.title_error()
+            .or_else(|| self.severity_error())
+            .or_else(|| self.url_error())
+    }
+
+    /// Trimmed title.
+    #[must_use]
+    pub fn title_for_edit(&self) -> &str {
+        self.title.trim()
+    }
+
+    /// URL update.
+    #[must_use]
+    pub fn url_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.url)
+    }
+
+    /// Note update.
+    #[must_use]
+    pub fn note_update(&self) -> craftward_core::ProjectUpdate<'_> {
+        optional_clearable(&self.note)
+    }
+}
+
+/// Draft for creating a new project and adding it to the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewProjectForm {
+    /// Absolute or relative folder path.
+    pub directory: String,
+    /// Project id.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Lifecycle status schema word.
+    pub status: String,
+}
+
+impl Default for NewProjectForm {
+    fn default() -> Self {
+        Self {
+            directory: String::new(),
+            id: String::new(),
+            name: String::new(),
+            status: "idea".to_owned(),
+        }
+    }
+}
+
+impl NewProjectForm {
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        self.validation_message().is_none()
+    }
+
+    /// Human validation error.
+    #[must_use]
+    pub fn validation_message(&self) -> Option<&'static str> {
+        if self.directory.trim().is_empty() {
+            return Some("Folder is required");
+        }
+        if self.id.trim().is_empty() {
+            return Some("Id is required");
+        }
+        if self.name.trim().is_empty() {
+            return Some("Name is required");
+        }
+        if !project_status_choices()
+            .iter()
+            .any(|(key, _)| *key == self.status.as_str())
+        {
+            return Some("Status is not a known lifecycle value");
+        }
+        None
+    }
+
+    /// Trimmed id.
+    #[must_use]
+    pub fn id_for_edit(&self) -> &str {
+        self.id.trim()
+    }
+
+    /// Trimmed name.
+    #[must_use]
+    pub fn name_for_edit(&self) -> &str {
+        self.name.trim()
+    }
+}
+
+/// Draft for adding an existing project path to the workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AddProjectForm {
+    /// File or folder path.
+    pub path: String,
+}
+
+impl AddProjectForm {
+    /// Whether Save may run.
+    #[must_use]
+    pub fn can_save(&self) -> bool {
+        !self.path.trim().is_empty()
+    }
+}
+
+/// Project lifecycle choices for forms.
+#[must_use]
+pub fn project_status_choices() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("idea", "Idea"),
+        ("in_development", "In development"),
+        ("released", "Released"),
+        ("maintenance", "Maintenance"),
+        ("paused", "Paused"),
+        ("discontinued", "Discontinued"),
+    ]
+}
+
+fn optional_clearable(text: &str) -> craftward_core::ProjectUpdate<'_> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        craftward_core::ProjectUpdate::Clear
+    } else {
+        craftward_core::ProjectUpdate::Set(trimmed)
     }
 }
 
@@ -841,6 +1387,7 @@ fn task_row(task: &Task) -> TaskRow {
         title: task.title.clone(),
         status: task_status_badge(task.status),
         due: task.due.clone(),
+        note: task.note.clone(),
     }
 }
 
@@ -860,6 +1407,8 @@ fn issue_row(issue: &Issue) -> IssueRow {
         title: issue.title.clone(),
         severity: issue_severity_badge(issue.severity),
         status: issue_status_badge(issue.status),
+        url: issue.url.clone(),
+        note: issue.note.clone(),
     }
 }
 
@@ -1188,12 +1737,12 @@ mod tests {
     };
 
     use super::{
-        IssueForm, ProgressView, StatusBadge, TaskForm, badge_stretches_to_parent, build_detail_at,
-        build_portfolio_at, compare_urgency, current_phase_title, grid_columns,
-        grid_row_column_slots, issue_status_badge, issue_status_choices,
-        longest_status_choice_label, open_findings_label, open_issues_label, project_progress,
-        project_status_badge, remaining_label, task_status_badge, task_status_choices,
-        task_title_is_muted,
+        HeaderForm, IssueEditForm, IssueForm, PhaseForm, ProgressView, StatusBadge, TaskEditForm,
+        TaskForm, badge_stretches_to_parent, build_detail_at, build_portfolio_at, compare_urgency,
+        current_phase_title, grid_columns, grid_row_column_slots, issue_status_badge,
+        issue_status_choices, longest_status_choice_label, open_findings_label, open_issues_label,
+        project_progress, project_status_badge, remaining_label, task_status_badge,
+        task_status_choices, task_title_is_muted,
     };
     use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
     use crate::view::ProjectCard;
@@ -1347,6 +1896,7 @@ mod tests {
     fn load_errors_and_missing_database_appear_in_the_view() {
         let loaded = LoadedPortfolio {
             workspace_path: Some(PathBuf::from("/tmp/workspace.json")),
+            workspace_fingerprint: None,
             workspace_error: None,
             database_path: Some(PathBuf::from("/tmp/craftward.db")),
             database: DatabaseStatus::Missing,
@@ -1398,6 +1948,7 @@ mod tests {
     fn database_error_is_surfaced() {
         let loaded = LoadedPortfolio {
             workspace_path: None,
+            workspace_fingerprint: None,
             workspace_error: Some("no workspace".to_owned()),
             database_path: None,
             database: DatabaseStatus::Error("locked".to_owned()),
@@ -1507,6 +2058,120 @@ mod tests {
         form.note = "  note  ".to_owned();
         assert!(form.can_save());
         assert_eq!(form.note_for_edit(), Some("note"));
+    }
+
+    #[test]
+    fn header_form_keeps_input_and_reports_field_errors() {
+        let mut form = HeaderForm {
+            name: String::new(),
+            status: "idea".to_owned(),
+            version: "1.0".to_owned(),
+            description: "desc".to_owned(),
+            source_dir: "src".to_owned(),
+            tags: "a, b".to_owned(),
+            links: "Docs|https://example.com".to_owned(),
+        };
+        assert_eq!(form.name_error(), Some("Name is required"));
+        assert!(!form.can_save());
+        form.name = " Harbor ".to_owned();
+        assert!(form.can_save());
+        form.status = "nope".to_owned();
+        assert_eq!(
+            form.status_error(),
+            Some("Status is not a known lifecycle value")
+        );
+        form.status = "in_development".to_owned();
+        form.links = "bad".to_owned();
+        assert_eq!(form.links_error(), Some("Each link must be Label|URL"));
+        form.links = "Docs|ftp://example.com".to_owned();
+        assert_eq!(
+            form.links_error(),
+            Some("Link URL must start with http:// or https://")
+        );
+        form.links = "Docs|https://example.com\nRepo|https://example.com/r".to_owned();
+        assert!(form.can_save());
+        assert_eq!(form.name_for_edit(), "Harbor");
+        assert_eq!(form.tags_for_edit(), vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(
+            form.links_for_edit(),
+            vec![
+                ("Docs".to_owned(), "https://example.com".to_owned()),
+                ("Repo".to_owned(), "https://example.com/r".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn phase_and_edit_forms_validate_fields() {
+        let mut phase = PhaseForm::default();
+        assert_eq!(phase.title_error(), Some("Title is required"));
+        phase.title = " Build ".to_owned();
+        phase.id = " build ".to_owned();
+        phase.goal = " Ship ".to_owned();
+        assert!(phase.can_save());
+        assert_eq!(phase.id_for_edit(), Some("build"));
+        assert_eq!(phase.goal_for_edit(), Some("Ship"));
+
+        let mut task = TaskEditForm {
+            title: String::new(),
+            due: "nope".to_owned(),
+            note: "keep".to_owned(),
+        };
+        assert_eq!(task.title_error(), Some("Title is required"));
+        task.title = "Ship".to_owned();
+        assert_eq!(task.due_error(), Some("Due date must be YYYY-MM-DD"));
+        task.due = "2026-12-01".to_owned();
+        assert!(task.can_save());
+        assert_eq!(task.note, "keep");
+
+        let mut issue = IssueEditForm::default();
+        assert_eq!(issue.title_error(), Some("Title is required"));
+        issue.title = "Contrast".to_owned();
+        issue.severity = "urgent".to_owned();
+        assert_eq!(
+            issue.severity_error(),
+            Some("Severity must be low, medium, high, or critical")
+        );
+        issue.severity = "high".to_owned();
+        issue.url = "ftp://x".to_owned();
+        assert_eq!(
+            issue.url_error(),
+            Some("URL must start with http:// or https://")
+        );
+        issue.url = "https://example.com".to_owned();
+        issue.note = "keep".to_owned();
+        assert!(issue.can_save());
+        assert_eq!(issue.note, "keep");
+    }
+
+    #[test]
+    fn detail_exposes_header_fields_for_edit_form() {
+        let mut project = sample_project("p", "P", None);
+        project.description = Some("Overview text".to_owned());
+        project.source_dir = Some("crates/p".to_owned());
+        project.tags = Some(vec!["desktop".to_owned()]);
+        project.links = Some(vec![craftward_core::Link {
+            label: "Docs".to_owned(),
+            url: "https://example.com".to_owned(),
+        }]);
+        let loaded = LoadedProject {
+            path: PathBuf::from("/tmp/p.json"),
+            project: Ok(project),
+            fingerprint: Some(craftward_core::content_fingerprint(b"p")),
+            findings: Vec::new(),
+        };
+        let detail = build_detail_at(0, &loaded, "2026-11-15");
+        assert_eq!(detail.version.as_deref(), Some("1.0.0"));
+        assert_eq!(detail.source_dir.as_deref(), Some("crates/p"));
+        assert_eq!(detail.tags, vec!["desktop".to_owned()]);
+        assert_eq!(
+            detail.links,
+            vec![("Docs".to_owned(), "https://example.com".to_owned())]
+        );
+        let form = HeaderForm::from_detail(&detail);
+        assert_eq!(form.name, "P");
+        assert_eq!(form.version, "1.0.0");
+        assert!(form.can_save());
     }
 
     #[test]
