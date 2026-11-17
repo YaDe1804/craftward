@@ -3,7 +3,10 @@
 mod actions;
 mod date;
 mod load;
+mod onboarding;
 mod picker;
+mod settings_panel;
+mod storage;
 mod symbols;
 mod theme;
 mod ui;

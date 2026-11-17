@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use craftward_core::{
     ContentFingerprint, DATABASE_FILE, ProcessHost, Project, Severity, StateFilter, StoredFinding,
-    content_fingerprint, list_findings, list_projects, load_from_str, locate_data,
-    locate_workspace, platform_path, workspace_bytes_or_empty,
+    content_fingerprint, list_findings, list_projects, load_from_str, load_settings,
+    locate_data_with, locate_workspace_with, platform_path, workspace_bytes_or_empty,
 };
 use craftward_store::SqliteStore;
 
@@ -59,7 +59,27 @@ pub struct LoadedPortfolio {
 /// Loads the portfolio using the same path rules as the CLI.
 #[must_use]
 pub fn load_portfolio() -> LoadedPortfolio {
-    let workspace = match locate_workspace(&ProcessHost, None) {
+    let settings = match load_settings(&ProcessHost) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return LoadedPortfolio {
+                workspace_path: None,
+                workspace_fingerprint: None,
+                workspace_error: Some(error.to_string()),
+                database_path: None,
+                database: DatabaseStatus::Error(error.to_string()),
+                projects: Vec::new(),
+            };
+        }
+    };
+    let settings_workspace = settings
+        .as_ref()
+        .and_then(|value| value.workspace.as_deref());
+    let settings_data = settings
+        .as_ref()
+        .and_then(|value| value.data_dir.as_deref());
+
+    let workspace = match locate_workspace_with(&ProcessHost, None, settings_workspace) {
         Ok(location) => match absolute_path(&location.path) {
             Ok(path) => Ok(path),
             Err(message) => Err(message),
@@ -67,8 +87,8 @@ pub fn load_portfolio() -> LoadedPortfolio {
         Err(error) => Err(error.to_string()),
     };
 
-    let data_dir = match locate_data(&ProcessHost, None) {
-        Ok(path) => absolute_path(&path),
+    let data_dir = match locate_data_with(&ProcessHost, None, settings_data) {
+        Ok(location) => absolute_path(&location.path),
         Err(error) => Err(error.to_string()),
     };
 

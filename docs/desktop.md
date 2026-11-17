@@ -16,14 +16,34 @@ argument is a usage error (exit status 2).
 
 Window title: **Craftward**. Minimum size is 720×480.
 
+## First-run setup
+
+When there is no `settings.json` and no workspace file at the path resolved
+without settings, the app opens a short setup wizard instead of the
+portfolio:
+
+1. Welcome — what Craftward does.
+2. Storage locations — workspace file, data folder, cache folder, each with
+   the platform default, a one-line explanation, and Browse. When
+   `CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`, or `CRAFTWARD_CACHE_DIR` is
+   set, the wizard notes that the variable takes precedence.
+3. Operating mode — **Local** only (no shared team folder yet).
+4. Finish — creates the folders, an empty `workspace.json`, and
+   `settings.json`, then shows the portfolio with a tip to use **New
+   project** or **Add existing**.
+
+**Cancel** closes the window without writing files; the next launch shows
+the wizard again.
+
 ## Data sources
 
-Path resolution matches the CLI:
+Path resolution matches the CLI (command line is unused in the app):
 
 | Data | Resolution order |
 | --- | --- |
-| Workspace file | `CRAFTWARD_WORKSPACE`, then the platform default directory |
-| Database (`craftward.db`) | `CRAFTWARD_DATA_DIR`, then the platform default data directory |
+| Workspace file | `CRAFTWARD_WORKSPACE`, then `settings.json`, then the platform default |
+| Database (`craftward.db`) | `CRAFTWARD_DATA_DIR`, then `settings.json`, then the platform default |
+| Cache | `CRAFTWARD_CACHE_DIR`, then `settings.json`, then the platform default |
 
 Project files are the paths listed in `workspace.json`. Open findings come
 from `craftward.db` when that file exists. The app never creates a database
@@ -33,14 +53,14 @@ See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 
 ## Navigation
 
-A fixed left sidebar lists **Portfolio** and **Issues** (structure ready for
-later Radar and Settings entries). The active entry is highlighted and is
-reachable by keyboard focus. Workspace and database paths appear at the
-bottom of the sidebar.
+A fixed left sidebar lists **Portfolio**, **Issues**, and **Settings**. The
+active entry is highlighted and is reachable by keyboard focus. Workspace
+and database paths appear at the bottom of the sidebar.
 
 The project detail page belongs to Portfolio. The top breadcrumb is
-**Portfolio › _name_** with Portfolio clickable; Esc returns there. There is
-no separate Back button when that breadcrumb is available.
+**Portfolio › _name_** with ordinary word spacing and Portfolio clickable;
+Esc returns there. There is no separate Back button when that breadcrumb is
+available.
 
 **Reload** reloads the workspace, project files, and findings. There is no
 file watcher in this release.
@@ -60,11 +80,17 @@ file watcher in this release.
   craftward.json…**), stack, phases with tasks, open issues, findings, and
   **Watch items & deadlines**. Two columns from 900 px width; one column
   below that.
-- **Issues:** every issue from every loaded project (project, severity,
-  status, title). Filters: status (default open only), severity, project.
-  Sort: severity descending, then project name, then title. Click a row to
-  open that project with the issue marked. Status can be changed in the
-  list; undo uses the same path as on the project page.
+- **Issues:** table with fixed columns Severity, Status, Project, Title
+  (title wraps in its column). Filters: status (default open only),
+  severity, project. Sort: severity descending, then project name, then
+  title. Click a row to open that project with the issue marked. Status can
+  be changed in the list; undo uses the same path as on the project page.
+- **Settings:** shows the three storage locations with their origin
+  (environment variable, settings file, or default). **Change…** opens a
+  folder dialog and relocates existing data as in [storage.md](storage.md).
+  A path fixed by an environment variable cannot be changed here; the
+  screen explains why. If the target already exists, the app asks instead
+  of overwriting.
 
 ## Editing
 
@@ -141,4 +167,5 @@ and glyph coverage are checked in unit tests.
 Architecture: [ADR 0023](adr/0023-desktop-app-with-eframe.md),
 [ADR 0024](adr/0024-editing-from-the-desktop-app.md),
 [ADR 0025](adr/0025-native-dialogs-and-clipboard.md),
-[ADR 0026](adr/0026-navigation-and-visual-design.md).
+[ADR 0026](adr/0026-navigation-and-visual-design.md),
+[ADR 0027](adr/0027-settings-file-and-data-relocation.md).

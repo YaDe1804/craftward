@@ -76,6 +76,36 @@ fn environment_beats_the_default() {
 }
 
 #[test]
+fn settings_beats_default_but_not_environment() {
+    use craftward_core::{PathOrigin, locate_cache_with, locate_data_with, locate_workspace_with};
+
+    let host = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("XDG_CONFIG_HOME", "/xdg"), ("XDG_DATA_HOME", "/data")],
+        home: Some(PathBuf::from("/home/ada")),
+    };
+    let settings_workspace = PathBuf::from("/settings/workspace.json");
+    let location = locate_workspace_with(&host, None, Some(&settings_workspace)).expect("located");
+    assert_eq!(location.path, settings_workspace);
+    assert_eq!(location.origin, WorkspaceOrigin::Settings);
+
+    let env_host = FakeHost {
+        os: OsFamily::Linux,
+        vars: vec![("CRAFTWARD_WORKSPACE", "from-env.json")],
+        home: Some(PathBuf::from("/home/ada")),
+    };
+    let location =
+        locate_workspace_with(&env_host, None, Some(&settings_workspace)).expect("located");
+    assert_eq!(location.origin, WorkspaceOrigin::Environment);
+
+    let data = locate_data_with(&host, None, Some(Path::new("/settings/data"))).expect("data");
+    assert_eq!(data.path, PathBuf::from("/settings/data"));
+    assert_eq!(data.origin, PathOrigin::Settings);
+    let cache = locate_cache_with(&host, None, Some(Path::new("/settings/cache"))).expect("cache");
+    assert_eq!(cache.origin, PathOrigin::Settings);
+}
+
+#[test]
 fn empty_environment_variable_falls_through() {
     let host = FakeHost {
         os: OsFamily::Linux,

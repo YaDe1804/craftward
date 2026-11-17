@@ -5,6 +5,7 @@ mod deadlines;
 mod editing;
 mod findings;
 mod radar;
+mod settings_cmd;
 mod stack;
 
 use std::env;
@@ -15,15 +16,15 @@ use std::time::SystemTime;
 
 use clap::Parser;
 use craftward_core::{
-    Language, LoadError, ProcessHost, ProjectRow, ProjectStatus, WorkspaceError, add_project,
-    init_project, is_portable_absolute, list_projects, load_from_path, locate_workspace,
-    missing_paths, platform_path, project_file, project_file_by_id, remove_project, utc_date,
-    write_roadmap,
+    Language, LoadError, ProjectRow, ProjectStatus, WorkspaceError, add_project, init_project,
+    is_portable_absolute, list_projects, load_from_path, missing_paths, platform_path,
+    project_file, project_file_by_id, remove_project, utc_date, write_roadmap,
 };
 
 use crate::cli::{
-    Cli, Command, FindingsCommand, IssueCommand, PhaseCommand, ProjectCommand, StackCommand,
-    StackLockfileCommand, TaskCommand, WatchCommand, WorkspaceCommand,
+    Cli, Command, FindingsCommand, IssueCommand, PhaseCommand, ProjectCommand, SettingsCommand,
+    SettingsSetCommand, StackCommand, StackLockfileCommand, TaskCommand, WatchCommand,
+    WorkspaceCommand,
 };
 
 /// Process exit status for a usage error.
@@ -129,12 +130,31 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
         Command::Workspace {
             command: WorkspaceCommand::Path,
         } => {
-            let location =
-                locate_workspace(&ProcessHost, workspace).map_err(|error| error.to_string())?;
+            let location = settings_cmd::resolve_workspace(workspace)?;
             let path = absolute_from_cwd(&location.path)?;
             println!("{} ({})", path.display(), location.origin.label());
             Ok(ExitCode::SUCCESS)
         }
+        Command::Settings { command } => match command {
+            SettingsCommand::Show => {
+                settings_cmd::show(workspace, cli.data_dir.as_deref(), cli.cache_dir.as_deref())
+            }
+            SettingsCommand::Set { command } => {
+                let (set_workspace, set_data, set_cache) = match command {
+                    SettingsSetCommand::Workspace { path } => (Some(path), None, None),
+                    SettingsSetCommand::DataDir { path } => (None, Some(path), None),
+                    SettingsSetCommand::CacheDir { path } => (None, None, Some(path)),
+                };
+                settings_cmd::set(
+                    workspace,
+                    cli.data_dir.as_deref(),
+                    cli.cache_dir.as_deref(),
+                    set_workspace,
+                    set_data,
+                    set_cache,
+                )
+            }
+        },
         Command::Roadmap {
             target,
             directory,
@@ -695,11 +715,13 @@ fn is_path_target(raw: &str, path: &Path) -> bool {
 }
 
 pub(crate) fn workspace_file(explicit: Option<&Path>) -> Result<PathBuf, String> {
-    let location = locate_workspace(&ProcessHost, explicit).map_err(|error| error.to_string())?;
+    let location = settings_cmd::resolve_workspace(explicit).map_err(|error| match error {
+        Failure::Data(message) | Failure::Usage(message) => message,
+    })?;
     absolute_from_cwd(&location.path)
 }
 
-fn absolute_from_cwd(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn absolute_from_cwd(path: &Path) -> Result<PathBuf, String> {
     let path = platform_path(path);
     if path.is_absolute() {
         Ok(path)

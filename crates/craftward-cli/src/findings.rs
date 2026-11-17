@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use craftward_core::{
-    DATABASE_FILE, ProcessHost, StateFilter, ignore_finding, is_calendar_date, list_findings,
-    load_from_path, locate_data, render_finding_list, render_finding_show, render_findings_json,
-    render_show_json, reopen_finding, show_finding, unix_now,
+    DATABASE_FILE, StateFilter, ignore_finding, is_calendar_date, list_findings, load_from_path,
+    render_finding_list, render_finding_show, render_findings_json, render_show_json,
+    reopen_finding, show_finding, unix_now,
 };
 use craftward_store::SqliteStore;
 
-use crate::{Failure, resolve_project};
+use crate::{Failure, resolve_project, settings_cmd};
 
 /// One findings command.
 pub(crate) enum Request {
@@ -64,8 +64,7 @@ pub(crate) fn run(
     request: &Request,
     workspace: Option<&std::path::Path>,
 ) -> Result<ExitCode, Failure> {
-    let data_dir = locate_data(&ProcessHost, data_dir_of(request))
-        .map_err(|error| Failure::Data(error.to_string()))?;
+    let data_dir = settings_cmd::resolve_data(data_dir_of(request))?.path;
     let mut store = SqliteStore::open(&data_dir.join(DATABASE_FILE))
         .map_err(|error| Failure::Data(error.to_string()))?;
     match request {

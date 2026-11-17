@@ -575,22 +575,82 @@ fn copy_backup(path: &Path, version: i64) -> Result<(), StoreError> {
     if backup.exists() {
         return Err(StoreError::BackupExists(backup));
     }
-    let source = Connection::open(path).map_err(|error| failed(&error))?;
+    copy_database(path, &backup)?;
+    Ok(())
+}
+
+/// Copies a SQLite database to `to` using the online backup API (includes
+/// committed WAL frames) and checks integrity. Does not overwrite `to`.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Failed`] when the target exists, the copy fails, or
+/// `PRAGMA integrity_check` is not `ok`. On failure the incomplete target is
+/// removed.
+pub fn copy_database(from: &Path, to: &Path) -> Result<(), StoreError> {
+    if to.exists() {
+        return Err(StoreError::Failed(format!(
+            "target already exists: {}",
+            to.display()
+        )));
+    }
+    if let Some(parent) = to.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| StoreError::Failed(error.to_string()))?;
+    }
+    if !from.exists() {
+        return Ok(());
+    }
+    let source = Connection::open(from).map_err(|error| failed(&error))?;
     let copied = source.backup(
         rusqlite::MAIN_DB,
-        &backup,
+        to,
         None::<fn(rusqlite::backup::Progress)>,
     );
     drop(source);
     if let Err(error) = copied {
-        let _ = fs::remove_file(&backup);
+        let _ = fs::remove_file(to);
         return Err(failed(&error));
     }
-    if let Err(error) = backup_is_intact(&backup) {
-        let _ = fs::remove_file(&backup);
+    if let Err(error) = check_database_integrity(to) {
+        let _ = fs::remove_file(to);
         return Err(error);
     }
     Ok(())
+}
+
+/// Runs `PRAGMA integrity_check` on `path`.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Failed`] when the check is not exactly `ok`.
+pub fn check_database_integrity(path: &Path) -> Result<(), StoreError> {
+    backup_is_intact(path)
+}
+
+/// Removes a database file and its WAL / SHM sidecars after a successful move.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Failed`] when a file cannot be removed.
+pub fn remove_database_files(path: &Path) -> Result<(), StoreError> {
+    for candidate in [
+        path.to_path_buf(),
+        sidecar(path, "-wal"),
+        sidecar(path, "-shm"),
+    ] {
+        if candidate.exists() {
+            fs::remove_file(&candidate).map_err(|error| StoreError::Failed(error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 fn backup_is_intact(path: &Path) -> Result<(), StoreError> {

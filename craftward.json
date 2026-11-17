@@ -325,12 +325,12 @@
           {
             "id": "t04",
             "title": "Einstellungen: Speicherorte jederzeit ändern, Daten ziehen dabei mit um",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t05",
             "title": "Einrichtungsdialog beim ersten Start: Betriebsart und Speicherort wählen, Standardordner vorgeschlagen",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t06",
@@ -589,27 +589,27 @@
       "id": "app-issues-table",
       "title": "Desktop app: issues view should use aligned columns",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Severity, status and project badges follow the title and jump around. Use a table with fixed columns: severity, status, project, title."
     },
     {
       "id": "app-watch-row-clip",
       "title": "Desktop app: menu button covers the end of a watch item row (date cut off)",
       "severity": "low",
-      "status": "open"
+      "status": "resolved"
     },
     {
       "id": "app-eol-none",
       "title": "Desktop app: stack shows 'eol:none' for components without eol_product",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Show nothing when eol_product is not set; show a readable label otherwise."
     },
     {
       "id": "app-breadcrumb-gap",
       "title": "Desktop app: large gap between 'Portfolio' and '›' in the breadcrumb",
       "severity": "low",
-      "status": "open"
+      "status": "resolved"
     }
   ],
   "watch_items": [

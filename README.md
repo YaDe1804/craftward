@@ -14,7 +14,7 @@ Pre-alpha, no usable release yet.
 ### Command-line interface (`craftward-cli`)
 
 - Workspace registry: `init`, `add`, `remove` (optional `--delete-file`),
-  `list`, `workspace path`, `validate`
+  `list`, `workspace path`, `settings show` / `settings set`, `validate`
 - Project edits: `show`, `project set`, `phase` / `task` / `issue` / `watch`,
   `stack` (including Android targetSdk fields)
 - Versioned HTML roadmaps (`roadmap`)
@@ -23,15 +23,17 @@ Pre-alpha, no usable release yet.
 
 ### Desktop application (`craftward-app`)
 
-- Left sidebar (Portfolio, Issues) with portfolio overview, per-project
-  detail, and a cross-project Issues list over the same workspace file and
+- First-run setup, Settings for storage locations, left sidebar
+  (Portfolio, Issues, Settings), portfolio overview, per-project detail,
+  and a cross-project Issues table over the same workspace file and
   `craftward.db` as the CLI
 - Create, add, and remove projects; edit header, phases, tasks, issues,
   stack (components, lockfiles, Android), and watch items through the same
   writers as the CLI, with undo toasts and conflict banners
 - Native folder/file/lockfile dialogs, OS clipboard, roadmap palette, and
-  status glyphs (see [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md)
-  and [ADR 0026](docs/adr/0026-navigation-and-visual-design.md))
+  status glyphs (see [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md),
+  [ADR 0026](docs/adr/0026-navigation-and-visual-design.md), and
+  [ADR 0027](docs/adr/0027-settings-file-and-data-relocation.md))
 
 Target platforms are Windows, Linux, and macOS. Accepted design decisions are
 recorded in [`docs/adr/`](docs/adr/README.md).
@@ -58,25 +60,25 @@ cargo run -p craftward-app --release
 ```
 
 Opens a portfolio window over the same workspace file and `craftward.db`
-as the CLI (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`, platform defaults).
-The desktop app edits through the same writers as the CLI, with undo
-toasts and fingerprint conflicts. Projects can be created, added, or
-removed from the workspace list; header, phase, task, and issue edits are
-available in the detail view. `--version` prints the name and version. See
+as the CLI (command line / env / settings / platform defaults). On first
+launch a short setup wizard chooses storage locations. The desktop app
+edits through the same writers as the CLI, with undo toasts and
+fingerprint conflicts. `--version` prints the name and version. See
 [docs/desktop.md](docs/desktop.md),
 [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md),
-[ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md), and
-[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md), and
-[ADR 0026](docs/adr/0026-navigation-and-visual-design.md).
+[ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md),
+[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md),
+[ADR 0026](docs/adr/0026-navigation-and-visual-design.md), and
+[ADR 0027](docs/adr/0027-settings-file-and-data-relocation.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when
 every file is valid, 1 when a file is invalid or cannot be read, and 2 when
 the command line is wrong. A missing source directory or lockfile is a
 warning and does not change that status. `init`, `add`, `remove`, `list`,
-`roadmap`, `workspace path`, `show`, the `project`, `phase`, `task`,
-`issue`, and `watch` edits, `stack`, `radar`, `deadlines`, and `findings` are described in
-[docs/cli.md](docs/cli.md). An edit is written only when the project file
+`roadmap`, `workspace path`, `settings`, `show`, the `project`, `phase`,
+`task`, `issue`, and `watch` edits, `stack`, `radar`, `deadlines`, and
+`findings` are described in [docs/cli.md](docs/cli.md). An edit is written only when the project file
 is still valid. `radar` asks [OSV](https://osv.dev/) about the packages in
 the project's lockfiles and [endoflife.date](https://endoflife.date) about
 components that have a version. It stores the findings in a local database.
