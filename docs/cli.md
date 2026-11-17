@@ -63,6 +63,7 @@ Prints one row per project:
 | `NAME` | Project name. |
 | `STATUS` | Lifecycle status. |
 | `VERSION` | `current_version`, or `-` when it is absent. |
+| `CATEGORY` | Portfolio category, or `-` when it is absent. |
 | `OPEN_TASKS` | Tasks with status `open` or `in_progress`. |
 | `OPEN_ISSUES` | Issues with status `open` or `in_progress`. |
 | `NEXT_DUE` | Earliest outstanding date, or `-`. |
@@ -71,10 +72,13 @@ Prints one row per project:
 The next due date is the earliest `tasks.due` among tasks that are `open` or
 `in_progress`, together with every `watch_items.due`. Tasks marked `done` or
 `dropped` are left out. A missing or invalid project file is still listed, with
-the reason in `NOTE`, and the command exits `1`.
+the reason in `NOTE`, and the command exits `1`. `--category TEXT` keeps only
+projects whose category matches without regard to letter case (load failures
+are omitted while filtering).
 
 ```console
 craftward list
+craftward list --category "Security Tools"
 ```
 
 ## validate
@@ -155,7 +159,7 @@ craftward settings set cache-dir D:/Craftward/cache
 
 Prints one project so its ids can be copied into the commands below. The
 header lists id, name, status, and the optional version, description,
-source directory, update day, and tags. Each phase lists every task with
+source directory, category, update day, and tags. Each phase lists every task with
 its id and status, including tasks that are done or dropped. Open issues
 are those with status `open` or `in_progress`. Resolved and `wont_fix`
 issues are omitted. `issues`, `watch_items`, and `stack` are always
@@ -179,11 +183,13 @@ craftward show ./app/craftward.json
 ## project set
 
 Changes header fields. At least one option is required. `--version ""`,
-`--description ""`, `--source-dir ""`, and `--tags ""` remove those fields.
+`--description ""`, `--source-dir ""`, `--category ""`, and `--tags ""`
+remove those fields. `--clear-category` also removes the category.
 `--clear-tags` and `--clear-links` drop the whole list. `--status` is
 `idea`, `in_development`, `released`, `maintenance`, `paused`, or
 `discontinued`. `--tags` is a comma-separated list. `--link LABEL=URL` may
-be repeated and replaces the whole links list.
+be repeated and replaces the whole links list. Setting a category writes
+`schema_version` 2; clearing it returns the file to version 1.
 
 A successful change rewrites the whole file: two-space indentation, LF line
 endings, a trailing newline, the field order of the Rust types, and letters
@@ -199,6 +205,8 @@ project rule, such as a blank name, exits 1 and leaves the file untouched.
 craftward project set harbor-light --name "Harbor Light" --status in_development
 craftward project set harbor-light --version 0.5.0
 craftward project set harbor-light --description ""
+craftward project set harbor-light --category "Security Tools"
+craftward project set harbor-light --clear-category
 craftward project set harbor-light --tags "android,cli" --link Docs=https://example.com
 ```
 

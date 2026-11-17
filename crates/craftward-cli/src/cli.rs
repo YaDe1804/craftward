@@ -85,7 +85,11 @@ pub(crate) enum Command {
     },
     /// Show every project in the workspace.
     #[command(long_about = LIST_ABOUT)]
-    List,
+    List {
+        /// Restrict the list to one category (case-insensitive).
+        #[arg(long = "category", value_name = "TEXT")]
+        category: Option<String>,
+    },
     /// Check project files.
     #[command(long_about = VALIDATE_ABOUT)]
     Validate {
@@ -280,6 +284,12 @@ pub(crate) enum ProjectCommand {
         /// New source directory; pass an empty value to clear.
         #[arg(long = "source-dir")]
         source_dir: Option<String>,
+        /// Portfolio category; pass an empty value to clear.
+        #[arg(long)]
+        category: Option<String>,
+        /// Remove the portfolio category.
+        #[arg(long = "clear-category")]
+        clear_category: bool,
         /// Comma-separated tags; pass an empty value to clear.
         #[arg(long)]
         tags: Option<String>,
@@ -1016,7 +1026,8 @@ const LIST_ABOUT: &str = "\
 Open tasks and open issues are those marked open or in_progress. The next
 due date is the earliest task or watch-item date still outstanding. Done
 and dropped tasks are left out. A missing or invalid project file is shown
-with a note, and the command exits 1.";
+with a note, and the command exits 1. --category filters by portfolio
+category without regard to letter case.";
 
 const VALIDATE_ABOUT: &str = "\
 With no paths, every project in the workspace is checked. Each file is
@@ -1073,12 +1084,13 @@ that contains one.";
 
 const PROJECT_ABOUT: &str = "\
 Use the set subcommand to change name, status, version, description,
-source_dir, tags, or links.";
+source_dir, category, tags, or links.";
 
 const PROJECT_SET_ABOUT: &str = "\
 At least one option is required. An empty --version, --description,
---source-dir, or --tags removes that field. --link LABEL=URL may be
-repeated and replaces the whole links list.";
+--source-dir, --category, or --tags removes that field. --clear-category
+also removes the category. --link LABEL=URL may be repeated and replaces
+the whole links list.";
 
 const PHASE_ABOUT: &str = "\
 Use add, set, or remove.";

@@ -610,6 +610,13 @@
       "title": "Desktop app: large gap between 'Portfolio' and '›' in the breadcrumb",
       "severity": "low",
       "status": "resolved"
+    },
+    {
+      "id": "deny-duplicate-noise",
+      "title": "cargo deny: many duplicate-version warnings from the GUI stack hide new warnings",
+      "severity": "low",
+      "status": "open",
+      "note": "Since AP9 (eframe) cargo deny lists dozens of duplicate crate versions. Keep the check meaningful: skip-tree or targeted skips for the GUI stack in deny.toml, documented, so that new duplicates outside it still show up."
     }
   ],
   "watch_items": [

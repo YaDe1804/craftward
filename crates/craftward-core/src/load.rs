@@ -1,10 +1,11 @@
-//! Load and check schema-version-1 project files.
+//! Load and check schema-version-1 and schema-version-2 project files.
 
 use std::fs;
 use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use crate::category::{CATEGORY_MAX_LEN, normalize_category};
 use crate::date::{DateError, validate_date};
 use crate::error::{LoadError, ValidationError};
 use crate::json_check::{
@@ -13,7 +14,10 @@ use crate::json_check::{
 };
 use crate::model::Project;
 
-const PROJECT_FIELDS: &[&str] = &[
+/// Highest project schema version this build writes and reads.
+pub const PROJECT_SCHEMA_VERSION: u64 = 2;
+
+const PROJECT_FIELDS_V1: &[&str] = &[
     "schema_version",
     "id",
     "name",
@@ -21,6 +25,24 @@ const PROJECT_FIELDS: &[&str] = &[
     "source_dir",
     "description",
     "current_version",
+    "tags",
+    "updated",
+    "links",
+    "stack",
+    "plan",
+    "issues",
+    "watch_items",
+];
+
+const PROJECT_FIELDS_V2: &[&str] = &[
+    "schema_version",
+    "id",
+    "name",
+    "status",
+    "source_dir",
+    "description",
+    "current_version",
+    "category",
     "tags",
     "updated",
     "links",
@@ -82,8 +104,8 @@ const WATCH_FIELDS: &[&str] = &["id", "kind", "title", "due", "note"];
 ///
 /// Returns [`LoadError::Syntax`] when `text` is not JSON,
 /// [`LoadError::UnsupportedSchema`] when `schema_version` is an integer greater
-/// than 1, and [`LoadError::Validation`] when a schema-version-1 file breaks
-/// one or more rules. Validation reports every problem it finds.
+/// than [`PROJECT_SCHEMA_VERSION`], and [`LoadError::Validation`] when the file
+/// breaks one or more rules. Validation reports every problem it finds.
 pub fn load_from_str(text: &str) -> Result<Project, LoadError> {
     let value = serde_json::from_str(text).map_err(|error| syntax_error(&error))?;
     load_value(value)
@@ -109,7 +131,7 @@ fn syntax_error(error: &serde_json::Error) -> LoadError {
 }
 
 fn load_value(value: Value) -> Result<Project, LoadError> {
-    if let Some(version) = newer_schema_version(&value) {
+    if let Some(version) = newer_schema_version(&value, PROJECT_SCHEMA_VERSION) {
         return Err(LoadError::UnsupportedSchema { version });
     }
     let mut errors = Vec::new();
@@ -117,19 +139,41 @@ fn load_value(value: Value) -> Result<Project, LoadError> {
     if !errors.is_empty() {
         return Err(LoadError::Validation(errors));
     }
-    serde_json::from_value(value).map_err(|error| {
+    let mut project: Project = serde_json::from_value(value).map_err(|error| {
         LoadError::Validation(vec![ValidationError {
             path: "$".to_owned(),
             message: format!("internal validation mismatch: {error}"),
         }])
-    })
+    })?;
+    if let Some(category) = project.category.take() {
+        match normalize_category(&category) {
+            Some(normalized) => project.category = Some(normalized),
+            None => {
+                return Err(LoadError::Validation(vec![ValidationError {
+                    path: "category".to_owned(),
+                    message: format!(
+                        "must be 1–{CATEGORY_MAX_LEN} characters after trimming, with no control characters"
+                    ),
+                }]));
+            }
+        }
+    }
+    Ok(project)
 }
 
 fn validate_project(value: &Value, errors: &mut Vec<ValidationError>) {
     let Some(object) = expect_object(value, "$", errors) else {
         return;
     };
-    reject_unknown(object, "$", PROJECT_FIELDS, errors);
+    let version = object
+        .get("schema_version")
+        .and_then(Value::as_number)
+        .and_then(u64_number);
+    let allowed = match version {
+        Some(2) => PROJECT_FIELDS_V2,
+        _ => PROJECT_FIELDS_V1,
+    };
+    reject_unknown(object, "$", allowed, errors);
     require_schema_version(object, errors);
     require_slug(object, "id", "$", errors);
     require_text(object, "name", "$", errors);
@@ -137,6 +181,9 @@ fn validate_project(value: &Value, errors: &mut Vec<ValidationError>) {
     optional_source_dir(object, errors);
     optional_string(object, "description", "$", errors);
     optional_string(object, "current_version", "$", errors);
+    if version == Some(2) {
+        optional_category(object, errors);
+    }
     optional_tags(object, errors);
     optional_date(object, "updated", "$", errors);
     optional_links(object, errors);
@@ -150,14 +197,36 @@ fn require_schema_version(object: &Map<String, Value>, errors: &mut Vec<Validati
     match object.get("schema_version") {
         None => push(errors, "schema_version", "is required"),
         Some(value) => {
-            let is_one = value
+            let ok = value
                 .as_number()
                 .and_then(u64_number)
-                .is_some_and(|version| version == 1);
-            if !is_one {
-                push(errors, "schema_version", "must be 1");
+                .is_some_and(|version| version == 1 || version == 2);
+            if !ok {
+                push(
+                    errors,
+                    "schema_version",
+                    format!("must be 1 or {PROJECT_SCHEMA_VERSION}"),
+                );
             }
         }
+    }
+}
+
+fn optional_category(object: &Map<String, Value>, errors: &mut Vec<ValidationError>) {
+    let Some(value) = optional(object, "category") else {
+        return;
+    };
+    let Some(text) = expect_string(value, "category", errors) else {
+        return;
+    };
+    if normalize_category(text).is_none() {
+        push(
+            errors,
+            "category",
+            format!(
+                "must be 1–{CATEGORY_MAX_LEN} characters after trimming, with no control characters"
+            ),
+        );
     }
 }
 

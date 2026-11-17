@@ -1,8 +1,8 @@
 # craftward.json
 
 Each project is described by one `craftward.json` file. This document specifies
-schema version 1. Field names are English and use `snake_case`. A reader
-rejects any field that is not listed here.
+schema versions 1 and 2. Field names are English and use `snake_case`. A reader
+rejects any field that is not listed for that version.
 
 The checked-in JSON Schema at [`schema/craftward.schema.json`](../schema/craftward.schema.json)
 describes the types, enumerations, required fields, and the rejection of
@@ -65,13 +65,14 @@ about those missing paths and still exits 0 when the file itself is valid.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `schema_version` | yes | Integer `1`. An integer greater than 1 means a newer Craftward wrote the file. |
+| `schema_version` | yes | Integer `1` or `2`. An integer greater than 2 means a newer Craftward wrote the file. Version `2` is written only when `category` is set. |
 | `id` | yes | Short name of the project. |
 | `name` | yes | Human-readable name. |
 | `status` | yes | Lifecycle status. |
 | `source_dir` | no | Directory of the source code. Relative paths may contain `..`. |
 | `description` | no | Longer description. |
 | `current_version` | no | Version the maintainer currently ships or is working on. |
+| `category` | no | Optional portfolio category (schema version 2 only). After load: trimmed, internal whitespace collapsed to single spaces, 1–40 characters, no control characters. |
 | `tags` | no | List of strings. Exact duplicates are rejected. |
 | `updated` | no | Day the file was last updated. |
 | `links` | no | List of labeled web addresses. |
@@ -223,14 +224,17 @@ Each reminder has:
 
 ## Changing the schema later
 
-Craftward has not been released. Until that release, version 1 may gain an
-optional field. `source_dir` was added that way. After the first release,
-adding, removing, or renaming a field, or changing the type or the allowed
-values of a field, is a breaking change. It needs a new `schema_version`.
+Craftward has not been released. Until that release, an optional field may
+still be added carefully. `source_dir` stayed on version 1. `category` did
+not: unknown fields are rejected, so a version-1-only reader would fail with
+an opaque unknown-field error. Craftward therefore writes `schema_version`
+`2` when `category` is present and `1` when it is absent. Clearing the
+category returns the file to version 1. See
+[ADR 0028](adr/0028-project-categories.md).
 
-A build that implements version 1 accepts only the integer `1`. It does not
-guess at the meaning of a newer file, and this version does not migrate files
-forward or backward. The schema file
+A build that implements versions 1 and 2 accepts those integers. An integer
+greater than 2 is refused as unsupported. This version does not migrate
+files forward or backward. The schema file
 `schema/craftward.schema.json` is regenerated in the same change that changes
 the Rust types:
 

@@ -36,7 +36,7 @@ pub enum LoadError {
         /// The `schema_version` value from the file.
         version: u64,
     },
-    /// The file is schema version 1, and one or more rules failed.
+    /// The file is a supported schema version, and one or more rules failed.
     Validation(Vec<ValidationError>),
 }
 

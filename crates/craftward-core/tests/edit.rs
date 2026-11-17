@@ -44,6 +44,7 @@ fn changes<'a>() -> ProjectChanges<'a> {
         version: ProjectUpdate::Keep,
         description: ProjectUpdate::Keep,
         source_dir: ProjectUpdate::Keep,
+        category: ProjectUpdate::Keep,
         tags: StringListUpdate::Keep,
         links: LinkListUpdate::Keep,
     }
@@ -576,6 +577,7 @@ fn checked_edit_refuses_when_fingerprint_drifts() {
                 version: ProjectUpdate::Keep,
                 description: ProjectUpdate::Keep,
                 source_dir: ProjectUpdate::Keep,
+                category: ProjectUpdate::Keep,
                 tags: StringListUpdate::Keep,
                 links: LinkListUpdate::Keep,
             },
@@ -602,6 +604,7 @@ fn checked_edit_writes_when_fingerprint_matches() {
                 version: ProjectUpdate::Keep,
                 description: ProjectUpdate::Keep,
                 source_dir: ProjectUpdate::Keep,
+                category: ProjectUpdate::Keep,
                 tags: StringListUpdate::Keep,
                 links: LinkListUpdate::Keep,
             },
@@ -958,5 +961,67 @@ fn restore_file_round_trip_and_conflict() {
             .unwrap_err()
             .is_conflict()
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn category_bumps_schema_to_two_and_clear_returns_to_one() {
+    let root = scratch("category");
+    let path = minimal(&root);
+    edit_file(&path, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                category: ProjectUpdate::Set("  Security   Tools "),
+                ..changes()
+            },
+            updated,
+        )
+    })
+    .expect("set category");
+    let stored = fs::read_to_string(&path).expect("read");
+    assert!(stored.contains("\"schema_version\": 2"), "{stored}");
+    assert!(
+        stored.contains("\"category\": \"Security Tools\""),
+        "{stored}"
+    );
+    let project = load_from_path(&path).expect("reload");
+    let rendered = render_project(&project);
+    assert!(rendered.contains("category: Security Tools"), "{rendered}");
+    edit_file(&path, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                category: ProjectUpdate::Clear,
+                ..changes()
+            },
+            updated,
+        )
+    })
+    .expect("clear category");
+    let cleared = fs::read_to_string(&path).expect("read cleared");
+    assert!(cleared.contains("\"schema_version\": 1"), "{cleared}");
+    assert!(!cleared.contains("category"), "{cleared}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn invalid_category_is_rejected() {
+    let root = scratch("bad-category");
+    let path = minimal(&root);
+    let before = fs::read(&path).expect("before");
+    let error = edit_file(&path, DAY, |project, updated| {
+        set_project(
+            project,
+            ProjectChanges {
+                category: ProjectUpdate::Set("bad\nname"),
+                ..changes()
+            },
+            updated,
+        )
+    })
+    .expect_err("invalid");
+    assert!(matches!(error, EditError::InvalidFile(_)), "{error}");
+    assert_eq!(fs::read(&path).expect("after"), before);
     let _ = fs::remove_dir_all(root);
 }

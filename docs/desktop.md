@@ -53,9 +53,14 @@ See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 
 ## Navigation
 
-A fixed left sidebar lists **Portfolio**, **Issues**, and **Settings**. The
-active entry is highlighted and is reachable by keyboard focus. Workspace
-and database paths appear at the bottom of the sidebar.
+A fixed left sidebar lists **Portfolio**, **Issues**, and **Settings**.
+Portfolio expands to indented children: **All (n)**, named categories A–Z
+with counts, **Uncategorized (n)** when needed, and **With errors (n)** only
+when load failures exist. Load-error projects count under All and With
+errors only — never under a category. The category selection stays for the
+session, including when opening and returning from a project. The active
+entry is highlighted and is reachable by keyboard focus. Workspace and
+database paths appear at the bottom of the sidebar.
 
 The project detail page belongs to Portfolio. The top breadcrumb is
 **Portfolio › _name_** with ordinary word spacing and Portfolio clickable;
@@ -67,24 +72,29 @@ file watcher in this release.
 
 ## Views
 
-- **Portfolio overview:** one card per project, sorted by urgency. **New
-  project** and **Add existing** manage the workspace list (text fields plus
-  optional native Browse dialogs). New project asks for a **Folder for
-  craftward.json** and an optional **Source folder (if the code lives
-  elsewhere)**. **Remove from list** runs immediately with an undo toast
-  (ADR 0024); **Remove and delete craftward.json…** asks for confirmation
-  because file deletion cannot be undone. Clicking the ··· menu button opens
-  the card menu (Enter does the same when that button is focused); clicking
-  the rest of the card opens the project.
-- **Detail:** header (including **Remove from list** and **Delete
-  craftward.json…**), stack, phases with tasks, open issues, findings, and
-  **Watch items & deadlines**. Two columns from 900 px width; one column
-  below that.
+- **Portfolio overview:** one card per project, sorted by urgency, filtered
+  by the sidebar category plus optional Platform and Tag combos (AND).
+  Platforms are derived from the stack (`android` block and `platform`
+  components), merged without regard to letter case, and shown with
+  readable labels. **New project** and **Add existing** manage the
+  workspace list (text fields plus optional native Browse dialogs). New
+  project asks for a **Folder for craftward.json**, optional **Source
+  folder**, and optional **Category** (suggestions from the portfolio).
+  **Remove from list** runs immediately with an undo toast (ADR 0024);
+  **Remove and delete craftward.json…** asks for confirmation because file
+  deletion cannot be undone. Clicking the ··· menu button opens the card
+  menu (Enter does the same when that button is focused); clicking the rest
+  of the card opens the project.
+- **Detail:** header (including category and **Remove from list** /
+  **Delete craftward.json…**), stack, phases with tasks, open issues,
+  findings, and **Watch items & deadlines**. Two columns from 900 px width;
+  one column below that.
 - **Issues:** table with fixed columns Severity, Status, Project, Title
   (title wraps in its column). Filters: status (default open only),
-  severity, project. Sort: severity descending, then project name, then
-  title. Click a row to open that project with the issue marked. Status can
-  be changed in the list; undo uses the same path as on the project page.
+  severity, project, category. Sort: severity descending, then project
+  name, then title. Click a row to open that project with the issue marked.
+  Status can be changed in the list; undo uses the same path as on the
+  project page.
 - **Settings:** shows the three storage locations with their origin
   (environment variable, settings file, or default). **Change…** opens a
   folder dialog and relocates existing data as in [storage.md](storage.md).

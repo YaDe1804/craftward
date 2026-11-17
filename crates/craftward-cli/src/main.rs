@@ -108,10 +108,10 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 Err(error) => Err(Failure::Data(error.to_string())),
             }
         }
-        Command::List => {
+        Command::List { category } => {
             let workspace = workspace_file(workspace)?;
             match list_projects(&workspace) {
-                Ok(rows) => Ok(print_list(&rows)),
+                Ok(rows) => Ok(print_list(&rows, category.as_deref())),
                 Err(error) => Err(Failure::Data(explain_workspace(&error))),
             }
         }
@@ -172,6 +172,8 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                     version,
                     description,
                     source_dir,
+                    category,
+                    clear_category,
                     tags,
                     clear_tags,
                     links,
@@ -183,6 +185,8 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                 && version.is_none()
                 && description.is_none()
                 && source_dir.is_none()
+                && category.is_none()
+                && !clear_category
                 && tags.is_none()
                 && !clear_tags
                 && links.is_empty()
@@ -192,12 +196,22 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                     "project set requires at least one option".to_owned(),
                 ));
             }
+            if clear_category && category.as_ref().is_some_and(|text| !text.is_empty()) {
+                return Err(Failure::Usage(
+                    "use either --category or --clear-category, not both".to_owned(),
+                ));
+            }
             let parsed_links = if links.is_empty() {
                 None
             } else {
                 Some(parse_link_args(&links)?)
             };
             let parsed_tags = tags.map(|text| parse_tags(&text));
+            let category_update = if clear_category {
+                editing::Update::Clear
+            } else {
+                clearable(category)
+            };
             editing::run(
                 editing::Request::SetProject {
                     target: project,
@@ -206,6 +220,7 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
                     version: clearable(version),
                     description: clearable(description),
                     source_dir: clearable(source_dir),
+                    category: category_update,
                     tags: parsed_tags,
                     clear_tags,
                     links: parsed_links,
@@ -794,7 +809,7 @@ fn print_load_error(error: &LoadError) {
     }
 }
 
-fn print_list(rows: &[ProjectRow]) -> ExitCode {
+fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
     if rows.is_empty() {
         println!("no projects");
         return ExitCode::SUCCESS;
@@ -803,26 +818,42 @@ fn print_list(rows: &[ProjectRow]) -> ExitCode {
     let mut lines = Vec::new();
     for row in rows {
         lines.push(match &row.detail {
-            Ok(snapshot) => ListLine {
-                id: snapshot.id.clone(),
-                name: snapshot.name.clone(),
-                status: snapshot.status.as_str().to_owned(),
-                version: snapshot
-                    .current_version
-                    .clone()
-                    .unwrap_or_else(|| "-".to_owned()),
-                open_tasks: snapshot.open_tasks.to_string(),
-                open_issues: snapshot.open_issues.to_string(),
-                next_due: snapshot.next_due.clone().unwrap_or_else(|| "-".to_owned()),
-                note: String::new(),
-            },
+            Ok(snapshot) => {
+                if let Some(wanted) = category_filter {
+                    let matches = snapshot
+                        .category
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(wanted));
+                    if !matches {
+                        continue;
+                    }
+                }
+                ListLine {
+                    id: snapshot.id.clone(),
+                    name: snapshot.name.clone(),
+                    status: snapshot.status.as_str().to_owned(),
+                    version: snapshot
+                        .current_version
+                        .clone()
+                        .unwrap_or_else(|| "-".to_owned()),
+                    category: snapshot.category.clone().unwrap_or_else(|| "-".to_owned()),
+                    open_tasks: snapshot.open_tasks.to_string(),
+                    open_issues: snapshot.open_issues.to_string(),
+                    next_due: snapshot.next_due.clone().unwrap_or_else(|| "-".to_owned()),
+                    note: String::new(),
+                }
+            }
             Err(message) => {
+                if category_filter.is_some() {
+                    continue;
+                }
                 failed = true;
                 ListLine {
                     id: "-".to_owned(),
                     name: "-".to_owned(),
                     status: "-".to_owned(),
                     version: "-".to_owned(),
+                    category: "-".to_owned(),
                     open_tasks: "-".to_owned(),
                     open_issues: "-".to_owned(),
                     next_due: "-".to_owned(),
@@ -830,6 +861,10 @@ fn print_list(rows: &[ProjectRow]) -> ExitCode {
                 }
             }
         });
+    }
+    if lines.is_empty() {
+        println!("no projects");
+        return ExitCode::SUCCESS;
     }
     print_table(&lines);
     exit_from_failure(failed)
@@ -840,6 +875,7 @@ struct ListLine {
     name: String,
     status: String,
     version: String,
+    category: String,
     open_tasks: String,
     open_issues: String,
     next_due: String,
@@ -852,6 +888,7 @@ fn print_table(lines: &[ListLine]) {
         "NAME",
         "STATUS",
         "VERSION",
+        "CATEGORY",
         "OPEN_TASKS",
         "OPEN_ISSUES",
         "NEXT_DUE",
@@ -872,12 +909,13 @@ fn print_table(lines: &[ListLine]) {
 }
 
 impl ListLine {
-    fn cells(&self) -> [&str; 8] {
+    fn cells(&self) -> [&str; 9] {
         [
             &self.id,
             &self.name,
             &self.status,
             &self.version,
+            &self.category,
             &self.open_tasks,
             &self.open_issues,
             &self.next_due,

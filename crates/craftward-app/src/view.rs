@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use craftward_core::{
     ComponentKind, Issue, IssueSeverity, IssueStatus, LockKind, Phase, PhaseState, Project,
     ProjectStatus, Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind,
-    days_between, lock_kind, phase_state, resolve_project_paths, snapshot, task_progress, unix_now,
-    utc_day,
+    days_between, lock_kind, normalize_category, normalize_category_against, phase_state,
+    project_platforms, resolve_project_paths, snapshot, task_progress, unix_now, utc_day,
 };
 
 use crate::date::{format_date_for_display, invalid_date_message, parse_date_input};
@@ -125,8 +125,46 @@ pub struct ProjectCard {
     pub current_phase: Option<String>,
     /// Stored Android `target_sdk` when the project file sets one.
     pub target_sdk: Option<u32>,
+    /// Portfolio category when set.
+    pub category: Option<String>,
+    /// Readable platform labels derived from the stack.
+    pub platforms: Vec<String>,
+    /// Project tags.
+    pub tags: Vec<String>,
     /// Load error shown on the card.
     pub load_error: Option<String>,
+}
+
+/// Sidebar selection under Portfolio (session-sticky).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PortfolioSidebarFilter {
+    /// Every project, including load failures.
+    #[default]
+    All,
+    /// One category spelling as stored on projects.
+    Category(String),
+    /// Loaded projects with no category.
+    Uncategorized,
+    /// Projects whose files failed to load.
+    WithErrors,
+}
+
+/// One indented sidebar row under Portfolio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioSidebarEntry {
+    /// Selection this row applies.
+    pub filter: PortfolioSidebarFilter,
+    /// Label including count, for example `All (3)`.
+    pub label: String,
+}
+
+/// Platform and tag filters on the overview (combined with the sidebar with AND).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OverviewFilters {
+    /// Readable platform label, or empty for all.
+    pub platform: String,
+    /// Exact tag, or empty for all.
+    pub tag: String,
 }
 
 /// One open finding row in the detail view.
@@ -276,6 +314,8 @@ pub struct ProjectDetail {
     pub version: Option<String>,
     /// `source_dir` when set.
     pub source_dir: Option<String>,
+    /// Portfolio category when set.
+    pub category: Option<String>,
     /// Tags for the header form.
     pub tags: Vec<String>,
     /// Links as `(label, url)` for the header form.
@@ -412,6 +452,12 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
                     value: project.id.clone(),
                 },
             ];
+            if let Some(category) = &project.category {
+                overview_fields.push(FieldRow {
+                    label: "Category",
+                    value: category.clone(),
+                });
+            }
             if let Some(version) = &project.current_version {
                 overview_fields.push(FieldRow {
                     label: "Version",
@@ -436,6 +482,7 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
                 description: project.description.clone(),
                 version: project.current_version.clone(),
                 source_dir: project.source_dir.clone(),
+                category: project.category.clone(),
                 tags: project.tags.clone().unwrap_or_default(),
                 links: project.links.as_ref().map_or_default(|links| {
                     links
@@ -466,6 +513,7 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
             description: None,
             version: None,
             source_dir: None,
+            category: None,
             tags: Vec::new(),
             links: Vec::new(),
             progress: ProgressView::empty(),
@@ -666,10 +714,14 @@ pub struct HeaderForm {
     pub description: String,
     /// Source directory (empty clears).
     pub source_dir: String,
+    /// Portfolio category (empty clears).
+    pub category: String,
     /// Comma-separated tags.
     pub tags: String,
     /// Links, one `Label|URL` per line.
     pub links: String,
+    /// Short hint when letter case was unified against an existing category.
+    pub category_unify_hint: Option<String>,
 }
 
 impl HeaderForm {
@@ -687,6 +739,7 @@ impl HeaderForm {
             version: detail.version.clone().unwrap_or_default(),
             description: detail.description.clone().unwrap_or_default(),
             source_dir: detail.source_dir.clone().unwrap_or_default(),
+            category: detail.category.clone().unwrap_or_default(),
             tags: detail.tags.join(", "),
             links: detail
                 .links
@@ -694,6 +747,7 @@ impl HeaderForm {
                 .map(|(label, url)| format!("{label}|{url}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
+            category_unify_hint: None,
         }
     }
 
@@ -726,6 +780,20 @@ impl HeaderForm {
         }
     }
 
+    /// Category field error when non-empty text cannot be normalized.
+    #[must_use]
+    pub fn category_error(&self) -> Option<&'static str> {
+        let trimmed = self.category.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if normalize_category(trimmed).is_none() {
+            Some("Category must be 1–40 characters after trimming, with no control characters")
+        } else {
+            None
+        }
+    }
+
     /// Links field error.
     #[must_use]
     pub fn links_error(&self) -> Option<&'static str> {
@@ -753,6 +821,7 @@ impl HeaderForm {
     pub fn validation_message(&self) -> Option<&'static str> {
         self.name_error()
             .or_else(|| self.status_error())
+            .or_else(|| self.category_error())
             .or_else(|| self.links_error())
     }
 
@@ -778,6 +847,33 @@ impl HeaderForm {
     #[must_use]
     pub fn source_dir_update(&self) -> craftward_core::ProjectUpdate<'_> {
         optional_clearable(&self.source_dir)
+    }
+
+    /// Resolves the category for save: `None` clears, `Some` sets the stored spelling.
+    ///
+    /// Also updates [`Self::category`] and [`Self::category_unify_hint`].
+    pub fn resolve_category(
+        &mut self,
+        existing: &[String],
+    ) -> Result<Option<String>, &'static str> {
+        self.category_unify_hint = None;
+        let trimmed = self.category.trim();
+        if trimmed.is_empty() {
+            self.category.clear();
+            return Ok(None);
+        }
+        match normalize_category_against(existing, trimmed) {
+            Ok((value, unified)) => {
+                if unified {
+                    self.category_unify_hint = Some(format!("Using existing spelling “{value}”"));
+                }
+                self.category.clone_from(&value);
+                Ok(Some(value))
+            }
+            Err(_) => {
+                Err("Category must be 1–40 characters after trimming, with no control characters")
+            }
+        }
     }
 
     /// Parsed tags.
@@ -1522,6 +1618,8 @@ pub struct NewProjectForm {
     pub directory: String,
     /// Optional source folder when code lives elsewhere.
     pub source_dir: String,
+    /// Optional portfolio category.
+    pub category: String,
     /// Project id.
     pub id: String,
     /// Display name.
@@ -1530,6 +1628,8 @@ pub struct NewProjectForm {
     pub status: String,
     /// When true, id is no longer overwritten from the name.
     pub id_manual: bool,
+    /// Short hint when letter case was unified against an existing category.
+    pub category_unify_hint: Option<String>,
 }
 
 impl Default for NewProjectForm {
@@ -1537,10 +1637,12 @@ impl Default for NewProjectForm {
         Self {
             directory: String::new(),
             source_dir: String::new(),
+            category: String::new(),
             id: String::new(),
             name: String::new(),
             status: "idea".to_owned(),
             id_manual: false,
+            category_unify_hint: None,
         }
     }
 }
@@ -1589,10 +1691,49 @@ impl NewProjectForm {
         }
     }
 
+    /// Category field error when non-empty text cannot be normalized.
+    #[must_use]
+    pub fn category_error(&self) -> Option<&'static str> {
+        let trimmed = self.category.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if normalize_category(trimmed).is_none() {
+            Some("Category must be 1–40 characters after trimming, with no control characters")
+        } else {
+            None
+        }
+    }
+
     /// Trimmed optional source directory.
     #[must_use]
     pub fn source_dir_for_edit(&self) -> Option<&str> {
         optional_text(&self.source_dir)
+    }
+
+    /// Resolves the category for create: `None` omits it.
+    pub fn resolve_category(
+        &mut self,
+        existing: &[String],
+    ) -> Result<Option<String>, &'static str> {
+        self.category_unify_hint = None;
+        let trimmed = self.category.trim();
+        if trimmed.is_empty() {
+            self.category.clear();
+            return Ok(None);
+        }
+        match normalize_category_against(existing, trimmed) {
+            Ok((value, unified)) => {
+                if unified {
+                    self.category_unify_hint = Some(format!("Using existing spelling “{value}”"));
+                }
+                self.category.clone_from(&value);
+                Ok(Some(value))
+            }
+            Err(_) => {
+                Err("Category must be 1–40 characters after trimming, with no control characters")
+            }
+        }
     }
 
     /// Name field error.
@@ -1641,6 +1782,7 @@ impl NewProjectForm {
     pub fn validation_message(&self, taken_ids: &[String]) -> Option<&'static str> {
         self.directory_error()
             .or_else(|| self.source_dir_error())
+            .or_else(|| self.category_error())
             .or_else(|| self.name_error())
             .or_else(|| self.id_error(taken_ids))
             .or_else(|| self.status_error())
@@ -1885,6 +2027,9 @@ fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard 
                 next_due_remaining,
                 current_phase: current_phase_title(project),
                 target_sdk: stored_target_sdk(project),
+                category: project.category.clone(),
+                platforms: project_platforms(project),
+                tags: project.tags.clone().unwrap_or_default(),
                 load_error: None,
             }
         }
@@ -1906,6 +2051,9 @@ fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard 
             next_due_remaining: None,
             current_phase: None,
             target_sdk: None,
+            category: None,
+            platforms: Vec::new(),
+            tags: Vec::new(),
             load_error: Some(error.clone()),
         },
     }
@@ -2424,6 +2572,8 @@ pub struct IssuesFilter {
     pub severity: String,
     /// Project id, or empty for all.
     pub project_id: String,
+    /// Category display string, or empty for all.
+    pub category: String,
 }
 
 impl Default for IssuesFilter {
@@ -2432,6 +2582,7 @@ impl Default for IssuesFilter {
             open_only: true,
             severity: String::new(),
             project_id: String::new(),
+            category: String::new(),
         }
     }
 }
@@ -2461,6 +2612,15 @@ pub fn collect_portfolio_issues(
             }
             if !filter.project_id.is_empty() && project.id != filter.project_id {
                 continue;
+            }
+            if !filter.category.is_empty() {
+                let matches = project
+                    .category
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(&filter.category));
+                if !matches {
+                    continue;
+                }
             }
             rows.push(PortfolioIssueRow {
                 project_index,
@@ -2492,6 +2652,164 @@ fn issue_severity_key(severity: IssueSeverity) -> &'static str {
     }
 }
 
+/// Distinct category spellings from loaded projects, sorted A–Z (case-insensitive).
+#[must_use]
+pub fn portfolio_categories(loaded: &LoadedPortfolio) -> Vec<String> {
+    let mut categories = Vec::new();
+    for project in &loaded.projects {
+        let Ok(parsed) = &project.project else {
+            continue;
+        };
+        let Some(category) = &parsed.category else {
+            continue;
+        };
+        if categories
+            .iter()
+            .any(|known: &String| known.eq_ignore_ascii_case(category))
+        {
+            continue;
+        }
+        categories.push(category.clone());
+    }
+    categories.sort_by_key(|left| left.to_ascii_lowercase());
+    categories
+}
+
+/// Builds indented Portfolio sidebar rows with counts.
+#[must_use]
+pub fn portfolio_sidebar_entries(cards: &[ProjectCard]) -> Vec<PortfolioSidebarEntry> {
+    let total = cards.len();
+    let mut entries = vec![PortfolioSidebarEntry {
+        filter: PortfolioSidebarFilter::All,
+        label: format!("All ({total})"),
+    }];
+    let mut category_counts: Vec<(String, usize)> = Vec::new();
+    let mut uncategorized = 0;
+    let mut errors = 0;
+    for card in cards {
+        if card.load_error.is_some() {
+            errors += 1;
+            continue;
+        }
+        match &card.category {
+            Some(category) => {
+                if let Some((_, count)) = category_counts
+                    .iter_mut()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(category))
+                {
+                    *count += 1;
+                } else {
+                    category_counts.push((category.clone(), 1));
+                }
+            }
+            None => uncategorized += 1,
+        }
+    }
+    category_counts.sort_by(|(left, _), (right, _)| {
+        left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase())
+    });
+    for (name, count) in category_counts {
+        entries.push(PortfolioSidebarEntry {
+            filter: PortfolioSidebarFilter::Category(name.clone()),
+            label: format!("{name} ({count})"),
+        });
+    }
+    if uncategorized > 0 {
+        entries.push(PortfolioSidebarEntry {
+            filter: PortfolioSidebarFilter::Uncategorized,
+            label: format!("Uncategorized ({uncategorized})"),
+        });
+    }
+    if errors > 0 {
+        entries.push(PortfolioSidebarEntry {
+            filter: PortfolioSidebarFilter::WithErrors,
+            label: format!("With errors ({errors})"),
+        });
+    }
+    entries
+}
+
+/// Title for the overview summary when a sidebar filter is active.
+#[must_use]
+pub fn portfolio_filter_title(filter: &PortfolioSidebarFilter) -> String {
+    match filter {
+        PortfolioSidebarFilter::All => "Portfolio".to_owned(),
+        PortfolioSidebarFilter::Category(name) => format!("Portfolio › {name}"),
+        PortfolioSidebarFilter::Uncategorized => "Portfolio › Uncategorized".to_owned(),
+        PortfolioSidebarFilter::WithErrors => "Portfolio › With errors".to_owned(),
+    }
+}
+
+/// Distinct platform labels across loaded cards, sorted.
+#[must_use]
+pub fn portfolio_platform_options(cards: &[ProjectCard]) -> Vec<String> {
+    let mut platforms = Vec::new();
+    for card in cards {
+        for platform in &card.platforms {
+            if platforms
+                .iter()
+                .any(|known: &String| known.eq_ignore_ascii_case(platform))
+            {
+                continue;
+            }
+            platforms.push(platform.clone());
+        }
+    }
+    platforms.sort_by_key(|left| left.to_ascii_lowercase());
+    platforms
+}
+
+/// Distinct tags across loaded cards, sorted.
+#[must_use]
+pub fn portfolio_tag_options(cards: &[ProjectCard]) -> Vec<String> {
+    let mut tags = Vec::new();
+    for card in cards {
+        for tag in &card.tags {
+            if tags.iter().any(|known: &String| known == tag) {
+                continue;
+            }
+            tags.push(tag.clone());
+        }
+    }
+    tags.sort();
+    tags
+}
+
+/// Whether a card matches the sidebar category selection and overview filters.
+#[must_use]
+pub fn card_matches_filters(
+    card: &ProjectCard,
+    sidebar: &PortfolioSidebarFilter,
+    overview: &OverviewFilters,
+) -> bool {
+    let sidebar_ok = match sidebar {
+        PortfolioSidebarFilter::All => true,
+        PortfolioSidebarFilter::Category(name) => card
+            .category
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(name)),
+        PortfolioSidebarFilter::Uncategorized => {
+            card.load_error.is_none() && card.category.is_none()
+        }
+        PortfolioSidebarFilter::WithErrors => card.load_error.is_some(),
+    };
+    if !sidebar_ok {
+        return false;
+    }
+    if !overview.platform.is_empty()
+        && !card
+            .platforms
+            .iter()
+            .any(|platform| platform.eq_ignore_ascii_case(&overview.platform))
+    {
+        return false;
+    }
+    if !overview.tag.is_empty() && !card.tags.iter().any(|tag| tag == &overview.tag) {
+        return false;
+    }
+    true
+}
+
 fn severity_rank(key: &str) -> u8 {
     match key {
         "critical" => 4,
@@ -2512,12 +2830,13 @@ mod tests {
     };
 
     use super::{
-        HeaderForm, IssueEditForm, IssueForm, IssuesFilter, NewProjectForm, PhaseForm,
-        ProgressView, StatusBadge, TaskEditForm, TaskForm, android_store_choices,
-        badge_stretches_to_parent, build_detail_at, build_portfolio_at, collect_portfolio_issues,
-        compare_urgency, current_phase_title, display_label, form_factor_choices, grid_columns,
-        grid_row_column_slots, issue_status_badge, issue_status_choices,
-        longest_status_choice_label, open_findings_label, open_issues_label, project_progress,
+        HeaderForm, IssueEditForm, IssueForm, IssuesFilter, NewProjectForm, OverviewFilters,
+        PhaseForm, PortfolioSidebarFilter, ProgressView, StatusBadge, TaskEditForm, TaskForm,
+        android_store_choices, badge_stretches_to_parent, build_detail_at, build_portfolio_at,
+        card_matches_filters, collect_portfolio_issues, compare_urgency, current_phase_title,
+        display_label, form_factor_choices, grid_columns, grid_row_column_slots,
+        issue_status_badge, issue_status_choices, longest_status_choice_label, open_findings_label,
+        open_issues_label, portfolio_platform_options, portfolio_sidebar_entries, project_progress,
         project_status_badge, relative_to_dir, remaining_label, task_status_badge,
         task_status_choices, task_title_is_muted,
     };
@@ -2534,6 +2853,7 @@ mod tests {
             source_dir: None,
             description: None,
             current_version: Some("1.0.0".to_owned()),
+            category: None,
             tags: None,
             updated: None,
             links: None,
@@ -2623,6 +2943,9 @@ mod tests {
             next_due_remaining: None,
             current_phase: None,
             target_sdk: None,
+            category: None,
+            platforms: Vec::new(),
+            tags: Vec::new(),
             load_error: None,
         }
     }
@@ -2658,6 +2981,7 @@ mod tests {
             source_dir: None,
             description: None,
             current_version: None,
+            category: None,
             tags: None,
             updated: None,
             links: None,
@@ -2930,8 +3254,10 @@ mod tests {
             version: "1.0".to_owned(),
             description: "desc".to_owned(),
             source_dir: "src".to_owned(),
+            category: String::new(),
             tags: "a, b".to_owned(),
             links: "Docs|https://example.com".to_owned(),
+            category_unify_hint: None,
         };
         assert_eq!(form.name_error(), Some("Name is required"));
         assert!(!form.can_save());
@@ -3165,6 +3491,7 @@ mod tests {
                 open_only: false,
                 severity: String::new(),
                 project_id: String::new(),
+                category: String::new(),
             },
         );
         assert_eq!(
@@ -3179,6 +3506,7 @@ mod tests {
                 open_only: false,
                 severity: "high".to_owned(),
                 project_id: String::new(),
+                category: String::new(),
             },
         );
         assert_eq!(high.len(), 1);
@@ -3199,5 +3527,102 @@ mod tests {
         let base = PathBuf::from("/tmp/project/src");
         let outside = PathBuf::from("/tmp/elsewhere/Cargo.lock");
         assert_eq!(relative_to_dir(&outside, &base), None);
+    }
+
+    #[test]
+    fn sidebar_counts_categories_and_errors() {
+        let mut ok = sample_project("a", "A", None);
+        ok.category = Some("Security Tools".to_owned());
+        let mut other = sample_project("b", "B", None);
+        other.category = Some("security tools".to_owned());
+        let loaded = LoadedPortfolio {
+            workspace_path: None,
+            workspace_fingerprint: None,
+            workspace_error: None,
+            database_path: None,
+            database: DatabaseStatus::Missing,
+            projects: vec![
+                LoadedProject {
+                    path: PathBuf::from("/tmp/a.json"),
+                    project: Ok(ok),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+                LoadedProject {
+                    path: PathBuf::from("/tmp/b.json"),
+                    project: Ok(other),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+                LoadedProject {
+                    path: PathBuf::from("/tmp/bad.json"),
+                    project: Err("broken".to_owned()),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+                LoadedProject {
+                    path: PathBuf::from("/tmp/plain.json"),
+                    project: Ok(sample_project("c", "C", None)),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+            ],
+        };
+        let view = build_portfolio_at(&loaded, "2026-11-17");
+        let entries = portfolio_sidebar_entries(&view.cards);
+        assert_eq!(entries[0].label, "All (4)");
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.label.starts_with("Security Tools ("))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.label == "Uncategorized (1)")
+        );
+        assert!(entries.iter().any(|entry| entry.label == "With errors (1)"));
+        let security = PortfolioSidebarFilter::Category("Security Tools".to_owned());
+        let matched: Vec<_> = view
+            .cards
+            .iter()
+            .filter(|card| card_matches_filters(card, &security, &OverviewFilters::default()))
+            .collect();
+        assert_eq!(matched.len(), 2);
+        let errors_only: Vec<_> = view
+            .cards
+            .iter()
+            .filter(|card| {
+                card_matches_filters(
+                    card,
+                    &PortfolioSidebarFilter::WithErrors,
+                    &OverviewFilters::default(),
+                )
+            })
+            .collect();
+        assert_eq!(errors_only.len(), 1);
+        assert_eq!(
+            portfolio_platform_options(&view.cards),
+            vec!["Android".to_owned()]
+        );
+    }
+
+    #[test]
+    fn header_category_unifies_letter_case() {
+        let mut form = HeaderForm {
+            name: "Harbor".to_owned(),
+            status: "idea".to_owned(),
+            version: String::new(),
+            description: String::new(),
+            source_dir: String::new(),
+            category: "security  tools".to_owned(),
+            tags: String::new(),
+            links: String::new(),
+            category_unify_hint: None,
+        };
+        let existing = vec!["Security Tools".to_owned()];
+        let resolved = form.resolve_category(&existing).unwrap();
+        assert_eq!(resolved.as_deref(), Some("Security Tools"));
+        assert!(form.category_unify_hint.is_some());
     }
 }

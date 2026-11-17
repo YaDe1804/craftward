@@ -1,4 +1,4 @@
-//! Rules for schema version 1 of a project file.
+//! Rules for schema versions 1 and 2 of a project file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -281,10 +281,10 @@ fn rejects_an_unknown_field() {
 }
 
 #[test]
-fn rejects_schema_version_two_before_other_checks() {
-    let text = r#"{"schema_version":2,"id":"-","name":"","status":"nope"}"#;
+fn rejects_schema_version_three_before_other_checks() {
+    let text = r#"{"schema_version":3,"id":"-","name":"","status":"nope"}"#;
     let error = load_from_str(text).expect_err("newer schema");
-    assert_eq!(error, LoadError::UnsupportedSchema { version: 2 });
+    assert_eq!(error, LoadError::UnsupportedSchema { version: 3 });
     assert_eq!(
         error.to_string(),
         "file was written by a newer Craftward version"
@@ -292,26 +292,74 @@ fn rejects_schema_version_two_before_other_checks() {
 }
 
 #[test]
-fn rejects_a_schema_version_that_is_not_the_integer_one() {
+fn rejects_a_schema_version_that_is_not_one_or_two() {
     assert_only(
         r#"{"schema_version":0,"id":"harbor-light","name":"Harbor Light","status":"idea"}"#,
         "schema_version",
-        "must be 1",
+        "must be 1 or 2",
     );
     assert_only(
         r#"{"schema_version":1.0,"id":"harbor-light","name":"Harbor Light","status":"idea"}"#,
         "schema_version",
-        "must be 1",
+        "must be 1 or 2",
     );
     assert_only(
         r#"{"schema_version":"1","id":"harbor-light","name":"Harbor Light","status":"idea"}"#,
         "schema_version",
-        "must be 1",
+        "must be 1 or 2",
     );
     assert_only(
         r#"{"id":"harbor-light","name":"Harbor Light","status":"idea"}"#,
         "schema_version",
         "is required",
+    );
+}
+
+#[test]
+fn accepts_schema_version_two_with_category() {
+    let text = r#"
+    {
+      "schema_version": 2,
+      "id": "harbor-light",
+      "name": "Harbor Light",
+      "status": "idea",
+      "category": "  Security   Tools  "
+    }
+    "#;
+    let project = load_from_str(text).expect("v2 with category");
+    assert_eq!(project.schema_version, 2);
+    assert_eq!(project.category.as_deref(), Some("Security Tools"));
+}
+
+#[test]
+fn rejects_category_on_schema_version_one() {
+    let text = r#"
+    {
+      "schema_version": 1,
+      "id": "harbor-light",
+      "name": "Harbor Light",
+      "status": "idea",
+      "category": "Tools"
+    }
+    "#;
+    assert_only(text, "category", "unknown field");
+}
+
+#[test]
+fn rejects_an_invalid_category() {
+    let text = r#"
+    {
+      "schema_version": 2,
+      "id": "harbor-light",
+      "name": "Harbor Light",
+      "status": "idea",
+      "category": "bad\nname"
+    }
+    "#;
+    assert_only(
+        text,
+        "category",
+        "must be 1–40 characters after trimming, with no control characters",
     );
 }
 

@@ -14,9 +14,11 @@ Pre-alpha, no usable release yet.
 ### Command-line interface (`craftward-cli`)
 
 - Workspace registry: `init`, `add`, `remove` (optional `--delete-file`),
-  `list`, `workspace path`, `settings show` / `settings set`, `validate`
-- Project edits: `show`, `project set`, `phase` / `task` / `issue` / `watch`,
-  `stack` (including Android targetSdk fields)
+  `list` (optional `--category`), `workspace path`, `settings show` /
+  `settings set`, `validate`
+- Project edits: `show`, `project set` (including `--category` /
+  `--clear-category`), `phase` / `task` / `issue` / `watch`, `stack`
+  (including Android targetSdk fields)
 - Versioned HTML roadmaps (`roadmap`)
 - Maintenance radar (`radar`) against OSV and endoflife.date, local findings
   (`findings`), and Google Play target-API deadlines (`deadlines`)
@@ -24,16 +26,19 @@ Pre-alpha, no usable release yet.
 ### Desktop application (`craftward-app`)
 
 - First-run setup, Settings for storage locations, left sidebar
-  (Portfolio, Issues, Settings), portfolio overview, per-project detail,
-  and a cross-project Issues table over the same workspace file and
+  (Portfolio with category children, Issues, Settings), portfolio
+  overview with Platform/Tag filters, per-project detail, and a
+  cross-project Issues table over the same workspace file and
   `craftward.db` as the CLI
-- Create, add, and remove projects; edit header, phases, tasks, issues,
-  stack (components, lockfiles, Android), and watch items through the same
-  writers as the CLI, with undo toasts and conflict banners
+- Create, add, and remove projects; edit header (including category),
+  phases, tasks, issues, stack (components, lockfiles, Android), and
+  watch items through the same writers as the CLI, with undo toasts and
+  conflict banners
 - Native folder/file/lockfile dialogs, OS clipboard, roadmap palette, and
   status glyphs (see [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md),
-  [ADR 0026](docs/adr/0026-navigation-and-visual-design.md), and
-  [ADR 0027](docs/adr/0027-settings-file-and-data-relocation.md))
+  [ADR 0026](docs/adr/0026-navigation-and-visual-design.md),
+  [ADR 0027](docs/adr/0027-settings-file-and-data-relocation.md), and
+  [ADR 0028](docs/adr/0028-project-categories.md))
 
 Target platforms are Windows, Linux, and macOS. Accepted design decisions are
 recorded in [`docs/adr/`](docs/adr/README.md).
