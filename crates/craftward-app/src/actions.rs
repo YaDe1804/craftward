@@ -8,10 +8,11 @@ use craftward_core::{
     LinkChange, LinkListUpdate, NewComponent, NewIssue, NewPhase, NewTask, NewWatch, PhaseChanges,
     ProjectChanges, ProjectStatus, StringListUpdate, TaskChanges, UndoOffer, UndoSnapshot,
     WatchChanges, add_component, add_issue, add_lockfile, add_phase, add_project_if_unchanged,
-    add_task, add_watch, content_fingerprint, edit_file_if_unchanged, init_project, load_from_path,
-    remove_component, remove_issue, remove_lockfile, remove_phase, remove_project_if_unchanged,
-    remove_task, remove_watch, set_android, set_component, set_issue, set_issue_status, set_phase,
-    set_project, set_task, set_task_status, set_watch, utc_date, workspace_bytes_or_empty,
+    add_task, add_watch, content_fingerprint, edit_file_if_unchanged, fingerprint_file,
+    init_project, load_from_path, remove_component, remove_issue, remove_lockfile, remove_phase,
+    remove_project_if_unchanged, remove_task, remove_watch, set_android, set_component, set_issue,
+    set_issue_status, set_phase, set_project, set_task, set_task_status, set_watch, utc_date,
+    workspace_bytes_or_empty,
 };
 
 use crate::view::{
@@ -107,6 +108,7 @@ pub fn save_new_task(path: &Path, fingerprint: &ContentFingerprint, form: &TaskF
         return failed(message);
     }
     let title = form.title_for_edit().to_owned();
+    let due = form.due_iso();
     apply(
         path,
         fingerprint,
@@ -119,7 +121,7 @@ pub fn save_new_task(path: &Path, fingerprint: &ContentFingerprint, form: &TaskF
                     title: form.title_for_edit(),
                     id: None,
                     status: None,
-                    due: form.due_for_edit(),
+                    due: due.as_deref(),
                     note: None,
                 },
                 updated_on,
@@ -293,6 +295,11 @@ pub fn save_task_edit(
     if let Some(message) = form.validation_message() {
         return failed(message);
     }
+    let due = form.due_iso();
+    let due_update = match due.as_deref() {
+        None => craftward_core::ProjectUpdate::Clear,
+        Some(iso) => craftward_core::ProjectUpdate::Set(iso),
+    };
     apply(
         path,
         fingerprint,
@@ -304,7 +311,7 @@ pub fn save_task_edit(
                 task_id,
                 TaskChanges {
                     title: Some(form.title_for_edit()),
-                    due: form.due_update(),
+                    due: due_update,
                     note: form.note_update(),
                 },
                 updated_on,
@@ -532,6 +539,7 @@ pub fn save_new_watch(
         return failed(message);
     }
     let title = form.title_for_edit().to_owned();
+    let due = form.due_iso();
     apply(
         path,
         fingerprint,
@@ -542,7 +550,7 @@ pub fn save_new_watch(
                 NewWatch {
                     kind: &form.kind,
                     title: form.title_for_edit(),
-                    due: form.due_for_edit(),
+                    due: &due,
                     id: None,
                     note: form.note_for_edit(),
                 },
@@ -563,6 +571,7 @@ pub fn save_watch_edit(
     if let Some(message) = form.validation_message() {
         return failed(message);
     }
+    let due = form.due_iso();
     apply(
         path,
         fingerprint,
@@ -574,7 +583,7 @@ pub fn save_watch_edit(
                 WatchChanges {
                     title: Some(form.title_for_edit()),
                     kind: Some(form.kind.as_str()),
-                    due: Some(form.due_for_edit()),
+                    due: Some(due.as_str()),
                     note: form.note_update(),
                 },
                 updated_on,
@@ -632,6 +641,39 @@ pub fn save_new_project(
     }
     if let Err(error) = init_project(&directory, form.id_for_edit(), form.name_for_edit(), status) {
         return failed(error.to_string());
+    }
+    if let Some(source_dir) = form.source_dir_for_edit() {
+        let Some(today) = utc_date(SystemTime::now()) else {
+            let _ = std::fs::remove_file(&project_path);
+            return failed("cannot read the system clock");
+        };
+        let Ok(fingerprint) = fingerprint_file(&project_path) else {
+            let _ = std::fs::remove_file(&project_path);
+            return failed("created project file but could not fingerprint it");
+        };
+        if let Err(error) = edit_file_if_unchanged(
+            &project_path,
+            &fingerprint,
+            &today,
+            |project, updated_on| {
+                set_project(
+                    project,
+                    ProjectChanges {
+                        name: None,
+                        status: None,
+                        version: craftward_core::ProjectUpdate::Keep,
+                        description: craftward_core::ProjectUpdate::Keep,
+                        source_dir: craftward_core::ProjectUpdate::Set(source_dir),
+                        tags: StringListUpdate::Keep,
+                        links: LinkListUpdate::Keep,
+                    },
+                    updated_on,
+                )
+            },
+        ) {
+            let _ = std::fs::remove_file(&project_path);
+            return failed(error.to_string());
+        }
     }
     match add_project_if_unchanged(
         workspace_file,

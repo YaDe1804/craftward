@@ -11,7 +11,7 @@
     "developer-tools",
     "open-source"
   ],
-  "updated": "2026-11-16",
+  "updated": "2026-11-17",
   "links": [
     {
       "label": "Repository",
@@ -350,7 +350,7 @@
           {
             "id": "t09",
             "title": "Ansicht: Bugs und offene Punkte",
-            "status": "open"
+            "status": "done"
           },
           {
             "id": "t10",
@@ -554,36 +554,62 @@
       "id": "app-android-labels",
       "title": "Desktop app: Android values shown as raw ids (google_play, phone)",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Show readable labels in the stack section and in the Android form."
     },
     {
       "id": "app-lockfile-relative",
       "title": "Desktop app: lockfile picker returns an absolute path that the field rejects",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Convert the picked path to a path relative to source_dir (or the project folder when source_dir is missing). Show an error only when the file lies outside that folder."
     },
     {
       "id": "app-source-dir-explain",
       "title": "Desktop app: difference between project file folder and source folder is unclear",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "New project form: 'Folder for craftward.json' and an optional 'Source folder (if the code lives elsewhere)', both with a folder picker and a one-line explanation. Header form: source_dir field has no Browse button yet; add the folder picker and the same explanation there."
     },
     {
       "id": "cli-show-stack",
       "title": "CLI: show does not print the stack (components, lockfiles, android)",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "The desktop app shows the stack, craftward show omits it entirely."
     },
     {
       "id": "app-date-format",
       "title": "Desktop app: show and enter dates in the user's format (DD.MM.YYYY for German)",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Keep ISO YYYY-MM-DD in craftward.json and in the CLI. In the app, display and accept dates according to the system locale until the language setting exists. Consider a calendar picker for date fields."
+    },
+    {
+      "id": "app-issues-table",
+      "title": "Desktop app: issues view should use aligned columns",
+      "severity": "medium",
+      "status": "open",
+      "note": "Severity, status and project badges follow the title and jump around. Use a table with fixed columns: severity, status, project, title."
+    },
+    {
+      "id": "app-watch-row-clip",
+      "title": "Desktop app: menu button covers the end of a watch item row (date cut off)",
+      "severity": "low",
+      "status": "open"
+    },
+    {
+      "id": "app-eol-none",
+      "title": "Desktop app: stack shows 'eol:none' for components without eol_product",
+      "severity": "low",
+      "status": "open",
+      "note": "Show nothing when eol_product is not set; show a readable label otherwise."
+    },
+    {
+      "id": "app-breadcrumb-gap",
+      "title": "Desktop app: large gap between 'Portfolio' and '›' in the breadcrumb",
+      "severity": "low",
+      "status": "open"
     }
   ],
   "watch_items": [
