@@ -32,3 +32,4 @@ record and use the next unused number.
 | [0025](0025-native-dialogs-and-clipboard.md) | Native dialogs (rfd) and clipboard | Accepted |
 | [0026](0026-navigation-and-visual-design.md) | Navigation and visual design | Accepted |
 | [0027](0027-settings-file-and-data-relocation.md) | Settings file and data relocation | Accepted |
+| [0028](0028-project-categories.md) | Project categories | Accepted |

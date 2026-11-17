@@ -4,6 +4,13 @@
   "description": "A project described by one `craftward.json` file.",
   "type": "object",
   "properties": {
+    "category": {
+      "description": "Optional single portfolio category (schema version 2).\n\nAfter normalization: trimmed, internal whitespace collapsed, 1–40\ncharacters, no control characters.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "current_version": {
       "description": "Version the maintainer currently ships or is working on.",
       "type": [
@@ -58,7 +65,7 @@
       ]
     },
     "schema_version": {
-      "description": "Format generation. Version 1 readers accept only the integer `1`.",
+      "description": "Format generation. This build reads `1` and `2`. Version `2` is written\nonly when [`Self::category`] is set.",
       "type": "integer",
       "format": "uint32",
       "minimum": 0

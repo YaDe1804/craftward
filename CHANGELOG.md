@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional per-project portfolio `category` (schema version 2 only when
+  set), CLI `project set --category` / `--clear-category`, `list`
+  CATEGORY column and `--category` filter, desktop sidebar categories
+  (All / named / Uncategorized / With errors), Platform and Tag overview
+  filters, and Issues category filter. See
+  [ADR 0028](docs/adr/0028-project-categories.md),
+  [docs/file-format.md](docs/file-format.md),
+  [docs/cli.md](docs/cli.md), and [docs/desktop.md](docs/desktop.md).
 - First-run setup wizard, `settings.json` with shared CLI/app path
   resolution (command line → environment → settings → default), Settings
   sidebar with data relocation, and `craftward settings show` /

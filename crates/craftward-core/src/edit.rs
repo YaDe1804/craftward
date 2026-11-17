@@ -103,6 +103,8 @@ pub struct ProjectChanges<'a> {
     pub description: ProjectUpdate<'a>,
     /// `source_dir`. [`ProjectUpdate::Clear`] removes it.
     pub source_dir: ProjectUpdate<'a>,
+    /// Portfolio category. [`ProjectUpdate::Clear`] removes it.
+    pub category: ProjectUpdate<'a>,
     /// Tags list.
     pub tags: StringListUpdate<'a>,
     /// Links list.
@@ -590,6 +592,22 @@ pub fn set_project(
         ProjectUpdate::Clear => next.description = None,
     }
     apply_text(&mut next.source_dir, changes.source_dir);
+    match changes.category {
+        ProjectUpdate::Keep => {}
+        ProjectUpdate::Set(text) => {
+            let normalized = crate::category::normalize_category(text).ok_or_else(|| {
+                EditError::InvalidFile(vec![ValidationError {
+                    path: "category".to_owned(),
+                    message: format!(
+                        "must be 1–{} characters after trimming, with no control characters",
+                        crate::category::CATEGORY_MAX_LEN
+                    ),
+                }])
+            })?;
+            next.category = Some(normalized);
+        }
+        ProjectUpdate::Clear => next.category = None,
+    }
     match changes.tags {
         StringListUpdate::Keep => {}
         StringListUpdate::Clear | StringListUpdate::Set([]) => next.tags = None,
@@ -1015,6 +1033,9 @@ pub fn render_project(project: &Project) -> String {
     let _ = writeln!(out, "status: {}", project.status.as_str());
     if let Some(version) = &project.current_version {
         let _ = writeln!(out, "version: {version}");
+    }
+    if let Some(category) = &project.category {
+        let _ = writeln!(out, "category: {category}");
     }
     if let Some(description) = &project.description {
         let _ = writeln!(out, "description: {description}");
@@ -1504,6 +1525,7 @@ fn commit(
     created_id: Option<String>,
 ) -> Result<EditOutcome, EditError> {
     project.updated = Some(updated_on.to_owned());
+    project.schema_version = if project.category.is_some() { 2 } else { 1 };
     let serialized = format_project(&project).map_err(|error| {
         EditError::InvalidFile(vec![ValidationError {
             path: "$".to_owned(),

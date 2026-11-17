@@ -154,7 +154,7 @@ pub fn parse_settings(text: &str) -> Result<Settings, SettingsError> {
     let Some(object) = expect_object(&value, "$", &mut errors) else {
         return Err(SettingsError::Validation(errors));
     };
-    if let Some(version) = newer_schema_version(&value) {
+    if let Some(version) = newer_schema_version(&value, SETTINGS_SCHEMA_VERSION) {
         push(
             &mut errors,
             "schema_version",

@@ -162,11 +162,24 @@ pub fn save_new_issue(
 }
 
 /// Saves overview header fields.
+///
+/// `existing_categories` are spellings already used in the portfolio (for
+/// case-unification). `form` may be updated with the resolved category and a
+/// unify hint.
 #[must_use]
-pub fn save_header(path: &Path, fingerprint: &ContentFingerprint, form: &HeaderForm) -> SaveResult {
+pub fn save_header(
+    path: &Path,
+    fingerprint: &ContentFingerprint,
+    form: &mut HeaderForm,
+    existing_categories: &[String],
+) -> SaveResult {
     if let Some(message) = form.validation_message() {
         return failed(message);
     }
+    let category = match form.resolve_category(existing_categories) {
+        Ok(value) => value,
+        Err(message) => return failed(message),
+    };
     let tags = form.tags_for_edit();
     let links = form.links_for_edit();
     let link_changes: Vec<LinkChange<'_>> = links
@@ -176,34 +189,38 @@ pub fn save_header(path: &Path, fingerprint: &ContentFingerprint, form: &HeaderF
             url: url.as_str(),
         })
         .collect();
-    apply(
-        path,
-        fingerprint,
-        "Updated project header".to_owned(),
-        |project, updated_on| {
-            set_project(
-                project,
-                ProjectChanges {
-                    name: Some(form.name_for_edit()),
-                    status: Some(form.status.as_str()),
-                    version: form.version_update(),
-                    description: form.description_update(),
-                    source_dir: form.source_dir_update(),
-                    tags: if tags.is_empty() {
-                        StringListUpdate::Clear
-                    } else {
-                        StringListUpdate::Set(tags.as_slice())
-                    },
-                    links: if link_changes.is_empty() {
-                        LinkListUpdate::Clear
-                    } else {
-                        LinkListUpdate::Set(&link_changes)
-                    },
+    let category_update = match &category {
+        None => craftward_core::ProjectUpdate::Clear,
+        Some(text) => craftward_core::ProjectUpdate::Set(text.as_str()),
+    };
+    let message = match &form.category_unify_hint {
+        Some(hint) => format!("Updated project header ({hint})"),
+        None => "Updated project header".to_owned(),
+    };
+    apply(path, fingerprint, message, |project, updated_on| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: Some(form.name_for_edit()),
+                status: Some(form.status.as_str()),
+                version: form.version_update(),
+                description: form.description_update(),
+                source_dir: form.source_dir_update(),
+                category: category_update,
+                tags: if tags.is_empty() {
+                    StringListUpdate::Clear
+                } else {
+                    StringListUpdate::Set(tags.as_slice())
                 },
-                updated_on,
-            )
-        },
-    )
+                links: if link_changes.is_empty() {
+                    LinkListUpdate::Clear
+                } else {
+                    LinkListUpdate::Set(&link_changes)
+                },
+            },
+            updated_on,
+        )
+    })
 }
 
 /// Adds a phase.
@@ -609,15 +626,23 @@ pub fn save_remove_watch(
 }
 
 /// Creates a project file and adds it to the workspace.
+///
+/// `existing_categories` unify letter case for an optional category. `form`
+/// may be updated with the resolved category and a unify hint.
 #[must_use]
 pub fn save_new_project(
     workspace_file: &Path,
     workspace_fingerprint: &ContentFingerprint,
-    form: &NewProjectForm,
+    form: &mut NewProjectForm,
+    existing_categories: &[String],
 ) -> SaveResult {
     if let Some(message) = form.validation_message(&[]) {
         return failed(message);
     }
+    let category = match form.resolve_category(existing_categories) {
+        Ok(value) => value,
+        Err(message) => return failed(message),
+    };
     let directory = PathBuf::from(form.directory.trim());
     if !directory.is_dir() {
         return failed("folder does not exist");
@@ -642,38 +667,12 @@ pub fn save_new_project(
     if let Err(error) = init_project(&directory, form.id_for_edit(), form.name_for_edit(), status) {
         return failed(error.to_string());
     }
-    if let Some(source_dir) = form.source_dir_for_edit() {
-        let Some(today) = utc_date(SystemTime::now()) else {
-            let _ = std::fs::remove_file(&project_path);
-            return failed("cannot read the system clock");
-        };
-        let Ok(fingerprint) = fingerprint_file(&project_path) else {
-            let _ = std::fs::remove_file(&project_path);
-            return failed("created project file but could not fingerprint it");
-        };
-        if let Err(error) = edit_file_if_unchanged(
-            &project_path,
-            &fingerprint,
-            &today,
-            |project, updated_on| {
-                set_project(
-                    project,
-                    ProjectChanges {
-                        name: None,
-                        status: None,
-                        version: craftward_core::ProjectUpdate::Keep,
-                        description: craftward_core::ProjectUpdate::Keep,
-                        source_dir: craftward_core::ProjectUpdate::Set(source_dir),
-                        tags: StringListUpdate::Keep,
-                        links: LinkListUpdate::Keep,
-                    },
-                    updated_on,
-                )
-            },
-        ) {
-            let _ = std::fs::remove_file(&project_path);
-            return failed(error.to_string());
-        }
+    let source_dir = form.source_dir_for_edit();
+    if let Err(message) =
+        apply_new_project_optional_fields(&project_path, source_dir, category.as_deref())
+    {
+        let _ = std::fs::remove_file(&project_path);
+        return failed(message);
     }
     match add_project_if_unchanged(
         workspace_file,
@@ -709,6 +708,44 @@ pub fn save_new_project(
             }
         }
     }
+}
+
+fn apply_new_project_optional_fields(
+    project_path: &Path,
+    source_dir: Option<&str>,
+    category: Option<&str>,
+) -> Result<(), String> {
+    if source_dir.is_none() && category.is_none() {
+        return Ok(());
+    }
+    let today =
+        utc_date(SystemTime::now()).ok_or_else(|| "cannot read the system clock".to_owned())?;
+    let fingerprint = fingerprint_file(project_path)
+        .map_err(|_| "created project file but could not fingerprint it".to_owned())?;
+    edit_file_if_unchanged(project_path, &fingerprint, &today, |project, updated_on| {
+        set_project(
+            project,
+            ProjectChanges {
+                name: None,
+                status: None,
+                version: craftward_core::ProjectUpdate::Keep,
+                description: craftward_core::ProjectUpdate::Keep,
+                source_dir: match source_dir {
+                    Some(path) => craftward_core::ProjectUpdate::Set(path),
+                    None => craftward_core::ProjectUpdate::Keep,
+                },
+                category: match category {
+                    Some(text) => craftward_core::ProjectUpdate::Set(text),
+                    None => craftward_core::ProjectUpdate::Keep,
+                },
+                tags: StringListUpdate::Keep,
+                links: LinkListUpdate::Keep,
+            },
+            updated_on,
+        )
+    })
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 /// Adds an existing project file or folder to the workspace.
@@ -917,17 +954,19 @@ mod tests {
         let path = minimal(&root);
         let (app, cli) = twin_paths(&path);
         let fingerprint = fingerprint_file(&app).unwrap();
-        let form = HeaderForm {
+        let mut form = HeaderForm {
             name: "Harbor".to_owned(),
             status: "in_development".to_owned(),
             version: "0.2.0".to_owned(),
             description: "Desk".to_owned(),
             source_dir: "src".to_owned(),
+            category: "Security Tools".to_owned(),
             tags: "a, b".to_owned(),
             links: "Docs|https://example.com".to_owned(),
+            category_unify_hint: None,
         };
         assert!(matches!(
-            save_header(&app, &fingerprint, &form),
+            save_header(&app, &fingerprint, &mut form, &[]),
             SaveResult::Saved { .. }
         ));
         let day = today();
@@ -945,6 +984,7 @@ mod tests {
                     version: ProjectUpdate::Set("0.2.0"),
                     description: ProjectUpdate::Set("Desk"),
                     source_dir: ProjectUpdate::Set("src"),
+                    category: ProjectUpdate::Set("Security Tools"),
                     tags: StringListUpdate::Set(&tags),
                     links: LinkListUpdate::Set(&links),
                 },
@@ -1150,17 +1190,19 @@ mod tests {
         let path = minimal(&root);
         let before = fs::read(&path).unwrap();
         let fingerprint = content_fingerprint(&before);
-        let form = HeaderForm {
+        let mut form = HeaderForm {
             name: String::new(),
             status: "idea".to_owned(),
             version: String::new(),
             description: String::new(),
             source_dir: String::new(),
+            category: String::new(),
             tags: String::new(),
             links: String::new(),
+            category_unify_hint: None,
         };
         assert!(matches!(
-            save_header(&path, &fingerprint, &form),
+            save_header(&path, &fingerprint, &mut form, &[]),
             SaveResult::Failed {
                 conflict: false,
                 ..

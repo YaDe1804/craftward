@@ -5,6 +5,7 @@
 //! and [`load_from_path`].
 
 mod cache;
+mod category;
 mod date;
 mod deadlines;
 mod edit;
@@ -33,6 +34,10 @@ mod target_sdk;
 mod undo;
 mod workspace;
 
+pub use category::{
+    CATEGORY_MAX_LEN, display_platform_name, normalize_category, normalize_category_against,
+    project_platforms,
+};
 pub use date::{
     days_between, format_iso8601, format_unix_timestamp, is_calendar_date, unix_now, utc_date,
     utc_day,
@@ -63,7 +68,7 @@ pub use lifecycle::{
     render_finding_list, render_finding_show, render_findings_json, render_ledger_json,
     render_ledger_text, render_show_json, reopen_finding, show_finding,
 };
-pub use load::{is_project_id, load_from_path, load_from_str};
+pub use load::{PROJECT_SCHEMA_VERSION, is_project_id, load_from_path, load_from_str};
 pub use location::{
     DirLocation, Host, LocateError, OsFamily, PathOrigin, ProcessHost, SettingsOverrides,
     StorageKind, WorkspaceLocation, WorkspaceOrigin, default_cache_dir, default_config_dir,

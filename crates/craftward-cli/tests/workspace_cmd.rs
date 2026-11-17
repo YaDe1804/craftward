@@ -472,6 +472,85 @@ fn roadmap_rejects_an_id_that_is_also_an_existing_path() {
 }
 
 #[test]
+fn list_prints_category_and_filters_case_insensitively() {
+    let root = scratch("list-category");
+    let workspace = workspace_arg(&root);
+    let app = root.join("app");
+    let init = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "init",
+            app.to_str().unwrap(),
+            "--id",
+            "harbor-light",
+            "--name",
+            "Harbor Light",
+        ],
+    );
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let add = run(
+        &root,
+        &["--workspace", &workspace, "add", app.to_str().unwrap()],
+    );
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let project = app.join("craftward.json");
+    let file = project.to_str().unwrap();
+    let set = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "project",
+            "set",
+            file,
+            "--category",
+            "Security Tools",
+        ],
+    );
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let list = run(&root, &["--workspace", &workspace, "list"]);
+    let list_out = String::from_utf8(list.stdout).unwrap();
+    assert!(list.status.success(), "{list_out}");
+    assert!(list_out.contains("CATEGORY"), "{list_out}");
+    assert!(list_out.contains("Security Tools"), "{list_out}");
+    let filtered = run(
+        &root,
+        &[
+            "--workspace",
+            &workspace,
+            "list",
+            "--category",
+            "security tools",
+        ],
+    );
+    let filtered_out = String::from_utf8(filtered.stdout).unwrap();
+    assert!(filtered.status.success(), "{filtered_out}");
+    assert!(filtered_out.contains("harbor-light"), "{filtered_out}");
+    let miss = run(
+        &root,
+        &["--workspace", &workspace, "list", "--category", "Other"],
+    );
+    let miss_out = String::from_utf8(miss.stdout).unwrap();
+    assert!(miss.status.success(), "{miss_out}");
+    assert!(miss_out.contains("no projects"), "{miss_out}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn each_command_has_help() {
     let root = scratch("help");
     for command in [

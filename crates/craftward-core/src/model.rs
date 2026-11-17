@@ -1,4 +1,4 @@
-//! Schema version 1 of a Craftward project file.
+//! Schema versions 1 and 2 of a Craftward project file.
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Project {
-    /// Format generation. Version 1 readers accept only the integer `1`.
+    /// Format generation. This build reads `1` and `2`. Version `2` is written
+    /// only when [`Self::category`] is set.
     pub schema_version: u32,
     /// Stable short name used in paths and cross-references.
     ///
@@ -32,6 +33,12 @@ pub struct Project {
     /// Version the maintainer currently ships or is working on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_version: Option<String>,
+    /// Optional single portfolio category (schema version 2).
+    ///
+    /// After normalization: trimmed, internal whitespace collapsed, 1–40
+    /// characters, no control characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     /// Labels used to group projects. Exact duplicates are rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,

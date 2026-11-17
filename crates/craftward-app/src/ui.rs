@@ -30,14 +30,16 @@ use crate::theme::{
 };
 use crate::view::{
     AddProjectForm, AndroidForm, ComponentEditForm, ComponentForm, FindingRow, HeaderForm,
-    IssueEditForm, IssueForm, IssuesFilter, LockfileForm, NewProjectForm, PhaseForm, PortfolioView,
-    ProgressView, ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm, WatchEditForm,
-    WatchForm, android_store_choices, badge_stretches_to_parent, build_detail, build_portfolio,
+    IssueEditForm, IssueForm, IssuesFilter, LockfileForm, NewProjectForm, OverviewFilters,
+    PhaseForm, PortfolioSidebarFilter, PortfolioView, ProgressView, ProjectCard, ProjectDetail,
+    StatusBadge, TaskEditForm, TaskForm, WatchEditForm, WatchForm, android_store_choices,
+    badge_stretches_to_parent, build_detail, build_portfolio, card_matches_filters,
     collect_portfolio_issues, component_kind_choices, display_label, finding_count_badges,
     form_factor_choices, grid_columns, grid_row_column_slots, issue_severity_choices,
-    issue_status_choices, longest_status_choice_label, open_findings_label, project_source_dir,
-    project_status_choices, project_status_hint, relative_to_dir, task_status_choices,
-    task_title_is_muted, watch_kind_choices,
+    issue_status_choices, longest_status_choice_label, open_findings_label, portfolio_categories,
+    portfolio_filter_title, portfolio_platform_options, portfolio_sidebar_entries,
+    portfolio_tag_options, project_source_dir, project_status_choices, project_status_hint,
+    relative_to_dir, task_status_choices, task_title_is_muted, watch_kind_choices,
 };
 
 /// Which screen is visible.
@@ -316,6 +318,10 @@ pub struct CraftwardApp {
     overview: OverviewEdit,
     /// Filters for the Issues view.
     issues_filter: IssuesFilter,
+    /// Session-sticky Portfolio sidebar category selection.
+    portfolio_filter: PortfolioSidebarFilter,
+    /// Overview platform/tag filters.
+    overview_filters: OverviewFilters,
     /// Issue id to highlight after navigating from Issues.
     focus_issue_id: Option<String>,
     /// Last undoable change.
@@ -367,6 +373,8 @@ impl CraftwardApp {
             edit: DetailEdit::default(),
             overview: OverviewEdit::default(),
             issues_filter: IssuesFilter::default(),
+            portfolio_filter: PortfolioSidebarFilter::All,
+            overview_filters: OverviewFilters::default(),
             focus_issue_id: None,
             undo: UndoState::new(),
             picker: Box::new(RfdPicker),
@@ -468,11 +476,12 @@ impl CraftwardApp {
                 });
             }
             DetailAction::SaveHeader => {
-                let Some(form) = self.edit.header_form.clone() else {
+                let Some(mut form) = self.edit.header_form.clone() else {
                     return;
                 };
+                let categories = portfolio_categories(&self.loaded);
                 self.run_save(index, ErrorSite::HeaderForm, |path, fingerprint| {
-                    save_header(path, fingerprint, &form)
+                    save_header(path, fingerprint, &mut form, &categories)
                 });
             }
             DetailAction::SavePhase => {
@@ -951,7 +960,41 @@ impl CraftwardApp {
                 );
                 ui.add_space(10.0);
                 let active = self.nav_item();
-                if Self::draw_nav_entry(ui, "Portfolio", active == NavItem::Portfolio) {
+                let portfolio_open = active == NavItem::Portfolio;
+                let portfolio_response = CollapsingHeader::new(
+                    RichText::new("Portfolio")
+                        .font(TYPE.body_id())
+                        .color(if portfolio_open { ACCENT } else { TEXT })
+                        .strong(),
+                )
+                .id_salt("nav-portfolio")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let entries = portfolio_sidebar_entries(&self.portfolio.cards);
+                    for entry in entries {
+                        let selected = self.portfolio_filter == entry.filter;
+                        let colour = if selected { ACCENT } else { TEXT };
+                        let fill = if selected { CARD_INNER } else { CARD };
+                        if ui
+                            .add(
+                                Button::new(
+                                    RichText::new(&entry.label)
+                                        .font(TYPE.secondary_id())
+                                        .color(colour),
+                                )
+                                .fill(fill)
+                                .stroke(Stroke::new(1.0, if selected { ACCENT } else { LINE }))
+                                .min_size(Vec2::new(SIDEBAR_WIDTH - 36.0, 24.0)),
+                            )
+                            .clicked()
+                        {
+                            self.portfolio_filter = entry.filter;
+                            self.go_portfolio_overview();
+                        }
+                    }
+                });
+                if portfolio_response.header_response.clicked() {
+                    self.portfolio_filter = PortfolioSidebarFilter::All;
                     self.go_portfolio_overview();
                 }
                 if Self::draw_nav_entry(ui, "Issues", active == NavItem::Issues) {
@@ -1002,7 +1045,7 @@ impl CraftwardApp {
                     match self.screen {
                         Screen::Overview => {
                             ui.label(
-                                RichText::new("Portfolio")
+                                RichText::new(portfolio_filter_title(&self.portfolio_filter))
                                     .font(TYPE.title_id())
                                     .color(TEXT)
                                     .strong(),
@@ -1129,6 +1172,7 @@ impl CraftwardApp {
                             });
                             ui.add_space(8.0);
                         }
+                        let categories = portfolio_categories(&self.loaded);
                         if let Some(project) = self.loaded.projects.get(index) {
                             let detail = build_detail(index, project);
                             if action.is_none() {
@@ -1138,6 +1182,7 @@ impl CraftwardApp {
                                     project,
                                     &mut self.edit,
                                     self.focus_issue_id.as_deref(),
+                                    &categories,
                                 );
                             }
                         } else {
@@ -1246,6 +1291,35 @@ impl CraftwardApp {
                         }
                     }
                 });
+            let categories = portfolio_categories(&self.loaded);
+            if !categories.is_empty() {
+                ui.label(
+                    RichText::new("Category")
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                );
+                let category_label = if self.issues_filter.category.is_empty() {
+                    "All".to_owned()
+                } else {
+                    self.issues_filter.category.clone()
+                };
+                ComboBox::from_id_salt("issues-category-filter")
+                    .selected_text(
+                        RichText::new(category_label)
+                            .font(TYPE.body_id())
+                            .color(TEXT),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.issues_filter.category, String::new(), "All");
+                        for category in &categories {
+                            ui.selectable_value(
+                                &mut self.issues_filter.category,
+                                category.clone(),
+                                category.as_str(),
+                            );
+                        }
+                    });
+            }
         });
         ui.add_space(8.0);
         let rows = collect_portfolio_issues(&self.loaded, &self.issues_filter);
@@ -1467,7 +1541,15 @@ impl CraftwardApp {
             self.draw_add_project_form(ui, form);
         }
         ui.add_space(CARD_GAP);
-        let (open, card_action) = draw_overview(ui, &self.portfolio, &self.overview);
+        self.draw_overview_filters(ui);
+        ui.add_space(8.0);
+        let (open, card_action) = draw_overview(
+            ui,
+            &self.portfolio,
+            &self.overview,
+            &self.portfolio_filter,
+            &self.overview_filters,
+        );
         match card_action {
             Some(CardAction::RemoveFromList { id, name }) => {
                 self.remove_from_list(&id, &name, false, false);
@@ -1488,6 +1570,70 @@ impl CraftwardApp {
             Some(CardAction::Open | CardAction::None) | None => {}
         }
         open
+    }
+
+    fn draw_overview_filters(&mut self, ui: &mut Ui) {
+        let platforms = portfolio_platform_options(&self.portfolio.cards);
+        let tags = portfolio_tag_options(&self.portfolio.cards);
+        if platforms.is_empty() && tags.is_empty() {
+            return;
+        }
+        ui.horizontal(|ui| {
+            if !platforms.is_empty() {
+                let platform_label = if self.overview_filters.platform.is_empty() {
+                    "All platforms".to_owned()
+                } else {
+                    self.overview_filters.platform.clone()
+                };
+                ComboBox::from_id_salt("overview-platform-filter")
+                    .selected_text(
+                        RichText::new(platform_label)
+                            .font(TYPE.secondary_id())
+                            .color(TEXT),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.overview_filters.platform,
+                            String::new(),
+                            "All platforms",
+                        );
+                        for platform in &platforms {
+                            ui.selectable_value(
+                                &mut self.overview_filters.platform,
+                                platform.clone(),
+                                platform.as_str(),
+                            );
+                        }
+                    });
+            }
+            if !tags.is_empty() {
+                let tag_label = if self.overview_filters.tag.is_empty() {
+                    "All tags".to_owned()
+                } else {
+                    self.overview_filters.tag.clone()
+                };
+                ComboBox::from_id_salt("overview-tag-filter")
+                    .selected_text(
+                        RichText::new(tag_label)
+                            .font(TYPE.secondary_id())
+                            .color(TEXT),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.overview_filters.tag,
+                            String::new(),
+                            "All tags",
+                        );
+                        for tag in &tags {
+                            ui.selectable_value(
+                                &mut self.overview_filters.tag,
+                                tag.clone(),
+                                tag.as_str(),
+                            );
+                        }
+                    });
+            }
+        });
     }
 
     fn draw_delete_file_prompt(&mut self, ui: &mut Ui, prompt: DeleteFilePrompt) {
@@ -1639,6 +1785,45 @@ impl CraftwardApp {
             });
             field_error(ui, form.status_error());
 
+            let categories = portfolio_categories(&self.loaded);
+            form_labelled_line(ui, "Category", |ui| {
+                ui.add(
+                    TextEdit::singleline(&mut form.category)
+                        .font(TYPE.body_id())
+                        .hint_text("optional")
+                        .desired_width(220.0),
+                );
+            });
+            field_error(ui, form.category_error());
+            if !categories.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for suggestion in &categories {
+                        if ui
+                            .add(
+                                Button::new(
+                                    RichText::new(suggestion)
+                                        .font(TYPE.secondary_id())
+                                        .color(ACCENT),
+                                )
+                                .fill(CARD_INNER)
+                                .stroke(Stroke::new(1.0, LINE)),
+                            )
+                            .clicked()
+                        {
+                            form.category.clone_from(suggestion);
+                            form.category_unify_hint = None;
+                        }
+                    }
+                });
+            }
+            if let Some(hint) = &form.category_unify_hint {
+                ui.label(
+                    RichText::new(hint)
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                );
+            }
+
             ui.horizontal(|ui| {
                 let can = form.can_save(&taken);
                 if ui
@@ -1648,9 +1833,10 @@ impl CraftwardApp {
                     )
                     .clicked()
                 {
-                    let form = form.clone();
+                    let mut form = form.clone();
+                    let categories = portfolio_categories(&self.loaded);
                     self.run_workspace_save(|path, fingerprint| {
-                        save_new_project(path, fingerprint, &form)
+                        save_new_project(path, fingerprint, &mut form, &categories)
                     });
                     self.overview.new_project = None;
                     return;
@@ -1716,11 +1902,13 @@ fn draw_overview(
     ui: &mut Ui,
     portfolio: &PortfolioView,
     overview: &OverviewEdit,
+    sidebar: &PortfolioSidebarFilter,
+    filters: &OverviewFilters,
 ) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut remove = None;
     ScrollArea::vertical().show(ui, |ui| {
-        draw_summary(ui, &portfolio.summary);
+        draw_summary(ui, &portfolio.summary, sidebar);
         ui.add_space(CARD_GAP);
 
         if portfolio.cards.is_empty()
@@ -1738,9 +1926,23 @@ fn draw_overview(
             return;
         }
 
+        let visible: Vec<&ProjectCard> = portfolio
+            .cards
+            .iter()
+            .filter(|card| card_matches_filters(card, sidebar, filters))
+            .collect();
+        if visible.is_empty() {
+            ui.label(
+                RichText::new("No projects match these filters.")
+                    .font(TYPE.body_id())
+                    .color(MUTED),
+            );
+            return;
+        }
+
         let columns = grid_columns(ui.available_width());
         let mut row: Vec<&ProjectCard> = Vec::with_capacity(columns);
-        for card in &portfolio.cards {
+        for card in visible {
             row.push(card);
             if row.len() == columns {
                 let (opened, action) = draw_card_row(ui, &row, columns);
@@ -1805,10 +2007,14 @@ enum CardAction {
     },
 }
 
-fn draw_summary(ui: &mut Ui, summary: &crate::view::PortfolioSummary) {
+fn draw_summary(
+    ui: &mut Ui,
+    summary: &crate::view::PortfolioSummary,
+    sidebar: &PortfolioSidebarFilter,
+) {
     card_frame().show(ui, |ui| {
         ui.label(
-            RichText::new("Portfolio")
+            RichText::new(portfolio_filter_title(sidebar))
                 .font(TYPE.section_id())
                 .color(HEADING)
                 .strong(),
@@ -2000,6 +2206,7 @@ fn draw_detail(
     loaded: &LoadedProject,
     edit: &mut DetailEdit,
     focus_issue_id: Option<&str>,
+    category_suggestions: &[String],
 ) -> Option<DetailAction> {
     let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
@@ -2071,7 +2278,13 @@ fn draw_detail(
         if wide {
             // Each column Ui is top_down_justified at full half-width (see egui::Ui::columns).
             ui.columns(2, |cols| {
-                if let Some(next) = draw_detail_left(&mut cols[0], detail, edit, editable) {
+                if let Some(next) = draw_detail_left(
+                    &mut cols[0],
+                    detail,
+                    edit,
+                    editable,
+                    category_suggestions,
+                ) {
                     action = Some(next);
                 }
                 if let Some(next) =
@@ -2081,7 +2294,9 @@ fn draw_detail(
                 }
             });
         } else {
-            if let Some(next) = draw_detail_left(ui, detail, edit, editable) {
+            if let Some(next) =
+                draw_detail_left(ui, detail, edit, editable, category_suggestions)
+            {
                 action = Some(next);
             }
             ui.add_space(CARD_GAP);
@@ -2098,11 +2313,12 @@ fn draw_detail_left(
     detail: &ProjectDetail,
     edit: &mut DetailEdit,
     editable: bool,
+    category_suggestions: &[String],
 ) -> Option<DetailAction> {
     let mut action = None;
     section(ui, "Overview", false, |ui| {
         if edit.header_form.is_some() {
-            if let Some(next) = draw_header_form(ui, edit) {
+            if let Some(next) = draw_header_form(ui, edit, category_suggestions) {
                 action = Some(next);
             }
         } else {
@@ -2794,7 +3010,11 @@ fn draw_issues_panel(
 }
 
 #[allow(clippy::too_many_lines)]
-fn draw_header_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
+fn draw_header_form(
+    ui: &mut Ui,
+    edit: &mut DetailEdit,
+    category_suggestions: &[String],
+) -> Option<DetailAction> {
     let mut action = None;
     let mut cancel = false;
     let can_save;
@@ -2853,6 +3073,39 @@ fn draw_header_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> 
                     .desired_rows(2),
             );
         });
+        form_labelled_line(ui, "Category", |ui| {
+            ui.add(
+                TextEdit::singleline(&mut form.category)
+                    .font(TYPE.body_id())
+                    .hint_text("optional")
+                    .desired_width(220.0),
+            );
+        });
+        field_error(ui, form.category_error());
+        if !category_suggestions.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for suggestion in category_suggestions {
+                    if ui
+                        .add(
+                            Button::new(
+                                RichText::new(suggestion)
+                                    .font(TYPE.secondary_id())
+                                    .color(ACCENT),
+                            )
+                            .fill(CARD_INNER)
+                            .stroke(Stroke::new(1.0, LINE)),
+                        )
+                        .clicked()
+                    {
+                        form.category.clone_from(suggestion);
+                        form.category_unify_hint = None;
+                    }
+                }
+            });
+        }
+        if let Some(hint) = &form.category_unify_hint {
+            ui.label(RichText::new(hint).font(TYPE.secondary_id()).color(MUTED));
+        }
         form_labelled_line(ui, "Tags", |ui| {
             ui.add(
                 TextEdit::singleline(&mut form.tags)

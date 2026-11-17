@@ -60,6 +60,8 @@ pub struct ProjectSnapshot {
     pub status: ProjectStatus,
     /// `current_version`, when the file sets one.
     pub current_version: Option<String>,
+    /// Portfolio category, when the file sets one.
+    pub category: Option<String>,
     /// Tasks whose status is `open` or `in_progress`.
     pub open_tasks: usize,
     /// Issues whose status is `open` or `in_progress`.
@@ -400,6 +402,7 @@ pub fn init_project(
         source_dir: None,
         description: None,
         current_version: None,
+        category: None,
         tags: None,
         updated: None,
         links: None,
@@ -589,6 +592,7 @@ pub fn snapshot(project: &Project) -> ProjectSnapshot {
         name: project.name.clone(),
         status: project.status,
         current_version: project.current_version.clone(),
+        category: project.category.clone(),
         open_tasks,
         open_issues,
         next_due: dates.into_iter().min(),
@@ -717,7 +721,7 @@ fn parse_workspace(text: &str) -> Result<Workspace, WorkspaceError> {
         column: error.column(),
         message: error.to_string(),
     })?;
-    if let Some(version) = newer_schema_version(&value) {
+    if let Some(version) = newer_schema_version(&value, 1) {
         return Err(WorkspaceError::UnsupportedSchema { version });
     }
     let mut errors = Vec::new();

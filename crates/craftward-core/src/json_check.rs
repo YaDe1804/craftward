@@ -7,10 +7,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::error::ValidationError;
 
-pub(crate) fn newer_schema_version(value: &Value) -> Option<u64> {
+pub(crate) fn newer_schema_version(value: &Value, supported: u64) -> Option<u64> {
     let version = value.as_object()?.get("schema_version")?.as_number()?;
     let version = u64_number(version)?;
-    (version > 1).then_some(version)
+    (version > supported).then_some(version)
 }
 
 pub(crate) fn u64_number(number: &Number) -> Option<u64> {

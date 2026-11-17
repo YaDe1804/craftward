@@ -458,6 +458,30 @@ fn every_edit_command_has_help() {
 }
 
 #[test]
+fn project_set_category_and_show_round_trip() {
+    let root = scratch("category");
+    let path = project_file(&root);
+    let file = path.to_str().unwrap();
+    succeed(
+        &root,
+        &["project", "set", file, "--category", "  Security   Tools "],
+    );
+    let stored = fs::read_to_string(&path).unwrap();
+    assert!(stored.contains("\"schema_version\": 2"), "{stored}");
+    assert!(
+        stored.contains("\"category\": \"Security Tools\""),
+        "{stored}"
+    );
+    let shown = succeed(&root, &["show", file]);
+    assert!(shown.contains("category: Security Tools"), "{shown}");
+    succeed(&root, &["project", "set", file, "--clear-category"]);
+    let cleared = fs::read_to_string(&path).unwrap();
+    assert!(cleared.contains("\"schema_version\": 1"), "{cleared}");
+    assert!(!cleared.contains("category"), "{cleared}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn an_ambiguous_project_argument_exits_2() {
     let root = scratch("ambiguous");
     let workspace = root.join("workspace.json");
