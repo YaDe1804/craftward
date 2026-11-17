@@ -623,14 +623,14 @@
       "id": "radar-alias-dedup",
       "title": "Radar: same vulnerability reported twice (GHSA and RUSTSEC ids)",
       "severity": "high",
-      "status": "open",
+      "status": "resolved",
       "note": "OSV records list aliases; merge findings that share an alias into one, keep all ids visible. Seen with openssl, rustls, quinn-proto: roughly doubles the count."
     },
     {
       "id": "radar-severity-unknown",
       "title": "Radar: RUSTSEC findings have severity unknown",
       "severity": "medium",
-      "status": "open",
+      "status": "resolved",
       "note": "Known as SQ-H1. With real portfolios most Rust findings show unknown; use the severity of an aliased GHSA record when present, otherwise compute from CVSS."
     },
     {
@@ -658,8 +658,15 @@
       "id": "radar-all-ignored-summary",
       "title": "Radar: no 'no open findings' line when every finding of a project is ignored",
       "severity": "low",
-      "status": "open",
+      "status": "resolved",
       "note": "Seen for craftward after ignoring the three accesskit notices: output shows 'ignored: 3' but no summary line, unlike clean projects."
+    },
+    {
+      "id": "cli-merged-finding-show",
+      "title": "CLI: findings show for a merged id reports an error instead of redirecting",
+      "severity": "low",
+      "status": "open",
+      "note": "findings show 17 prints 'error: finding 17 was merged into finding 4'. Print it as information, show finding 4 right after, exit 0."
     }
   ],
   "watch_items": [

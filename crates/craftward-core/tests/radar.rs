@@ -245,14 +245,15 @@ fn pagination_unknown_severity_and_the_size_limit() {
         Path::new("."),
         &options(false, false, NOW),
     );
-    let ids: Vec<_> = reports[0]
-        .findings
-        .iter()
-        .map(|finding| finding.id.as_str())
-        .collect();
+    assert_eq!(reports[0].findings.len(), 1, "{:?}", reports[0].findings);
+    assert_eq!(reports[0].findings[0].id, "GHSA-page");
     assert!(
-        ids.contains(&"GHSA-page") && ids.contains(&"GHSA-rest"),
-        "{ids:?}"
+        reports[0].findings[0]
+            .related_ids
+            .iter()
+            .any(|id| id == "GHSA-rest"),
+        "{:?}",
+        reports[0].findings[0].related_ids
     );
     let unrated = "\
 version = 4

@@ -62,12 +62,16 @@ pub struct LedgerFinding {
     pub package: String,
     /// Last seen version.
     pub version: String,
-    /// OSV id.
+    /// Primary OSV id.
     pub vulnerability_id: String,
-    /// Aliases.
+    /// Other ids (also: …).
     pub aliases: Vec<String>,
+    /// Every identifier in the merged cluster.
+    pub related_ids: Vec<String>,
     /// How severe the finding is.
     pub severity: Severity,
+    /// Where severity came from.
+    pub severity_source: crate::store::SeveritySource,
     /// Short description.
     pub summary: String,
     /// Fixed versions.
@@ -204,9 +208,14 @@ pub fn show_finding(
     id: i64,
 ) -> Result<(StoredFinding, Vec<StoredEvent>), StoreError> {
     store.in_transaction(|session| {
-        let finding = required(session, id)?;
-        let events = session.events(id)?;
-        Ok((finding, events))
+        if let Some(finding) = session.finding(id)? {
+            let events = session.events(id)?;
+            return Ok((finding, events));
+        }
+        if let Some(into) = session.merged_into(id)? {
+            return Err(StoreError::MergedInto { from: id, into });
+        }
+        Err(StoreError::NotFound(id))
     })
 }
 
@@ -241,17 +250,18 @@ fn apply_one(
     let mut seen = BTreeSet::new();
     let mut new_ids = BTreeSet::new();
     for finding in unique_observed(&report.findings) {
-        let key = observed_key(finding);
-        seen.insert(key.clone());
-        if let Some(position) = index.get(&key).copied() {
+        mark_observed(&mut seen, finding);
+        if let Some(position) = lookup_observed(&index, finding) {
             touch_known(session, &mut rows[position], finding, finished, today)?;
+            reindex_row(&mut index, &rows[position], position);
         } else {
             let id = insert_new(session, &report.id, finding, finished)?;
             new_ids.insert(id);
             let stored = session
                 .finding(id)?
                 .ok_or_else(|| StoreError::Failed(format!("finding {id} was not stored")))?;
-            index.insert(key, rows.len());
+            let position = rows.len();
+            reindex_row(&mut index, &stored, position);
             rows.push(stored);
         }
     }
@@ -295,9 +305,12 @@ fn touch_known(
     let passed = row.kind == FindingKind::PlatformDeadlineSoon
         && finding.kind == FindingKind::PlatformDeadline;
     row.version.clone_from(&finding.version);
+    row.vulnerability_id.clone_from(&finding.id);
     row.severity.clone_from(&finding.severity);
+    row.severity_source = finding.severity_source;
     row.summary.clone_from(&finding.summary);
     row.aliases.clone_from(&finding.aliases);
+    row.related_ids.clone_from(&finding.related_ids);
     row.fixed_versions.clone_from(&finding.fixed_versions);
     row.kind.clone_from(&finding.kind);
     finished.clone_into(&mut row.last_seen);
@@ -357,8 +370,10 @@ fn insert_new(
         severity: finding.severity,
         summary: finding.summary.clone(),
         aliases: finding.aliases.clone(),
+        related_ids: finding.related_ids.clone(),
         fixed_versions: finding.fixed_versions.clone(),
         kind: finding.kind,
+        severity_source: finding.severity_source,
         seen_at: finished.to_owned(),
     })?;
     session.insert_event(id, EventKind::Discovered, finished, "")?;
@@ -411,7 +426,7 @@ fn resolve_missing(
             "platform" => deadlines_checked,
             _ => lockfiles_checked,
         };
-        if !in_scope || seen.contains(&stored_key(row)) || row.state == FindingState::Resolved {
+        if !in_scope || row_was_seen(seen, row) || row.state == FindingState::Resolved {
             continue;
         }
         row.state = FindingState::Resolved;
@@ -433,7 +448,7 @@ fn ledger_from(
     let mut open = Vec::new();
     let mut ignored = Vec::new();
     for row in rows {
-        if !seen.contains(&stored_key(row)) {
+        if !row_was_seen(seen, row) {
             continue;
         }
         let listed = listed(row, new_ids.contains(&row.id), report_url(report, row));
@@ -528,7 +543,11 @@ fn report_url(report: &ProjectReport, row: &StoredFinding) -> String {
         .find(|finding| {
             finding.ecosystem == row.ecosystem
                 && finding.package == row.package
-                && finding.id == row.vulnerability_id
+                && (finding.id == row.vulnerability_id
+                    || finding
+                        .related_ids
+                        .iter()
+                        .any(|id| row.related_ids.contains(id)))
         })
         .map_or_else(
             || page_url(&row.ecosystem, &row.package, &row.vulnerability_id),
@@ -546,7 +565,9 @@ fn listed(row: &StoredFinding, new: bool, url: String) -> LedgerFinding {
         version: row.version.clone(),
         vulnerability_id: row.vulnerability_id.clone(),
         aliases: row.aliases.clone(),
+        related_ids: row.related_ids.clone(),
         severity: row.severity,
+        severity_source: row.severity_source,
         summary: row.summary.clone(),
         fixed_versions: row.fixed_versions.clone(),
         url,
@@ -587,34 +608,73 @@ fn unique_observed(findings: &[Finding]) -> Vec<&Finding> {
     let mut seen = BTreeSet::new();
     let mut unique = Vec::new();
     for finding in findings {
-        if seen.insert(observed_key(finding)) {
+        let key = (
+            finding.ecosystem.clone(),
+            finding.package.clone(),
+            finding.id.clone(),
+        );
+        if seen.insert(key) {
             unique.push(finding);
         }
     }
     unique
 }
 
-fn observed_key(finding: &Finding) -> (String, String, String) {
-    (
-        finding.ecosystem.clone(),
-        finding.package.clone(),
-        finding.id.clone(),
-    )
+fn mark_observed(seen: &mut BTreeSet<(String, String, String)>, finding: &Finding) {
+    for id in &finding.related_ids {
+        seen.insert((
+            finding.ecosystem.clone(),
+            finding.package.clone(),
+            id.clone(),
+        ));
+    }
 }
 
-fn stored_key(row: &StoredFinding) -> (String, String, String) {
-    (
-        row.ecosystem.clone(),
-        row.package.clone(),
-        row.vulnerability_id.clone(),
-    )
+fn row_was_seen(seen: &BTreeSet<(String, String, String)>, row: &StoredFinding) -> bool {
+    row.related_ids
+        .iter()
+        .chain(std::iter::once(&row.vulnerability_id))
+        .any(|id| seen.contains(&(row.ecosystem.clone(), row.package.clone(), id.clone())))
+}
+
+fn lookup_observed(
+    index: &BTreeMap<(String, String, String), usize>,
+    finding: &Finding,
+) -> Option<usize> {
+    finding.related_ids.iter().find_map(|id| {
+        index
+            .get(&(
+                finding.ecosystem.clone(),
+                finding.package.clone(),
+                id.clone(),
+            ))
+            .copied()
+    })
 }
 
 fn index_rows(rows: &[StoredFinding]) -> BTreeMap<(String, String, String), usize> {
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| (stored_key(row), index))
-        .collect()
+    let mut map = BTreeMap::new();
+    for (index, row) in rows.iter().enumerate() {
+        reindex_row(&mut map, row, index);
+    }
+    map
+}
+
+fn reindex_row(
+    index: &mut BTreeMap<(String, String, String), usize>,
+    row: &StoredFinding,
+    position: usize,
+) {
+    for id in row
+        .related_ids
+        .iter()
+        .chain(std::iter::once(&row.vulnerability_id))
+    {
+        index.insert(
+            (row.ecosystem.clone(), row.package.clone(), id.clone()),
+            position,
+        );
+    }
 }
 
 fn packages_checked(report: &ProjectReport) -> usize {
@@ -699,7 +759,7 @@ fn write_project(out: &mut String, project: &ProjectLedger, show_ignored: bool) 
     if project.error.is_none() {
         let _ = writeln!(out, "  ignored: {}", project.ignored.len());
         let _ = writeln!(out, "  resolved: {}", project.resolved_count);
-        if project.open.is_empty() && project.ignored.is_empty() && project.resolved_count == 0 {
+        if project.open.is_empty() {
             out.push_str("  no open findings\n");
         }
         if keeps_lockfile_findings(project) {
@@ -734,14 +794,14 @@ fn keeps_lockfile_findings(project: &ProjectLedger) -> bool {
 
 fn write_finding(out: &mut String, finding: &LedgerFinding, mark: &str) {
     let _ = writeln!(out, "  {} {} {mark}", finding.package, finding.version);
-    let aliases = if finding.aliases.is_empty() {
+    let also = if finding.aliases.is_empty() {
         String::new()
     } else {
-        format!(" ({})", finding.aliases.join(", "))
+        format!(" also: {}", finding.aliases.join(", "))
     };
     let _ = writeln!(
         out,
-        "    #{} {}{aliases} {} {}",
+        "    #{} {}{also} {} {}",
         finding.record_id, finding.vulnerability_id, finding.severity, finding.kind
     );
     if !finding.summary.is_empty() {
@@ -809,8 +869,16 @@ pub fn render_finding_show(finding: &StoredFinding, events: &[StoredEvent]) -> S
     let _ = writeln!(out, "  project: {}", finding.project_id);
     let _ = writeln!(out, "  ecosystem: {}", finding.ecosystem);
     let _ = writeln!(out, "  vulnerability: {}", finding.vulnerability_id);
-    let _ = writeln!(out, "  aliases: {}", finding.aliases.join(", "));
-    let _ = writeln!(out, "  severity: {}", finding.severity);
+    if finding.aliases.is_empty() {
+        let _ = writeln!(out, "  also: -");
+    } else {
+        let _ = writeln!(out, "  also: {}", finding.aliases.join(", "));
+    }
+    let _ = writeln!(
+        out,
+        "  severity: {} ({})",
+        finding.severity, finding.severity_source
+    );
     let _ = writeln!(out, "  state: {}", finding.state.as_str());
     let _ = writeln!(out, "  kind: {}", finding.kind);
     let _ = writeln!(out, "  summary: {}", finding.summary);
@@ -914,7 +982,9 @@ fn hit_json(finding: &LedgerFinding) -> HitJson<'_> {
         version: &finding.version,
         id: &finding.vulnerability_id,
         aliases: &finding.aliases,
+        related_ids: &finding.related_ids,
         severity: finding.severity.as_str(),
+        severity_source: finding.severity_source.as_str(),
         kind: finding.kind.as_str(),
         summary: &finding.summary,
         fixed_versions: &finding.fixed_versions,
@@ -931,7 +1001,9 @@ fn finding_json(finding: &StoredFinding) -> FindingJson<'_> {
         version: &finding.version,
         vulnerability: &finding.vulnerability_id,
         aliases: &finding.aliases,
+        related_ids: &finding.related_ids,
         severity: finding.severity.as_str(),
+        severity_source: finding.severity_source.as_str(),
         kind: finding.kind.as_str(),
         summary: &finding.summary,
         fixed_versions: &finding.fixed_versions,
@@ -978,7 +1050,9 @@ struct HitJson<'a> {
     version: &'a str,
     id: &'a str,
     aliases: &'a [String],
+    related_ids: &'a [String],
     severity: &'a str,
+    severity_source: &'a str,
     kind: &'a str,
     summary: &'a str,
     fixed_versions: &'a [String],
@@ -1005,7 +1079,9 @@ struct FindingJson<'a> {
     version: &'a str,
     vulnerability: &'a str,
     aliases: &'a [String],
+    related_ids: &'a [String],
     severity: &'a str,
+    severity_source: &'a str,
     kind: &'a str,
     summary: &'a str,
     fixed_versions: &'a [String],

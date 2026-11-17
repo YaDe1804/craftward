@@ -69,12 +69,15 @@ Prints one row per project:
 | `NEXT_DUE` | Earliest outstanding date, or `-`. |
 | `NOTE` | Why a file could not be read, when it could not. |
 
-The next due date is the earliest `tasks.due` among tasks that are `open` or
-`in_progress`, together with every `watch_items.due`. Tasks marked `done` or
-`dropped` are left out. A missing or invalid project file is still listed, with
-the reason in `NOTE`, and the command exits `1`. `--category TEXT` keeps only
-projects whose category matches without regard to letter case (load failures
-are omitted while filtering).
+Rows are ordered by lifecycle status (released, maintenance,
+in_development, paused, idea, discontinued), then by open finding severity
+counts from `craftward.db` when that file is readable, then by next due date,
+then by name. The next due date is the earliest `tasks.due` among tasks that
+are `open` or `in_progress`, together with every `watch_items.due`. Tasks
+marked `done` or `dropped` are left out. A missing or invalid project file is
+still listed, with the reason in `NOTE`, and the command exits `1`.
+`--category TEXT` keeps only projects whose category matches without regard to
+letter case (load failures are omitted while filtering).
 
 ```console
 craftward list

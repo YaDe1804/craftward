@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use craftward_core::{
     EventKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION, StateFilter, StateStore,
-    StoreError, StoreSession, StoredEvent, StoredFinding,
+    StoreError, StoreSession, StoredEvent, StoredFinding, prefer_primary_id,
 };
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
@@ -213,7 +213,16 @@ CREATE INDEX finding_events_finding ON finding_events(finding_id);
 const FINDING_COLUMNS: &str = "
 id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
 summary, aliases, fixed_versions, state, kind, first_seen, last_seen, resolved_at,
-ignore_reason, ignore_until
+ignore_reason, ignore_until, related_ids, severity_source
+";
+
+const MIGRATION_V7_COLUMNS: &str = "
+ALTER TABLE findings ADD COLUMN related_ids TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE findings ADD COLUMN severity_source TEXT NOT NULL DEFAULT 'unknown';
+CREATE TABLE IF NOT EXISTS finding_merges (
+    old_finding_id INTEGER PRIMARY KEY,
+    into_finding_id INTEGER NOT NULL
+);
 ";
 
 /// A SQLite file, or an in-memory database for tests.
@@ -309,8 +318,9 @@ impl StoreSession for Session<'_> {
             .execute(
                 "INSERT INTO findings (
                     project_id, ecosystem, package_name, vulnerability_id, version, severity,
-                    summary, aliases, fixed_versions, state, kind, first_seen, last_seen
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', ?10, ?11, ?11)",
+                    summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+                    related_ids, severity_source
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'open', ?10, ?11, ?11, ?12, ?13)",
                 (
                     &finding.project_id,
                     &finding.ecosystem,
@@ -323,6 +333,8 @@ impl StoreSession for Session<'_> {
                     encode_list(&finding.fixed_versions)?,
                     finding.kind.as_str(),
                     &finding.seen_at,
+                    encode_list(&finding.related_ids)?,
+                    finding.severity_source.as_str(),
                 ),
             )
             .map_err(|error| failed(&error))?;
@@ -330,30 +342,7 @@ impl StoreSession for Session<'_> {
     }
 
     fn update_finding(&mut self, finding: &StoredFinding) -> Result<(), StoreError> {
-        self.transaction
-            .execute(
-                "UPDATE findings SET
-                    version = ?1, severity = ?2, summary = ?3, aliases = ?4, fixed_versions = ?5,
-                    state = ?6, kind = ?7, last_seen = ?8, resolved_at = ?9, ignore_reason = ?10,
-                    ignore_until = ?11
-                 WHERE id = ?12",
-                (
-                    &finding.version,
-                    finding.severity.as_str(),
-                    &finding.summary,
-                    encode_list(&finding.aliases)?,
-                    encode_list(&finding.fixed_versions)?,
-                    finding.state.as_str(),
-                    finding.kind.as_str(),
-                    &finding.last_seen,
-                    &finding.resolved_at,
-                    &finding.ignore_reason,
-                    &finding.ignore_until,
-                    finding.id,
-                ),
-            )
-            .map_err(|error| failed(&error))?;
-        Ok(())
+        write_finding_update(self.transaction, finding)
     }
 
     fn insert_event(
@@ -450,6 +439,45 @@ impl StoreSession for Session<'_> {
         }
         Ok(events)
     }
+
+    fn merged_into(&mut self, old_id: i64) -> Result<Option<i64>, StoreError> {
+        let mut statement = self
+            .transaction
+            .prepare("SELECT into_finding_id FROM finding_merges WHERE old_finding_id = ?1")
+            .map_err(|error| failed(&error))?;
+        let mut rows = statement.query([old_id]).map_err(|error| failed(&error))?;
+        match rows.next().map_err(|error| failed(&error))? {
+            Some(row) => Ok(Some(row.get(0).map_err(|error| failed(&error))?)),
+            None => Ok(None),
+        }
+    }
+
+    fn delete_finding(&mut self, id: i64) -> Result<(), StoreError> {
+        self.transaction
+            .execute("DELETE FROM findings WHERE id = ?1", [id])
+            .map_err(|error| failed(&error))?;
+        Ok(())
+    }
+
+    fn reassign_events(&mut self, from_id: i64, into_id: i64) -> Result<(), StoreError> {
+        self.transaction
+            .execute(
+                "UPDATE finding_events SET finding_id = ?1 WHERE finding_id = ?2",
+                (into_id, from_id),
+            )
+            .map_err(|error| failed(&error))?;
+        Ok(())
+    }
+
+    fn record_merge(&mut self, old_id: i64, into_id: i64) -> Result<(), StoreError> {
+        self.transaction
+            .execute(
+                "INSERT INTO finding_merges (old_finding_id, into_finding_id) VALUES (?1, ?2)",
+                (old_id, into_id),
+            )
+            .map_err(|error| failed(&error))?;
+        Ok(())
+    }
 }
 
 fn query_findings(
@@ -478,6 +506,8 @@ fn read_finding(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
     let state_text: String = row.get(10).map_err(|error| failed(&error))?;
     let severity_text: String = row.get(6).map_err(|error| failed(&error))?;
     let kind_text: String = row.get(11).map_err(|error| failed(&error))?;
+    let related: String = row.get(17).map_err(|error| failed(&error))?;
+    let source_text: String = row.get(18).map_err(|error| failed(&error))?;
     Ok(StoredFinding {
         id: row.get(0).map_err(|error| failed(&error))?,
         project_id: row.get(1).map_err(|error| failed(&error))?,
@@ -496,6 +526,8 @@ fn read_finding(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
         resolved_at: row.get(14).map_err(|error| failed(&error))?,
         ignore_reason: row.get(15).map_err(|error| failed(&error))?,
         ignore_until: row.get(16).map_err(|error| failed(&error))?,
+        related_ids: decode_list(&related)?,
+        severity_source: domain_value("findings.severity_source", &source_text)?,
     })
 }
 
@@ -704,7 +736,324 @@ fn migrate(connection: &mut Connection, from: i64) -> Result<(), StoreError> {
     if from < 6 {
         migrate_v6(connection)?;
     }
+    if from < 7 {
+        migrate_v7(connection)?;
+    }
     Ok(())
+}
+
+fn migrate_v7(connection: &mut Connection) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| failed(&error))?;
+    transaction
+        .execute_batch(MIGRATION_V7_COLUMNS)
+        .map_err(|error| failed(&error))?;
+    {
+        let mut statement = transaction
+            .prepare("SELECT id, vulnerability_id, aliases, severity FROM findings")
+            .map_err(|error| failed(&error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|error| failed(&error))?;
+        let mut updates = Vec::new();
+        for row in rows {
+            let (id, vuln, aliases_json, severity) = row.map_err(|error| failed(&error))?;
+            let mut related = decode_list(&aliases_json).unwrap_or_default();
+            if !related.iter().any(|existing| existing == &vuln) {
+                related.insert(0, vuln.clone());
+            }
+            let source = if severity == "unknown" {
+                "unknown"
+            } else {
+                "advisory"
+            };
+            updates.push((id, encode_list(&related)?, source.to_owned()));
+        }
+        drop(statement);
+        for (id, related, source) in updates {
+            transaction
+                .execute(
+                    "UPDATE findings SET related_ids = ?1, severity_source = ?2 WHERE id = ?3",
+                    (related, source, id),
+                )
+                .map_err(|error| failed(&error))?;
+        }
+    }
+    merge_duplicate_findings(&transaction)?;
+    transaction
+        .pragma_update(None, "user_version", 7)
+        .map_err(|error| failed(&error))?;
+    transaction.commit().map_err(|error| failed(&error))?;
+    Ok(())
+}
+
+fn merge_duplicate_findings(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    let findings = load_findings_ordered(transaction)?;
+    let mut by_key: std::collections::BTreeMap<(String, String, String, String), Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (index, finding) in findings.iter().enumerate() {
+        by_key
+            .entry((
+                finding.project_id.clone(),
+                finding.ecosystem.clone(),
+                finding.package.clone(),
+                finding.version.clone(),
+            ))
+            .or_default()
+            .push(index);
+    }
+
+    for indexes in by_key.values() {
+        if indexes.len() < 2 {
+            continue;
+        }
+        let group: Vec<&StoredFinding> = indexes.iter().map(|i| &findings[*i]).collect();
+        for cluster in cluster_finding_indexes(&group) {
+            if cluster.len() < 2 {
+                continue;
+            }
+            apply_finding_cluster(transaction, &group, &cluster)?;
+        }
+    }
+    Ok(())
+}
+
+fn load_findings_ordered(transaction: &Transaction<'_>) -> Result<Vec<StoredFinding>, StoreError> {
+    let mut statement = transaction
+        .prepare(&format!(
+            "SELECT {FINDING_COLUMNS} FROM findings ORDER BY project_id, id"
+        ))
+        .map_err(|error| failed(&error))?;
+    let rows = statement
+        .query_map([], |row| Ok(read_finding_from_row(row)))
+        .map_err(|error| failed(&error))?;
+    let mut findings = Vec::new();
+    for row in rows {
+        findings.push(row.map_err(|error| failed(&error))??);
+    }
+    Ok(findings)
+}
+
+fn apply_finding_cluster(
+    transaction: &Transaction<'_>,
+    group: &[&StoredFinding],
+    cluster: &[usize],
+) -> Result<(), StoreError> {
+    let survivor_pos = cluster[0];
+    let survivor_id = group[survivor_pos].id;
+    let survivor = folded_survivor(group, cluster);
+    for &pos in cluster {
+        let old_id = group[pos].id;
+        if old_id == survivor_id {
+            continue;
+        }
+        absorb_duplicate_finding(transaction, survivor_id, old_id, &survivor.last_seen)?;
+    }
+    write_finding_update(transaction, &survivor)
+}
+
+fn folded_survivor(group: &[&StoredFinding], cluster: &[usize]) -> StoredFinding {
+    let survivor_pos = cluster[0];
+    let mut related = std::collections::BTreeSet::new();
+    let mut fixed = std::collections::BTreeSet::new();
+    let mut best_severity = group[survivor_pos].severity;
+    let mut best_kind = group[survivor_pos].kind;
+    let mut best_source = group[survivor_pos].severity_source;
+    let mut ignore: Option<&StoredFinding> = None;
+    for &pos in cluster {
+        let row = group[pos];
+        for id in &row.related_ids {
+            related.insert(id.clone());
+        }
+        related.insert(row.vulnerability_id.clone());
+        for id in &row.aliases {
+            related.insert(id.clone());
+        }
+        for version in &row.fixed_versions {
+            fixed.insert(version.clone());
+        }
+        if row.severity < best_severity {
+            best_severity = row.severity;
+            best_source = row.severity_source;
+        }
+        if kind_rank(row.kind) < kind_rank(best_kind) {
+            best_kind = row.kind;
+        }
+        if row.state == FindingState::Ignored {
+            ignore = Some(match ignore {
+                Some(current)
+                    if current.ignore_until >= row.ignore_until
+                        && current.last_seen >= row.last_seen =>
+                {
+                    current
+                }
+                _ => row,
+            });
+        }
+    }
+    let primary = prefer_primary_id(&related);
+    let mut related_ids: Vec<String> = related.into_iter().collect();
+    related_ids.sort();
+    if let Some(position) = related_ids.iter().position(|id| *id == primary) {
+        related_ids.swap(0, position);
+    }
+    let aliases: Vec<String> = related_ids
+        .iter()
+        .filter(|id| *id != &primary)
+        .cloned()
+        .collect();
+    let mut survivor = group[survivor_pos].clone();
+    survivor.vulnerability_id = primary;
+    survivor.related_ids = related_ids;
+    survivor.aliases = aliases;
+    survivor.fixed_versions = fixed.into_iter().collect();
+    survivor.severity = best_severity;
+    survivor.severity_source = best_source;
+    survivor.kind = best_kind;
+    if let Some(ignored) = ignore {
+        survivor.state = FindingState::Ignored;
+        survivor.ignore_reason.clone_from(&ignored.ignore_reason);
+        survivor.ignore_until.clone_from(&ignored.ignore_until);
+    }
+    survivor
+}
+
+fn absorb_duplicate_finding(
+    transaction: &Transaction<'_>,
+    survivor_id: i64,
+    old_id: i64,
+    at: &str,
+) -> Result<(), StoreError> {
+    // Drop the duplicate before renaming the survivor so the unique
+    // (project, ecosystem, package, vulnerability_id) index stays free.
+    transaction
+        .execute(
+            "UPDATE finding_events SET finding_id = ?1 WHERE finding_id = ?2",
+            (survivor_id, old_id),
+        )
+        .map_err(|error| failed(&error))?;
+    transaction
+        .execute(
+            "INSERT INTO finding_events (finding_id, kind, at, reason) VALUES (?1, ?2, ?3, ?4)",
+            (
+                survivor_id,
+                EventKind::Merged.as_str(),
+                at,
+                format!("merged finding {old_id}"),
+            ),
+        )
+        .map_err(|error| failed(&error))?;
+    transaction
+        .execute(
+            "INSERT INTO finding_merges (old_finding_id, into_finding_id) VALUES (?1, ?2)",
+            (old_id, survivor_id),
+        )
+        .map_err(|error| failed(&error))?;
+    transaction
+        .execute("DELETE FROM findings WHERE id = ?1", [old_id])
+        .map_err(|error| failed(&error))?;
+    Ok(())
+}
+
+fn cluster_finding_indexes(group: &[&StoredFinding]) -> Vec<Vec<usize>> {
+    let n = group.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    let mut owner: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, finding) in group.iter().enumerate() {
+        let mut ids = vec![finding.vulnerability_id.clone()];
+        ids.extend(finding.aliases.iter().cloned());
+        ids.extend(finding.related_ids.iter().cloned());
+        for id in ids {
+            if let Some(existing) = owner.get(&id).copied() {
+                let a = find_root(&mut parent, index);
+                let b = find_root(&mut parent, existing);
+                if a != b {
+                    parent[b] = a;
+                }
+            } else {
+                owner.insert(id, index);
+            }
+        }
+    }
+    let mut clusters: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for index in 0..n {
+        clusters
+            .entry(find_root(&mut parent, index))
+            .or_default()
+            .push(index);
+    }
+    clusters.into_values().collect()
+}
+
+fn find_root(parent: &mut [usize], mut index: usize) -> usize {
+    while parent[index] != index {
+        parent[index] = parent[parent[index]];
+        index = parent[index];
+    }
+    index
+}
+
+fn kind_rank(kind: craftward_core::FindingKind) -> u8 {
+    use craftward_core::FindingKind::{
+        Eol, EolSoon, Malicious, Notice, PlatformDeadline, PlatformDeadlineSoon, Unmaintained,
+        Unsound, Vulnerability,
+    };
+    match kind {
+        Malicious => 0,
+        Vulnerability => 1,
+        Unsound => 2,
+        Unmaintained => 3,
+        Notice => 4,
+        PlatformDeadline => 5,
+        Eol => 6,
+        PlatformDeadlineSoon => 7,
+        EolSoon => 8,
+    }
+}
+
+fn write_finding_update(
+    transaction: &Transaction<'_>,
+    finding: &StoredFinding,
+) -> Result<(), StoreError> {
+    transaction
+        .execute(
+            "UPDATE findings SET
+                vulnerability_id = ?1, severity = ?2, summary = ?3, aliases = ?4,
+                fixed_versions = ?5, state = ?6, kind = ?7, last_seen = ?8, resolved_at = ?9,
+                ignore_reason = ?10, ignore_until = ?11, related_ids = ?12, severity_source = ?13
+             WHERE id = ?14",
+            (
+                &finding.vulnerability_id,
+                finding.severity.as_str(),
+                &finding.summary,
+                encode_list(&finding.aliases)?,
+                encode_list(&finding.fixed_versions)?,
+                finding.state.as_str(),
+                finding.kind.as_str(),
+                &finding.last_seen,
+                &finding.resolved_at,
+                &finding.ignore_reason,
+                &finding.ignore_until,
+                encode_list(&finding.related_ids)?,
+                finding.severity_source.as_str(),
+                finding.id,
+            ),
+        )
+        .map_err(|error| failed(&error))?;
+    Ok(())
+}
+
+fn read_finding_from_row(row: &rusqlite::Row<'_>) -> Result<StoredFinding, StoreError> {
+    read_finding(row)
 }
 
 fn migrate_v6(connection: &mut Connection) -> Result<(), StoreError> {

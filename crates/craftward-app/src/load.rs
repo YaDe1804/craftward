@@ -1,4 +1,4 @@
-//! Load workspace projects and open findings for the desktop UI.
+//! Load workspace projects and findings for the desktop UI.
 //!
 //! This module only calls `craftward-core` and `craftward-store`. It does not
 //! invent file or database formats of its own.
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use craftward_core::{
-    ContentFingerprint, DATABASE_FILE, ProcessHost, Project, Severity, StateFilter, StoredFinding,
+    ContentFingerprint, DATABASE_FILE, ProcessHost, Project, StateFilter, StoredFinding,
     content_fingerprint, list_findings, list_projects, load_from_str, load_settings,
     locate_data_with, locate_workspace_with, platform_path, workspace_bytes_or_empty,
 };
@@ -18,7 +18,7 @@ use craftward_store::SqliteStore;
 /// Whether the local findings database could be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseStatus {
-    /// Open findings were loaded.
+    /// Findings were loaded (all states; the view model filters open vs ignored).
     Ready,
     /// `craftward.db` is not present yet.
     Missing,
@@ -35,7 +35,8 @@ pub struct LoadedProject {
     pub project: Result<Project, String>,
     /// Fingerprint of the file bytes when the project loaded successfully.
     pub fingerprint: Option<ContentFingerprint>,
-    /// Open findings for this project's id (empty when the project failed).
+    /// Findings for this project's id (open, ignored, and resolved when the
+    /// database was readable; empty when the project failed).
     pub findings: Vec<StoredFinding>,
 }
 
@@ -200,7 +201,9 @@ fn load_open_findings(path: &Path) -> (DatabaseStatus, BTreeMap<String, Vec<Stor
         Ok(store) => store,
         Err(error) => return (DatabaseStatus::Error(error.to_string()), BTreeMap::new()),
     };
-    match list_findings(&mut store, &[], StateFilter::Open, None) {
+    // Load every state so the view can count open vs ignored (expired ignores
+    // count as open, matching CLI after the next radar pass).
+    match list_findings(&mut store, &[], StateFilter::All, None) {
         Ok(rows) => {
             let mut map = BTreeMap::<String, Vec<StoredFinding>>::new();
             for row in rows {
@@ -229,21 +232,4 @@ fn absolute_path(path: &Path) -> Result<PathBuf, String> {
             .map_err(|error| format!("cannot read the current directory: {error}"))?;
         Ok(platform_path(&current.join(path)))
     }
-}
-
-/// Counts open findings by severity for tests and the view model.
-#[must_use]
-pub fn count_by_severity(findings: &[StoredFinding]) -> [usize; 5] {
-    let mut counts = [0_usize; 5];
-    for finding in findings {
-        let index = match finding.severity {
-            Severity::Critical => 0,
-            Severity::High => 1,
-            Severity::Medium => 2,
-            Severity::Low => 3,
-            Severity::Unknown => 4,
-        };
-        counts[index] += 1;
-    }
-    counts
 }

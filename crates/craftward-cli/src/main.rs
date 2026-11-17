@@ -16,10 +16,13 @@ use std::time::SystemTime;
 
 use clap::Parser;
 use craftward_core::{
-    Language, LoadError, ProjectRow, ProjectStatus, WorkspaceError, add_project, init_project,
-    is_portable_absolute, list_projects, load_from_path, missing_paths, platform_path,
-    project_file, project_file_by_id, remove_project, utc_date, write_roadmap,
+    DATABASE_FILE, Language, LoadError, ProjectOrderKey, ProjectRow, ProjectStatus, Severity,
+    StateFilter, WorkspaceError, add_project, compare_project_order, init_project,
+    is_portable_absolute, list_findings, list_projects, load_from_path, missing_paths,
+    platform_path, project_file, project_file_by_id, remove_project, utc_date, write_roadmap,
 };
+use craftward_store::SqliteStore;
+use std::collections::HashMap;
 
 use crate::cli::{
     Cli, Command, FindingsCommand, IssueCommand, PhaseCommand, ProjectCommand, SettingsCommand,
@@ -111,7 +114,10 @@ fn run(cli: Cli) -> Result<ExitCode, Failure> {
         Command::List { category } => {
             let workspace = workspace_file(workspace)?;
             match list_projects(&workspace) {
-                Ok(rows) => Ok(print_list(&rows, category.as_deref())),
+                Ok(rows) => {
+                    let finding_counts = list_open_finding_counts(cli.data_dir.as_deref());
+                    Ok(print_list(&rows, category.as_deref(), &finding_counts))
+                }
                 Err(error) => Err(Failure::Data(explain_workspace(&error))),
             }
         }
@@ -809,7 +815,38 @@ fn print_load_error(error: &LoadError) {
     }
 }
 
-fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
+fn list_open_finding_counts(cli_data: Option<&Path>) -> HashMap<String, [usize; 5]> {
+    let Ok(data) = settings_cmd::resolve_data(cli_data) else {
+        return HashMap::new();
+    };
+    let Ok(mut store) = SqliteStore::open(&data.path.join(DATABASE_FILE)) else {
+        return HashMap::new();
+    };
+    let Ok(findings) = list_findings(&mut store, &[], StateFilter::Open, None) else {
+        return HashMap::new();
+    };
+    let mut counts = HashMap::new();
+    for finding in findings {
+        let entry = counts
+            .entry(finding.project_id.clone())
+            .or_insert([0_usize; 5]);
+        let index = match finding.severity {
+            Severity::Critical => 0,
+            Severity::High => 1,
+            Severity::Medium => 2,
+            Severity::Low => 3,
+            Severity::Unknown => 4,
+        };
+        entry[index] += 1;
+    }
+    counts
+}
+
+fn print_list(
+    rows: &[ProjectRow],
+    category_filter: Option<&str>,
+    finding_counts: &HashMap<String, [usize; 5]>,
+) -> ExitCode {
     if rows.is_empty() {
         println!("no projects");
         return ExitCode::SUCCESS;
@@ -831,7 +868,7 @@ fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
                 ListLine {
                     id: snapshot.id.clone(),
                     name: snapshot.name.clone(),
-                    status: snapshot.status.as_str().to_owned(),
+                    status: snapshot.status,
                     version: snapshot
                         .current_version
                         .clone()
@@ -839,7 +876,8 @@ fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
                     category: snapshot.category.clone().unwrap_or_else(|| "-".to_owned()),
                     open_tasks: snapshot.open_tasks.to_string(),
                     open_issues: snapshot.open_issues.to_string(),
-                    next_due: snapshot.next_due.clone().unwrap_or_else(|| "-".to_owned()),
+                    next_due: snapshot.next_due.clone(),
+                    findings: finding_counts.get(&snapshot.id).copied().unwrap_or([0; 5]),
                     note: String::new(),
                 }
             }
@@ -851,12 +889,13 @@ fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
                 ListLine {
                     id: "-".to_owned(),
                     name: "-".to_owned(),
-                    status: "-".to_owned(),
+                    status: ProjectStatus::Idea,
                     version: "-".to_owned(),
                     category: "-".to_owned(),
                     open_tasks: "-".to_owned(),
                     open_issues: "-".to_owned(),
-                    next_due: "-".to_owned(),
+                    next_due: None,
+                    findings: [0; 5],
                     note: format!("{}: {message}", row.path.display()),
                 }
             }
@@ -866,6 +905,32 @@ fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
         println!("no projects");
         return ExitCode::SUCCESS;
     }
+    lines.sort_by(|left, right| {
+        if left.note.is_empty() && right.note.is_empty() {
+            compare_project_order(
+                &ProjectOrderKey {
+                    status: left.status,
+                    findings: &left.findings,
+                    due: left.next_due.as_deref(),
+                    name: &left.name,
+                    id: &left.id,
+                },
+                &ProjectOrderKey {
+                    status: right.status,
+                    findings: &right.findings,
+                    due: right.next_due.as_deref(),
+                    name: &right.name,
+                    id: &right.id,
+                },
+            )
+        } else if left.note.is_empty() {
+            std::cmp::Ordering::Less
+        } else if right.note.is_empty() {
+            std::cmp::Ordering::Greater
+        } else {
+            left.note.cmp(&right.note)
+        }
+    });
     print_table(&lines);
     exit_from_failure(failed)
 }
@@ -873,12 +938,13 @@ fn print_list(rows: &[ProjectRow], category_filter: Option<&str>) -> ExitCode {
 struct ListLine {
     id: String,
     name: String,
-    status: String,
+    status: ProjectStatus,
     version: String,
     category: String,
     open_tasks: String,
     open_issues: String,
-    next_due: String,
+    next_due: Option<String>,
+    findings: [usize; 5],
     note: String,
 }
 
@@ -913,12 +979,12 @@ impl ListLine {
         [
             &self.id,
             &self.name,
-            &self.status,
+            self.status.as_str(),
             &self.version,
             &self.category,
             &self.open_tasks,
             &self.open_issues,
-            &self.next_due,
+            self.next_due.as_deref().unwrap_or("-"),
             &self.note,
         ]
     }

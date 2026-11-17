@@ -108,6 +108,21 @@ impl ProjectStatus {
             Self::Discontinued => "discontinued",
         }
     }
+
+    /// Portfolio / `list` sort rank (lower first).
+    ///
+    /// Order: released, maintenance, `in_development`, paused, idea, discontinued.
+    #[must_use]
+    pub const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Released => 0,
+            Self::Maintenance => 1,
+            Self::InDevelopment => 2,
+            Self::Paused => 3,
+            Self::Idea => 4,
+            Self::Discontinued => 5,
+        }
+    }
 }
 
 /// A labeled web address.

@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Radar merges aliased advisories (GHSA preferred), scores CVSS v3 when no
+  advisory severity is present, stores `related_ids` / `severity_source` in
+  schema 7 with migration redirects, prints `also:` and `no open findings`
+  when every finding is ignored, and sorts portfolio / `list` by project
+  status then open findings. See
+  [ADR 0029](docs/adr/0029-merging-aliased-advisories-and-severity.md),
+  [docs/radar.md](docs/radar.md), and [docs/storage.md](docs/storage.md).
+- Desktop project-status colours and card glow: named swatches per
+  lifecycle status, opaque tinted status badges, a shared radial glow
+  texture on portfolio cards and the project Overview header (idle /
+  hover / pressed opacity via egui animation, contrast checked only for
+  text that sits on the glow), and findings counts that match the CLI
+  (open only; muted “N ignored”; “No open findings”). See
+  [ADR 0026](docs/adr/0026-navigation-and-visual-design.md) and
+  [docs/desktop.md](docs/desktop.md).
 - Optional per-project portfolio `category` (schema version 2 only when
   set), CLI `project set --category` / `--clear-category`, `list`
   CATEGORY column and `--category` filter, desktop sidebar categories

@@ -93,7 +93,7 @@ The file database does not.
 
 ## Schema
 
-The schema version is `PRAGMA user_version`. This build writes version 6.
+The schema version is `PRAGMA user_version`. This build writes version 7.
 Migrations only move forward, one version at a time, each in a transaction.
 If the file's version is newer, Craftward stops and says that a newer
 Craftward version created the database.
@@ -132,8 +132,13 @@ other kinds of table schema changes. Foreign keys are turned off before the
 transaction, the new tables are filled, the old tables are dropped, and the
 new tables are renamed. `PRAGMA foreign_key_check` must return no rows
 before the commit. Foreign keys are turned on again afterwards, including
-when the rebuild fails. The copy is still named for the version the file had
-before the migration started.
+when the rebuild fails. Version 7 adds `related_ids` (JSON array of every
+merged advisory id, primary first) and `severity_source`
+(`advisory` / `cvss` / `unknown`), creates `finding_merges`, and merges
+duplicate rows that share package version and aliases (oldest id kept;
+ignore state preserved when any member was ignored). Looking up a merged-away
+id reports the surviving finding. The copy is still named for the version the
+file had before the migration started.
 
 ### runs
 
@@ -158,13 +163,20 @@ of the identity, so a new affected version updates the same row.
 `malicious`, `unmaintained`, `unsound`, `notice`, `eol`, `eol_soon`,
 `platform_deadline`, or `platform_deadline_soon`. The database does not
 enforce those lists. Craftward rejects any other word when it reads the row.
-`aliases` and `fixed_versions`
-are JSON arrays of strings. `ignore_until` is `YYYY-MM-DD` or null. The
-other times use the same UTC timestamp as `runs`.
+`aliases`, `related_ids`, and `fixed_versions` are JSON arrays of strings.
+`related_ids` lists every identifier in the merged cluster (primary first);
+`aliases` is that list without the primary. `severity_source` is `advisory`,
+`cvss`, or `unknown`. `ignore_until` is `YYYY-MM-DD` or null. The other times
+use the same UTC timestamp as `runs`.
 
 ### finding_events
 
 One row per change: `discovered`, `ignored`, `reopened`, `resolved`,
-`reappeared`, `withdrawn`, or `deadline_passed`. `reason` is the ignore
-text, `ignore expired on YYYY-MM-DD` when an ignore lapses, or an empty
-string. `deadline_passed` has an empty reason.
+`reappeared`, `withdrawn`, `deadline_passed`, or `merged`. `reason` is the
+ignore text, `ignore expired on YYYY-MM-DD` when an ignore lapses, a merge
+note, or an empty string. `deadline_passed` has an empty reason.
+
+### finding_merges
+
+Maps a former finding id (`old_finding_id`) to the surviving row
+(`into_finding_id`) after an alias merge during migration or cleanup.

@@ -45,11 +45,19 @@ Each distinct vulnerability id is then loaded once from
 `GET https://api.osv.dev/v1/vulns/{id}`.
 
 From that record Craftward keeps the id, the aliases, the summary, the
-affected packages, and the severity. Severity is
-`database_specific.severity` when the value is `LOW`, `MODERATE`, `HIGH`,
-or `CRITICAL` (any letter case), mapped to `low`, `medium`, `high`, and
-`critical`. Otherwise the severity is `unknown`. Craftward does not score
-CVSS itself. Fixed versions are the `fixed` events on ranges of type
+affected packages, and the severity. Records that share ecosystem, package,
+and version and are linked by id or aliases are merged into one finding
+(transitive union-find). The primary id prefers GHSA, then RUSTSEC, then
+the first sorted id; other ids remain visible as `also:` / `related_ids`.
+Kind is the most severe of the cluster; fixed versions are the union.
+
+Severity prefers `database_specific.severity` when the value is `LOW`,
+`MODERATE`, `HIGH`, or `CRITICAL` (any letter case), mapped to `low`,
+`medium`, `high`, and `critical`. Otherwise a CVSS v3.0/v3.1 vector is
+scored locally (FIRST base metrics) and mapped the same way. CVSS v4 is
+used only when a qualitative label is present. Otherwise severity is
+`unknown`. JSON reports include `severity_source`: `advisory`, `cvss`, or
+`unknown`. Fixed versions are the `fixed` events on ranges of type
 `ECOSYSTEM` or `SEMVER`. Git ranges are ignored because their events are
 commits. crates.io records usually use `SEMVER`, so both types are kept.
 
@@ -66,8 +74,8 @@ Every OSV record is one of `vulnerability`, `malicious`, `unmaintained`,
   on the top-level `database_specific` object when no affected entry has
   one. `unmaintained`, `unsound`, and `notice` are kept. Any other
   non-empty string is stored as `notice`.
-- A record with none of those marks is a `vulnerability`. Severity still
-  comes only from the top-level `database_specific.severity`.
+- A record with none of those marks is a `vulnerability`. Severity follows
+  the rules above (advisory label, then CVSS, then unknown).
 
 A record with a non-empty top-level `withdrawn` timestamp is not shown and
 is not inserted. A finding already stored for that id becomes `resolved`
@@ -292,14 +300,15 @@ Open findings of kind `vulnerability`, `malicious`, `eol`, and
 `medium`, `low`, `unknown`), then by package, version, and vulnerability
 id. A finding inserted by this run is marked `new`. Each one prints the
 package and version, `#` and the database id, the vulnerability id,
-aliases in parentheses when there are any, the severity, the kind, the
+`also:` with the other ids when there are any, the severity, the kind, the
 summary, `fixed in` when fixed versions were recorded, and the link.
 
 Ignored findings are not listed unless `--all` is set. The report always
 prints `ignored: N` and `resolved: N` for a successful check. `N` for
 ignored is how many ignored findings were still present. `N` for resolved
 is how many this run marked resolved. When all three are zero, the report
-also prints `no open findings`.
+also prints `no open findings` whenever there are no open findings, including
+when every finding for that project is ignored.
 
 ## JSON report
 
@@ -326,7 +335,9 @@ stream and produce no JSON document.
           "version": "1.0.0",
           "id": "RUSTSEC-2024-0001",
           "aliases": ["CVE-2024-1"],
+          "related_ids": ["RUSTSEC-2024-0001", "CVE-2024-1"],
           "severity": "high",
+          "severity_source": "advisory",
           "kind": "vulnerability",
           "summary": "Short description",
           "fixed_versions": ["1.2.0"],
@@ -344,10 +355,13 @@ stream and produce no JSON document.
 }
 ```
 
-`id` inside a finding is the OSV id. `record_id` is the database id used
-by `findings`. Without `--all`, `findings` lists only open findings.
-`--all` appends the ignored ones. `ignored` and `resolved` are the same
-counts as in the text report. `kind` is the advisory kind. `evaluated` is
+`id` inside a finding is the primary OSV id. `related_ids` lists every id
+in the merged cluster (primary first); `aliases` is that list without the
+primary. `severity_source` is `advisory`, `cvss`, or `unknown`. `record_id`
+is the database id used by `findings`. Without `--all`, `findings` lists
+only open findings. `--all` appends the ignored ones. `ignored` and
+`resolved` are the same counts as in the text report. `kind` is the advisory
+kind. `evaluated` is
 false when lockfiles, end of support, and Play deadlines were not
 compared, or the check failed. `error` is a string only when the check
 failed, and null when nothing was evaluated. `stale_cache_from` is

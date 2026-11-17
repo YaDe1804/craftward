@@ -45,9 +45,13 @@ Path resolution matches the CLI (command line is unused in the app):
 | Database (`craftward.db`) | `CRAFTWARD_DATA_DIR`, then `settings.json`, then the platform default |
 | Cache | `CRAFTWARD_CACHE_DIR`, then `settings.json`, then the platform default |
 
-Project files are the paths listed in `workspace.json`. Open findings come
-from `craftward.db` when that file exists. The app never creates a database
-just to open the window; a missing database is shown as a status message.
+Project files are the paths listed in `workspace.json`. Findings come from
+`craftward.db` when that file exists. Counts and severity badges use only
+open findings (same rule as the CLI); actively ignored rows appear as a
+muted “N ignored” note and never in the severity chips. An ignore whose
+`--until` date is in the past counts as open again. A project with no open
+findings shows “No open findings”. The app never creates a database just to
+open the window; a missing database is shown as a status message.
 
 See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 
@@ -72,7 +76,9 @@ file watcher in this release.
 
 ## Views
 
-- **Portfolio overview:** one card per project, sorted by urgency, filtered
+- **Portfolio overview:** one card per project, sorted by status
+  (released, maintenance, in_development, paused, idea, discontinued),
+  then open-finding severity, then next due, then name, filtered
   by the sidebar category plus optional Platform and Tag combos (AND).
   Platforms are derived from the stack (`android` block and `platform`
   components), merged without regard to letter case, and shown with
@@ -160,10 +166,28 @@ labels can be copied when the OS clipboard feature is enabled.
 
 ## Theme
 
-Colours and status glyphs match the dark HTML roadmaps (ADR 0026). Status
-chips are the menu button itself (no double frame). Done and dropped task
-titles use muted text with WCAG AA contrast. Text contrast against surfaces
-and glyph coverage are checked in unit tests.
+Colours and status glyphs match the dark HTML roadmaps (ADR 0026). Each
+project lifecycle status has a named swatch in `theme.rs` (`idea`
+`#a371f7`, `in_development` `#d29922`, `released` `#3fb950`, `maintenance`
+`#58a6ff`, `paused` `#8b98a7`, `discontinued` `#a5534f`). Project-status
+badges use that colour for text, border, and a lightly tinted fill; task and
+issue status chips keep the existing open / running / done palette. Status
+chips that open a menu are the menu button itself (no double frame).
+
+Portfolio cards and the project Overview header draw a soft radial status
+glow: one shared grayscale texture (built once at startup, linear filter),
+tinted with the project status colour, covering about the upper half of the
+card and fading out toward the centre. Idle / hover / pressed opacities are
+named constants (`CARD_GLOW_OPACITY_*`, up to 40 / 50 / 60 %); transitions
+use egui’s `animate_value_with_time` (~120 ms). Contrast checks only text
+that sits on the glow (title and secondary lines at their row height via the
+same falloff as the texture); badges use an opaque fill so the glow does not
+change their contrast; text below the glow is checked on the card surface.
+Colour is never the only signal — the status badge keeps text and a glyph.
+
+Done and dropped task titles use muted text with WCAG AA contrast. Text
+contrast against surfaces, badge fills, on-glow composites, and glyph
+coverage are checked in unit tests.
 
 ## Known limitations
 
