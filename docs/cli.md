@@ -13,9 +13,10 @@ that status.
 `--help` after a command prints that command's help and exits `0`.
 
 `--workspace <FILE>` selects the workspace file for that invocation. Otherwise
-Craftward uses `CRAFTWARD_WORKSPACE`, then the default location described in
-the workspace format. Every path the program prints uses the separator of
-the operating system.
+Craftward uses `CRAFTWARD_WORKSPACE`, then `settings.json`, then the default
+location described in the workspace format. `--data-dir` and `--cache-dir`
+follow the same order with their environment variables. Every path the
+program prints uses the separator of the operating system.
 
 ## init
 
@@ -116,12 +117,38 @@ craftward roadmap ./app/craftward.json --dir ./docs/roadmap --lang de
 ## workspace path
 
 Prints the workspace file that this invocation would use, and whether that
-choice came from the command-line option, `CRAFTWARD_WORKSPACE`, or the
-default location. The file does not have to exist yet.
+choice came from the command-line option, `CRAFTWARD_WORKSPACE`, the
+settings file, or the default location. The file does not have to exist
+yet.
 
 ```console
 craftward workspace path
 craftward --workspace ./workspace.json workspace path
+```
+
+## settings
+
+Shows or changes the storage locations stored in `settings.json`. Path
+resolution and relocation rules are the same as in the desktop Settings
+screen; see [storage.md](storage.md).
+
+`settings show` prints the settings file path and each of workspace,
+`data_dir`, and `cache_dir` with its origin.
+
+`settings set` has one subcommand per location. The new path is a
+positional argument. The global `--workspace`, `--data-dir`, and
+`--cache-dir` options keep their usual meaning (override for this
+invocation) and are never the destination. Existing workspace and
+database files are copied, checked, then removed from the old path. The
+cache directory is created empty. A target that already exists is
+refused. A location fixed by a command-line option or environment
+variable cannot be changed.
+
+```console
+craftward settings show
+craftward settings set workspace D:/Craftward/workspace.json
+craftward settings set data-dir D:/Craftward/data
+craftward settings set cache-dir D:/Craftward/cache
 ```
 
 ## show

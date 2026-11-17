@@ -4,13 +4,12 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use craftward_core::{
-    DATABASE_FILE, HttpClient, HttpError, HttpRequest, HttpResponse, ProcessHost, RadarOptions,
-    apply_reports, list_projects, locate_cache, locate_data, render_ledger_json,
-    render_ledger_text, scan, unix_now,
+    DATABASE_FILE, HttpClient, HttpError, HttpRequest, HttpResponse, RadarOptions, apply_reports,
+    list_projects, render_ledger_json, render_ledger_text, scan, unix_now,
 };
 use craftward_store::SqliteStore;
 
-use crate::{Failure, resolve_project};
+use crate::{Failure, resolve_project, settings_cmd};
 
 /// Whether a scan may use the network.
 #[derive(Clone, Copy)]
@@ -49,10 +48,8 @@ pub(crate) fn run(
     request: &Request,
     workspace: Option<&std::path::Path>,
 ) -> Result<ExitCode, Failure> {
-    let cache_dir = locate_cache(&ProcessHost, request.cache_dir.as_deref())
-        .map_err(|error| Failure::Data(error.to_string()))?;
-    let data_dir = locate_data(&ProcessHost, request.data_dir.as_deref())
-        .map_err(|error| Failure::Data(error.to_string()))?;
+    let cache_dir = settings_cmd::resolve_cache(request.cache_dir.as_deref())?.path;
+    let data_dir = settings_cmd::resolve_data(request.data_dir.as_deref())?.path;
     let files = project_files(&request.projects, workspace)?;
     let started = unix_now();
     let refresh = matches!(request.mode, ScanMode::Refresh);

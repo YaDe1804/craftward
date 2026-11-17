@@ -11,7 +11,9 @@ use craftward_core::{
     ProjectReport, SCHEMA_VERSION, Severity, StateFilter, StateStore, apply_reports,
     ignore_finding, list_findings, render_ledger_text, reopen_finding, show_finding,
 };
-use craftward_store::SqliteStore;
+use craftward_store::{
+    SqliteStore, check_database_integrity, copy_database, remove_database_files,
+};
 use rusqlite::Connection;
 
 const NOW: i64 = 0;
@@ -1186,4 +1188,65 @@ fn list_findings_filters_state_and_projects_like_the_old_scan() {
     .unwrap();
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].vulnerability_id, "B");
+}
+
+#[test]
+fn copy_database_succeeds_and_passes_integrity() {
+    let root = scratch("copy-ok");
+    let from = root.join("old").join("craftward.db");
+    let to = root.join("new").join("craftward.db");
+    fs::create_dir_all(from.parent().unwrap()).unwrap();
+    {
+        let mut store = SqliteStore::open(&from).unwrap();
+        store
+            .in_transaction(|session| {
+                session.insert_finding(&NewFinding {
+                    project_id: "demo".to_owned(),
+                    ecosystem: "crates.io".to_owned(),
+                    package: "instant".to_owned(),
+                    vulnerability_id: "RUSTSEC-COPY".to_owned(),
+                    version: "1".to_owned(),
+                    severity: Severity::Low,
+                    summary: "copied".to_owned(),
+                    aliases: Vec::new(),
+                    fixed_versions: Vec::new(),
+                    kind: FindingKind::Notice,
+                    seen_at: "1970-01-01T00:00:00Z".to_owned(),
+                })
+            })
+            .unwrap();
+    }
+    copy_database(&from, &to).unwrap();
+    check_database_integrity(&to).unwrap();
+    let mut store = SqliteStore::open(&to).unwrap();
+    let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].vulnerability_id, "RUSTSEC-COPY");
+    assert!(from.exists());
+    remove_database_files(&from).unwrap();
+    assert!(!from.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn copy_database_refuses_existing_target() {
+    let root = scratch("copy-occupied");
+    let from = root.join("from.db");
+    let to = root.join("to.db");
+    SqliteStore::open(&from).unwrap();
+    SqliteStore::open(&to).unwrap();
+    let error = copy_database(&from, &to).expect_err("occupied");
+    assert!(error.to_string().contains("already exists"), "{error}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn copy_database_cleans_incomplete_target_on_integrity_failure() {
+    let root = scratch("copy-bad");
+    let from = root.join("from.db");
+    let to = root.join("to.db");
+    fs::write(&from, b"not a sqlite database").unwrap();
+    let error = copy_database(&from, &to).expect_err("bad source");
+    assert!(!to.exists(), "incomplete target must be removed: {error}");
+    let _ = fs::remove_dir_all(root);
 }

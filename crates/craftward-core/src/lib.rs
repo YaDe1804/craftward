@@ -27,6 +27,7 @@ mod radar;
 mod roadmap;
 #[cfg(feature = "schema")]
 mod schema;
+mod settings;
 mod store;
 mod target_sdk;
 mod undo;
@@ -64,8 +65,10 @@ pub use lifecycle::{
 };
 pub use load::{is_project_id, load_from_path, load_from_str};
 pub use location::{
-    Host, LocateError, OsFamily, ProcessHost, WorkspaceLocation, WorkspaceOrigin, locate_cache,
-    locate_data, locate_workspace,
+    DirLocation, Host, LocateError, OsFamily, PathOrigin, ProcessHost, SettingsOverrides,
+    StorageKind, WorkspaceLocation, WorkspaceOrigin, default_cache_dir, default_config_dir,
+    default_data_dir, default_workspace_file, locate_cache, locate_cache_with, locate_data,
+    locate_data_with, locate_workspace, locate_workspace_with, origin_label, resolve_storage,
 };
 pub use lockfile::{LockFailure, LockKind, PackageQuery, ParsedLock, lock_kind, parse_lock_text};
 pub use model::{
@@ -87,6 +90,11 @@ pub use roadmap::{
 };
 #[cfg(feature = "schema")]
 pub use schema::project_schema_json;
+pub use settings::{
+    SETTINGS_FILE, SETTINGS_SCHEMA_VERSION, Settings, SettingsError, complete_first_run,
+    default_settings_file, is_first_run, load_settings, load_settings_from, parse_settings,
+    relocate_workspace_file, remove_relocated_file, save_settings, save_settings_to,
+};
 pub use store::{
     DATABASE_FILE, EventKind, FindingKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION,
     Severity, StateFilter, StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,

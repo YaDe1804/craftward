@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Issues view uses fixed Severity / Status / Project / Title columns with
+  wrapping titles; watch-item rows wrap before the ··· menu; components
+  without `eol_product` hide support-data text; breadcrumb spacing matches
+  ordinary words.
 - Desktop date display uses `sys-locale` for the OS language first (then
   `LANG` / `LC_*`), so German Windows and Finder-launched macOS builds show
   `DD.MM.YYYY` without relying on environment variables. See
@@ -16,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- First-run setup wizard, `settings.json` with shared CLI/app path
+  resolution (command line → environment → settings → default), Settings
+  sidebar with data relocation, and `craftward settings show` /
+  `settings set workspace|data-dir|cache-dir`. See
+  [ADR 0027](docs/adr/0027-settings-file-and-data-relocation.md),
+  [docs/storage.md](docs/storage.md), [docs/desktop.md](docs/desktop.md),
+  and [docs/cli.md](docs/cli.md).
 - Desktop UI overhaul (AP14): left sidebar (Portfolio, Issues), roadmap
   colour palette and status glyphs via egui `monochrome_emoji_fonts`,
   cross-project Issues view with filter/sort/status/undo, locale-aware

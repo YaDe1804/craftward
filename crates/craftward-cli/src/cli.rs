@@ -204,6 +204,50 @@ pub(crate) enum Command {
     /// Show the Google Play target-API deadlines in use.
     #[command(long_about = DEADLINES_ABOUT)]
     Deadlines,
+    /// Show or change storage locations in the settings file.
+    #[command(long_about = SETTINGS_ABOUT)]
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum SettingsCommand {
+    /// Print workspace, data, and cache paths with their origin.
+    #[command(long_about = SETTINGS_SHOW_ABOUT)]
+    Show,
+    /// Change a storage location and relocate existing data when needed.
+    #[command(long_about = SETTINGS_SET_ABOUT)]
+    Set {
+        #[command(subcommand)]
+        command: SettingsSetCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum SettingsSetCommand {
+    /// Set the workspace.json path in settings and relocate the file.
+    #[command(long_about = SETTINGS_SET_WORKSPACE_ABOUT)]
+    Workspace {
+        /// New workspace.json path.
+        #[arg(value_name = "FILE")]
+        path: PathBuf,
+    },
+    /// Set the data directory in settings and relocate craftward.db.
+    #[command(name = "data-dir", long_about = SETTINGS_SET_DATA_ABOUT)]
+    DataDir {
+        /// New directory for craftward.db.
+        #[arg(value_name = "DIR")]
+        path: PathBuf,
+    },
+    /// Set the cache directory in settings (created empty).
+    #[command(name = "cache-dir", long_about = SETTINGS_SET_CACHE_ABOUT)]
+    CacheDir {
+        /// New directory for cached HTTP responses.
+        #[arg(value_name = "DIR")]
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -943,8 +987,8 @@ fn parse_finding_id(text: &str) -> Result<i64, String> {
 }
 
 const AFTER_HELP: &str = "\
---workspace selects the workspace file. Otherwise CRAFTWARD_WORKSPACE is used,
-then the default directory for this system.
+Storage paths resolve in this order: command-line option, environment
+variable, settings file, then the default directory for this system.
 
 Exit status:
   0  success, or radar found nothing
@@ -984,8 +1028,38 @@ const WORKSPACE_ABOUT: &str = "\
 The path subcommand prints which workspace file is in use.";
 
 const WORKSPACE_PATH_ABOUT: &str = "\
-Prints whether the file came from --workspace, CRAFTWARD_WORKSPACE, or the
-default location.";
+Prints whether the file came from --workspace, CRAFTWARD_WORKSPACE, the
+settings file, or the default location.";
+
+const SETTINGS_ABOUT: &str = "\
+Show or change the workspace file, data directory, and cache directory
+stored in settings.json. Paths fixed by a command-line option or
+environment variable cannot be changed here.";
+
+const SETTINGS_SHOW_ABOUT: &str = "\
+Prints each storage location and whether it came from a command-line
+option, an environment variable, the settings file, or the default.";
+
+const SETTINGS_SET_ABOUT: &str = "\
+Use workspace, data-dir, or cache-dir with a positional path. The global
+--workspace, --data-dir, and --cache-dir options keep their usual meaning
+(override for this invocation) and are not the destination. A location
+fixed by a command-line option or environment variable cannot be changed.";
+
+const SETTINGS_SET_WORKSPACE_ABOUT: &str = "\
+FILE is the new workspace.json path. An existing file is copied there,
+checked, then removed from the old path. A target that already exists is
+refused.";
+
+const SETTINGS_SET_DATA_ABOUT: &str = "\
+DIR is the new directory for craftward.db. The database is copied with
+SQLite's backup API and must pass integrity_check. A target that already
+exists is refused. The old database is removed only after settings are
+saved.";
+
+const SETTINGS_SET_CACHE_ABOUT: &str = "\
+DIR is the new cache directory. It is created empty; the previous cache
+is not copied.";
 
 const ROADMAP_ABOUT: &str = "\
 ID selects a project from the workspace. PATH is a craftward.json file or

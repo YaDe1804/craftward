@@ -61,13 +61,50 @@ impl Host for ProcessHost {
     }
 }
 
+/// Why a storage path was selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathOrigin {
+    /// A command-line option (`--workspace`, `--data-dir`, or `--cache-dir`).
+    CommandLine,
+    /// An environment variable.
+    Environment,
+    /// The settings file.
+    Settings,
+    /// The suggested directory for this operating system.
+    Default,
+}
+
+impl PathOrigin {
+    /// A short English label for UI and command output.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CommandLine => "command-line option",
+            Self::Environment => "environment variable",
+            Self::Settings => "settings file",
+            Self::Default => "default location",
+        }
+    }
+
+    /// Whether this origin can be changed from Settings.
+    #[must_use]
+    pub const fn is_editable(self) -> bool {
+        matches!(self, Self::Settings | Self::Default)
+    }
+}
+
 /// Why a workspace path was selected.
+///
+/// Prefer [`PathOrigin`] for new code. This type keeps the older labels that
+/// name `CRAFTWARD_WORKSPACE` explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceOrigin {
     /// The `--workspace` option.
     Option,
     /// The `CRAFTWARD_WORKSPACE` environment variable.
     Environment,
+    /// The settings file.
+    Settings,
     /// The suggested directory for this operating system.
     Default,
 }
@@ -79,7 +116,19 @@ impl WorkspaceOrigin {
         match self {
             Self::Option => "command-line option",
             Self::Environment => "environment variable CRAFTWARD_WORKSPACE",
+            Self::Settings => "settings file",
             Self::Default => "default location",
+        }
+    }
+
+    /// Converts to the shared [`PathOrigin`].
+    #[must_use]
+    pub const fn to_path_origin(self) -> PathOrigin {
+        match self {
+            Self::Option => PathOrigin::CommandLine,
+            Self::Environment => PathOrigin::Environment,
+            Self::Settings => PathOrigin::Settings,
+            Self::Default => PathOrigin::Default,
         }
     }
 }
@@ -92,6 +141,26 @@ pub struct WorkspaceLocation {
     pub path: PathBuf,
     /// Which rule selected [`Self::path`].
     pub origin: WorkspaceOrigin,
+}
+
+/// A directory path and the reason it was chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirLocation {
+    /// Resolved directory path.
+    pub path: PathBuf,
+    /// Which rule selected [`Self::path`].
+    pub origin: PathOrigin,
+}
+
+/// Optional path overrides from the settings file.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SettingsOverrides<'a> {
+    /// `workspace` field from settings.
+    pub workspace: Option<&'a Path>,
+    /// `data_dir` field from settings.
+    pub data_dir: Option<&'a Path>,
+    /// `cache_dir` field from settings.
+    pub cache_dir: Option<&'a Path>,
 }
 
 /// Failure to suggest a default workspace path.
@@ -154,6 +223,21 @@ pub fn locate_workspace(
     host: &impl Host,
     explicit: Option<&Path>,
 ) -> Result<WorkspaceLocation, LocateError> {
+    locate_workspace_with(host, explicit, None)
+}
+
+/// Chooses the workspace file, including an optional settings override.
+///
+/// Order: command line → `CRAFTWARD_WORKSPACE` → settings → default.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the default path cannot be built.
+pub fn locate_workspace_with(
+    host: &impl Host,
+    explicit: Option<&Path>,
+    from_settings: Option<&Path>,
+) -> Result<WorkspaceLocation, LocateError> {
     if let Some(path) = explicit {
         return Ok(WorkspaceLocation {
             path: path.to_path_buf(),
@@ -166,36 +250,56 @@ pub fn locate_workspace(
             origin: WorkspaceOrigin::Environment,
         });
     }
+    if let Some(path) = from_settings {
+        return Ok(WorkspaceLocation {
+            path: path.to_path_buf(),
+            origin: WorkspaceOrigin::Settings,
+        });
+    }
     Ok(WorkspaceLocation {
         path: default_workspace_file(host)?,
         origin: WorkspaceOrigin::Default,
     })
 }
 
-fn default_workspace_file(host: &impl Host) -> Result<PathBuf, LocateError> {
-    let directory = match host.os() {
+/// Platform config directory that holds the default `workspace.json`.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the directory cannot be built.
+pub fn default_config_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
+    match host.os() {
         OsFamily::Windows => {
             let app_data = non_empty(host.var("APPDATA")).ok_or(LocateError::NoAppData)?;
-            PathBuf::from(app_data).join("Craftward")
+            Ok(PathBuf::from(app_data).join("Craftward"))
         }
         OsFamily::Linux => {
             if let Some(config_home) = absolute_xdg(host, "XDG_CONFIG_HOME") {
-                PathBuf::from(config_home).join("craftward")
+                Ok(PathBuf::from(config_home).join("craftward"))
             } else {
-                host.home_dir()
+                Ok(host
+                    .home_dir()
                     .ok_or(LocateError::NoHome)?
                     .join(".config")
-                    .join("craftward")
+                    .join("craftward"))
             }
         }
-        OsFamily::MacOs => host
+        OsFamily::MacOs => Ok(host
             .home_dir()
             .ok_or(LocateError::NoHome)?
             .join("Library")
             .join("Application Support")
-            .join("Craftward"),
-    };
-    Ok(directory.join(WORKSPACE_FILE))
+            .join("Craftward")),
+    }
+}
+
+/// Platform-default workspace file path (ignores env and settings).
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the path cannot be built.
+pub fn default_workspace_file(host: &impl Host) -> Result<PathBuf, LocateError> {
+    Ok(default_config_dir(host)?.join(WORKSPACE_FILE))
 }
 
 /// Chooses the directory that stores cached OSV responses.
@@ -208,16 +312,51 @@ fn default_workspace_file(host: &impl Host) -> Result<PathBuf, LocateError> {
 /// Returns [`LocateError`] when no explicit path and no environment variable
 /// are set and the suggested directory cannot be built.
 pub fn locate_cache(host: &impl Host, explicit: Option<&Path>) -> Result<PathBuf, LocateError> {
-    if let Some(path) = explicit {
-        return Ok(path.to_path_buf());
-    }
-    if let Some(path) = non_empty(host.var(ENV_CACHE)) {
-        return Ok(PathBuf::from(path));
-    }
-    default_cache_dir(host)
+    Ok(locate_cache_with(host, explicit, None)?.path)
 }
 
-fn default_cache_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
+/// Chooses the cache directory, including an optional settings override.
+///
+/// Order: command line → `CRAFTWARD_CACHE_DIR` → settings → default.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the default path cannot be built.
+pub fn locate_cache_with(
+    host: &impl Host,
+    explicit: Option<&Path>,
+    from_settings: Option<&Path>,
+) -> Result<DirLocation, LocateError> {
+    if let Some(path) = explicit {
+        return Ok(DirLocation {
+            path: path.to_path_buf(),
+            origin: PathOrigin::CommandLine,
+        });
+    }
+    if let Some(path) = non_empty(host.var(ENV_CACHE)) {
+        return Ok(DirLocation {
+            path: PathBuf::from(path),
+            origin: PathOrigin::Environment,
+        });
+    }
+    if let Some(path) = from_settings {
+        return Ok(DirLocation {
+            path: path.to_path_buf(),
+            origin: PathOrigin::Settings,
+        });
+    }
+    Ok(DirLocation {
+        path: default_cache_dir(host)?,
+        origin: PathOrigin::Default,
+    })
+}
+
+/// Platform-default cache directory (ignores env and settings).
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the directory cannot be built.
+pub fn default_cache_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
     let directory = match host.os() {
         OsFamily::Windows => {
             let local = non_empty(host.var("LOCALAPPDATA")).ok_or(LocateError::NoLocalAppData)?;
@@ -253,16 +392,101 @@ fn default_cache_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
 /// Returns [`LocateError`] when no explicit path and no environment variable
 /// are set and the suggested directory cannot be built.
 pub fn locate_data(host: &impl Host, explicit: Option<&Path>) -> Result<PathBuf, LocateError> {
-    if let Some(path) = explicit {
-        return Ok(path.to_path_buf());
-    }
-    if let Some(path) = non_empty(host.var(ENV_DATA)) {
-        return Ok(PathBuf::from(path));
-    }
-    default_data_dir(host)
+    Ok(locate_data_with(host, explicit, None)?.path)
 }
 
-fn default_data_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
+/// Chooses the data directory, including an optional settings override.
+///
+/// Order: command line → `CRAFTWARD_DATA_DIR` → settings → default.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the default path cannot be built.
+pub fn locate_data_with(
+    host: &impl Host,
+    explicit: Option<&Path>,
+    from_settings: Option<&Path>,
+) -> Result<DirLocation, LocateError> {
+    if let Some(path) = explicit {
+        return Ok(DirLocation {
+            path: path.to_path_buf(),
+            origin: PathOrigin::CommandLine,
+        });
+    }
+    if let Some(path) = non_empty(host.var(ENV_DATA)) {
+        return Ok(DirLocation {
+            path: PathBuf::from(path),
+            origin: PathOrigin::Environment,
+        });
+    }
+    if let Some(path) = from_settings {
+        return Ok(DirLocation {
+            path: path.to_path_buf(),
+            origin: PathOrigin::Settings,
+        });
+    }
+    Ok(DirLocation {
+        path: default_data_dir(host)?,
+        origin: PathOrigin::Default,
+    })
+}
+
+/// Resolves workspace, data, and cache together from CLI, env, settings, defaults.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when a default path cannot be built.
+pub fn resolve_storage(
+    host: &impl Host,
+    cli_workspace: Option<&Path>,
+    cli_data: Option<&Path>,
+    cli_cache: Option<&Path>,
+    settings: SettingsOverrides<'_>,
+) -> Result<(WorkspaceLocation, DirLocation, DirLocation), LocateError> {
+    let workspace = locate_workspace_with(host, cli_workspace, settings.workspace)?;
+    let data = locate_data_with(host, cli_data, settings.data_dir)?;
+    let cache = locate_cache_with(host, cli_cache, settings.cache_dir)?;
+    Ok((workspace, data, cache))
+}
+
+/// English label for a data-dir or cache-dir environment origin.
+#[must_use]
+pub fn environment_label_for(kind: StorageKind) -> &'static str {
+    match kind {
+        StorageKind::Workspace => "environment variable CRAFTWARD_WORKSPACE",
+        StorageKind::Data => "environment variable CRAFTWARD_DATA_DIR",
+        StorageKind::Cache => "environment variable CRAFTWARD_CACHE_DIR",
+    }
+}
+
+/// Which storage location is being described.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageKind {
+    /// The workspace file.
+    Workspace,
+    /// The data directory.
+    Data,
+    /// The cache directory.
+    Cache,
+}
+
+/// Human origin label for a resolved path, naming the env var when needed.
+#[must_use]
+pub fn origin_label(kind: StorageKind, origin: PathOrigin) -> &'static str {
+    match origin {
+        PathOrigin::CommandLine => "command-line option",
+        PathOrigin::Environment => environment_label_for(kind),
+        PathOrigin::Settings => "settings file",
+        PathOrigin::Default => "default location",
+    }
+}
+
+/// Platform-default data directory (ignores env and settings).
+///
+/// # Errors
+///
+/// Returns [`LocateError`] when the directory cannot be built.
+pub fn default_data_dir(host: &impl Host) -> Result<PathBuf, LocateError> {
     let directory = match host.os() {
         OsFamily::Windows => {
             let local = non_empty(host.var("LOCALAPPDATA")).ok_or(LocateError::NoLocalData)?;

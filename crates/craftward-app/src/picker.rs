@@ -24,6 +24,12 @@ pub enum PickKind {
     Lockfile,
     /// Source directory while editing project header fields.
     HeaderSourceFolder,
+    /// Parent folder for the workspace file (onboarding or settings).
+    WorkspaceFolder,
+    /// Data directory for craftward.db.
+    DataFolder,
+    /// Cache directory for HTTP responses.
+    CacheFolder,
 }
 
 /// One completed picker result.
@@ -54,6 +60,15 @@ pub trait PathPicker: Send {
 
     /// Opens a file dialog for a supported lockfile.
     fn pick_lockfile(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a folder dialog for the workspace file's parent directory.
+    fn pick_workspace_folder(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a folder dialog for the data directory.
+    fn pick_data_folder(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a folder dialog for the cache directory.
+    fn pick_cache_folder(&self, ctx: Context, tx: Sender<PickResult>);
 }
 
 /// Production picker that uses `rfd` on a worker thread.
@@ -108,6 +123,30 @@ impl PathPicker for RfdPicker {
                 .set_title("Choose lockfile")
                 .add_filter("Lockfiles", &["lock", "json"])
                 .pick_file()
+        });
+    }
+
+    fn pick_workspace_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::WorkspaceFolder, || {
+            rfd::FileDialog::new()
+                .set_title("Folder for workspace.json")
+                .pick_folder()
+        });
+    }
+
+    fn pick_data_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::DataFolder, || {
+            rfd::FileDialog::new()
+                .set_title("Folder for craftward.db")
+                .pick_folder()
+        });
+    }
+
+    fn pick_cache_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::CacheFolder, || {
+            rfd::FileDialog::new()
+                .set_title("Folder for the HTTP cache")
+                .pick_folder()
         });
     }
 }
@@ -213,6 +252,30 @@ impl PathPicker for FakePicker {
     fn pick_lockfile(&self, ctx: Context, tx: Sender<PickResult>) {
         let _ = tx.send(PickResult {
             kind: PickKind::Lockfile,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_workspace_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::WorkspaceFolder,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_data_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::DataFolder,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_cache_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::CacheFolder,
             path: self.take_next(),
         });
         ctx.request_repaint();

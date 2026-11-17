@@ -18,7 +18,10 @@ use crate::actions::{
 };
 use crate::date::{date_hint, format_date_for_display};
 use crate::load::{LoadedPortfolio, LoadedProject, load_portfolio};
+use crate::onboarding::{self, OnboardingAction, OnboardingState};
 use crate::picker::{PathPicker, PickKind, PickerInbox, RfdPicker};
+use crate::settings_panel::{self, SettingsEdit};
+use crate::storage::{self, StorageSnapshot};
 use crate::theme::{
     self, ACCENT, BACKGROUND, CARD, CARD_GAP, CARD_INNER, CARD_PADDING, CARD_ROUNDING,
     DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK,
@@ -49,15 +52,19 @@ enum Screen {
     },
     /// Cross-project issues list.
     Issues,
+    /// Storage settings.
+    Settings,
 }
 
-/// Primary sidebar destinations (Radar / Settings can be appended later).
+/// Primary sidebar destinations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NavItem {
     /// Portfolio overview and project detail.
     Portfolio,
     /// Cross-project issues.
     Issues,
+    /// Storage settings.
+    Settings,
 }
 
 /// Where a save error should appear.
@@ -317,6 +324,14 @@ pub struct CraftwardApp {
     picker: Box<dyn PathPicker>,
     /// Inbox for background picker results.
     picker_inbox: PickerInbox,
+    /// First-run wizard when present.
+    onboarding: Option<OnboardingState>,
+    /// Tip after finishing first-run setup.
+    post_setup_tip: bool,
+    /// Resolved storage snapshot for Settings.
+    storage: StorageSnapshot,
+    /// Settings screen widgets.
+    settings_edit: SettingsEdit,
 }
 
 impl CraftwardApp {
@@ -324,6 +339,25 @@ impl CraftwardApp {
     #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         apply_theme(&cc.egui_ctx);
+        let onboarding = if storage::needs_onboarding() {
+            match OnboardingState::start() {
+                Ok(state) => Some(state),
+                Err(error) => Some(OnboardingState {
+                    step: onboarding::OnboardingStep::Finish,
+                    draft: crate::storage::OnboardingDraft {
+                        workspace: String::new(),
+                        data_dir: String::new(),
+                        cache_dir: String::new(),
+                    },
+                    workspace_env: false,
+                    data_env: false,
+                    cache_env: false,
+                    error: Some(error),
+                }),
+            }
+        } else {
+            None
+        };
         let loaded = load_portfolio();
         let portfolio = build_portfolio(&loaded);
         Self {
@@ -337,12 +371,17 @@ impl CraftwardApp {
             undo: UndoState::new(),
             picker: Box::new(RfdPicker),
             picker_inbox: PickerInbox::default(),
+            onboarding,
+            post_setup_tip: false,
+            storage: StorageSnapshot::load(),
+            settings_edit: SettingsEdit::default(),
         }
     }
 
     fn reload(&mut self) {
         self.loaded = load_portfolio();
         self.portfolio = build_portfolio(&self.loaded);
+        self.storage = StorageSnapshot::load();
         self.edit.clear_all();
         self.overview.banner = None;
         if let Screen::Detail { index } = self.screen
@@ -357,6 +396,7 @@ impl CraftwardApp {
         match self.screen {
             Screen::Overview | Screen::Detail { .. } => NavItem::Portfolio,
             Screen::Issues => NavItem::Issues,
+            Screen::Settings => NavItem::Settings,
         }
     }
 
@@ -653,6 +693,10 @@ impl eframe::App for CraftwardApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.undo.tick(now_secs());
         self.drain_picker();
+        if self.onboarding.is_some() {
+            self.draw_onboarding_frame(ui);
+            return;
+        }
         self.handle_escape(ui);
         self.draw_sidebar(ui);
         self.draw_top_bar(ui);
@@ -743,6 +787,32 @@ impl CraftwardApp {
 }
 
 impl CraftwardApp {
+    fn draw_onboarding_frame(&mut self, ui: &mut Ui) {
+        CentralPanel::default()
+            .frame(
+                Frame::NONE
+                    .fill(BACKGROUND)
+                    .inner_margin(Margin::same(PAGE_MARGIN)),
+            )
+            .show(ui, |ui| {
+                let Some(state) = self.onboarding.as_mut() else {
+                    return;
+                };
+                let action = onboarding::draw_onboarding(
+                    ui,
+                    state,
+                    self.picker.as_ref(),
+                    &self.picker_inbox,
+                );
+                if action == OnboardingAction::Finished {
+                    self.onboarding = None;
+                    self.post_setup_tip = true;
+                    self.reload();
+                    self.screen = Screen::Overview;
+                }
+            });
+    }
+
     fn drain_picker(&mut self) {
         while let Some(result) = self.picker_inbox.try_recv() {
             let Some(path) = result.path else {
@@ -783,6 +853,18 @@ impl CraftwardApp {
                             "Lockfile must be inside the source folder".to_owned(),
                             false,
                         );
+                    }
+                }
+                PickKind::WorkspaceFolder | PickKind::DataFolder | PickKind::CacheFolder => {
+                    if let Some(state) = self.onboarding.as_mut() {
+                        onboarding::apply_pick(state, result.kind, &path);
+                    } else if settings_panel::apply_settings_pick(
+                        &self.storage,
+                        &mut self.settings_edit,
+                        result.kind,
+                        &path,
+                    ) {
+                        self.reload();
                     }
                 }
             }
@@ -877,6 +959,13 @@ impl CraftwardApp {
                     self.edit.clear_all();
                     self.focus_issue_id = None;
                 }
+                if Self::draw_nav_entry(ui, "Settings", active == NavItem::Settings) {
+                    self.screen = Screen::Settings;
+                    self.edit.clear_all();
+                    self.focus_issue_id = None;
+                    self.settings_edit = SettingsEdit::default();
+                    self.storage = StorageSnapshot::load();
+                }
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                     draw_sidebar_paths(ui, &self.portfolio);
                 });
@@ -927,11 +1016,20 @@ impl CraftwardApp {
                                     .strong(),
                             );
                         }
+                        Screen::Settings => {
+                            ui.label(
+                                RichText::new("Settings")
+                                    .font(TYPE.title_id())
+                                    .color(TEXT)
+                                    .strong(),
+                            );
+                        }
                         Screen::Detail { index } => {
                             let name = self.loaded.projects.get(index).map_or_else(
                                 || "Unavailable project".to_owned(),
                                 |project| build_detail(index, project).name,
                             );
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             if ui
                                 .add(
                                     Button::new(
@@ -941,7 +1039,8 @@ impl CraftwardApp {
                                             .strong(),
                                     )
                                     .fill(BACKGROUND)
-                                    .stroke(Stroke::NONE),
+                                    .stroke(Stroke::NONE)
+                                    .min_size(Vec2::ZERO),
                                 )
                                 .on_hover_text("Return to the portfolio (Esc)")
                                 .clicked()
@@ -949,7 +1048,7 @@ impl CraftwardApp {
                                 self.go_portfolio_overview();
                             }
                             ui.label(
-                                RichText::new(format!("› {name}"))
+                                RichText::new(format!(" › {name}"))
                                     .font(TYPE.title_id())
                                     .color(TEXT)
                                     .strong(),
@@ -993,6 +1092,15 @@ impl CraftwardApp {
                     }
                     Screen::Issues => {
                         action = self.draw_issues_screen(ui);
+                    }
+                    Screen::Settings => {
+                        settings_panel::draw_settings(
+                            ui,
+                            &self.storage,
+                            &mut self.settings_edit,
+                            self.picker.as_ref(),
+                            &self.picker_inbox,
+                        );
                     }
                     Screen::Detail { index } => {
                         if let Some(banner) = self.edit.banner.clone() {
@@ -1150,13 +1258,77 @@ impl CraftwardApp {
             return None;
         }
         let status_width = status_chip_column_width(ui, issue_status_choices());
+        let severity_width = 110.0_f32;
+        let status_col = status_width + 8.0;
+        let project_width = 140.0_f32;
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [severity_width, 18.0],
+                Label::new(
+                    RichText::new("Severity")
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                ),
+            );
+            ui.add_sized(
+                [status_col, 18.0],
+                Label::new(
+                    RichText::new("Status")
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                ),
+            );
+            ui.add_sized(
+                [project_width, 18.0],
+                Label::new(
+                    RichText::new("Project")
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                ),
+            );
+            ui.label(
+                RichText::new("Title")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+        });
+        ui.add_space(4.0);
         ScrollArea::vertical().show(ui, |ui| {
             for row in &rows {
                 ui.horizontal(|ui| {
-                    let open = ui
-                        .add(
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(severity_width, ui.spacing().interact_size.y),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            draw_badge(ui, &row.severity, None);
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(status_col, ui.spacing().interact_size.y),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            if let Some(status) = status_menu(
+                                ui,
+                                &format!("portfolio-issue-{}", row.issue_id),
+                                row.status.label,
+                                status_colour(&row.status),
+                                issue_status_choices(),
+                                status_width,
+                            ) {
+                                action = Some(DetailAction::SetIssueStatus {
+                                    project_index: Some(row.project_index),
+                                    issue_id: row.issue_id.clone(),
+                                    status: status.to_owned(),
+                                    title: row.title.clone(),
+                                });
+                            }
+                        },
+                    );
+                    let project_clicked = ui
+                        .add_sized(
+                            [project_width, ui.spacing().interact_size.y],
                             Button::new(
-                                RichText::new(format!("{} · {}", row.project_name, row.title))
+                                RichText::new(&row.project_name)
                                     .font(TYPE.body_id())
                                     .color(TEXT),
                             )
@@ -1164,26 +1336,16 @@ impl CraftwardApp {
                             .stroke(Stroke::NONE),
                         )
                         .clicked();
-                    draw_badge(ui, &row.severity, None);
-                    if let Some(status) = status_menu(
-                        ui,
-                        &format!("portfolio-issue-{}", row.issue_id),
-                        row.status.label,
-                        status_colour(&row.status),
-                        issue_status_choices(),
-                        status_width,
-                    ) {
-                        action = Some(DetailAction::SetIssueStatus {
-                            project_index: Some(row.project_index),
-                            issue_id: row.issue_id.clone(),
-                            status: status.to_owned(),
-                            title: row.title.clone(),
-                        });
-                    }
-                    if open {
+                    let title_response = ui.add(
+                        Label::new(RichText::new(&row.title).font(TYPE.body_id()).color(TEXT))
+                            .wrap()
+                            .sense(Sense::click()),
+                    );
+                    if project_clicked || title_response.clicked() {
                         self.open_project_issue(row.project_index, &row.issue_id);
                     }
                 });
+                ui.add_space(2.0);
             }
         });
         action
@@ -1250,6 +1412,28 @@ impl CraftwardApp {
             });
             ui.add_space(8.0);
         }
+        if self.post_setup_tip {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(
+                        "Setup complete. Use New project or Add existing to fill the portfolio.",
+                    )
+                    .font(TYPE.body_id())
+                    .color(TEXT),
+                );
+                if ui
+                    .add(Button::new(
+                        RichText::new("Dismiss")
+                            .font(TYPE.secondary_id())
+                            .color(MUTED),
+                    ))
+                    .clicked()
+                {
+                    self.post_setup_tip = false;
+                }
+            });
+            ui.add_space(8.0);
+        }
         ui.horizontal(|ui| {
             if ui
                 .add(Button::new(
@@ -1261,6 +1445,7 @@ impl CraftwardApp {
             {
                 self.overview.add_project = None;
                 self.overview.new_project = Some(NewProjectForm::default());
+                self.post_setup_tip = false;
             }
             if ui
                 .add(Button::new(
@@ -1272,6 +1457,7 @@ impl CraftwardApp {
             {
                 self.overview.new_project = None;
                 self.overview.add_project = Some(AddProjectForm::default());
+                self.post_setup_tip = false;
             }
         });
         if let Some(form) = self.overview.new_project.clone() {
@@ -2006,7 +2192,7 @@ fn draw_stack_section(
             let eol = component
                 .eol_product
                 .as_ref()
-                .map_or(String::new(), |value| format!(" · eol:{value}"));
+                .map_or(String::new(), |value| format!(" · support data: {value}"));
             ui.add(
                 Label::new(
                     RichText::new(format!("{}{version}{eol}", component.name))
@@ -2151,40 +2337,38 @@ fn draw_deadlines_section(
     for row in &detail.deadlines {
         ui.horizontal(|ui| {
             draw_badge(ui, &row.kind, None);
-            ui.add(
-                Label::new(
-                    RichText::new(format!(
-                        "{} — {} ({})",
-                        row.title,
-                        format_date_for_display(&row.due),
-                        row.remaining
-                    ))
-                    .font(TYPE.body_id())
-                    .color(TEXT),
-                )
-                .wrap(),
+            let text = format!(
+                "{} — {} ({})",
+                row.title,
+                format_date_for_display(&row.due),
+                row.remaining
             );
-            if editable && let Some(watch_id) = &row.watch_id {
+            if editable && row.watch_id.is_some() {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button(
-                        RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
-                        |ui| {
-                            if ui.button("Edit").clicked() {
-                                edit.close_forms();
-                                edit.watch_edit =
-                                    Some((watch_id.clone(), WatchEditForm::from_deadline(row)));
-                                ui.close();
-                            }
-                            if ui.button("Remove").clicked() {
-                                action = Some(DetailAction::RemoveWatch {
-                                    watch_id: watch_id.clone(),
-                                    title: row.title.clone(),
-                                });
-                                ui.close();
-                            }
-                        },
-                    );
+                    if let Some(watch_id) = &row.watch_id {
+                        ui.menu_button(
+                            RichText::new("···").font(TYPE.secondary_id()).color(MUTED),
+                            |ui| {
+                                if ui.button("Edit").clicked() {
+                                    edit.close_forms();
+                                    edit.watch_edit =
+                                        Some((watch_id.clone(), WatchEditForm::from_deadline(row)));
+                                    ui.close();
+                                }
+                                if ui.button("Remove").clicked() {
+                                    action = Some(DetailAction::RemoveWatch {
+                                        watch_id: watch_id.clone(),
+                                        title: row.title.clone(),
+                                    });
+                                    ui.close();
+                                }
+                            },
+                        );
+                    }
+                    ui.add(Label::new(RichText::new(text).font(TYPE.body_id()).color(TEXT)).wrap());
                 });
+            } else {
+                ui.add(Label::new(RichText::new(text).font(TYPE.body_id()).color(TEXT)).wrap());
             }
         });
     }

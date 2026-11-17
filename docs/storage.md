@@ -1,13 +1,51 @@
-# Local database
+# Local database and settings
 
 `craftward radar` stores findings, their history, and one row per project
 check in `craftward.db`. `craftward findings` reads the same file. The
 OSV cache stays a separate directory of JSON files, described in
-[radar.md](radar.md).
+[radar.md](radar.md). The desktop app and the CLI share the same path
+rules and the same `settings.json` file (see
+[ADR 0027](adr/0027-settings-file-and-data-relocation.md)).
 
-## Location
+## Path resolution
 
-The directory is `--data-dir`, then `CRAFTWARD_DATA_DIR`, then:
+Every storage location (workspace file, data directory, cache directory)
+is resolved in this order, in both the CLI and the desktop app:
+
+1. Command-line option (`--workspace`, `--data-dir`, `--cache-dir`)
+2. Environment variable (`CRAFTWARD_WORKSPACE`, `CRAFTWARD_DATA_DIR`,
+   `CRAFTWARD_CACHE_DIR`)
+3. Settings file (`settings.json`)
+4. Platform default
+
+An empty environment variable is treated as unset.
+
+## Settings file
+
+`settings.json` lives next to the platform-default workspace directory
+(the config folder from ADR 0007 / the workspace registry docs). Schema
+version is `1`. Unknown fields are rejected. Optional string fields:
+
+| Field | Meaning |
+| --- | --- |
+| `workspace` | Path of `workspace.json` |
+| `data_dir` | Directory that holds `craftward.db` |
+| `cache_dir` | Directory for cached HTTP responses |
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "workspace": "C:\\Users\\dev\\AppData\\Roaming\\Craftward\\workspace.json",
+  "data_dir": "C:\\Users\\dev\\AppData\\Local\\Craftward",
+  "cache_dir": "C:\\Users\\dev\\AppData\\Local\\Craftward\\cache"
+}
+```
+
+## Data directory
+
+The directory is resolved as above. Platform defaults:
 
 | System | Default |
 | --- | --- |
@@ -15,8 +53,29 @@ The directory is `--data-dir`, then `CRAFTWARD_DATA_DIR`, then:
 | Linux | `$XDG_DATA_HOME/craftward` when absolute, or `~/.local/share/craftward` |
 | macOS | `~/Library/Application Support/Craftward` |
 
-An empty environment variable is treated as unset. The directory is created
-when the database is opened. The file name is `craftward.db`.
+The directory is created when the database is opened. The file name is
+`craftward.db`.
+
+## Relocation
+
+Changing a location (desktop Settings or `craftward settings set`) copies
+existing data to the new path, verifies it, writes `settings.json`, then
+removes the old copy. On the CLI the destination is a positional argument
+(`settings set workspace FILE`, `settings set data-dir DIR`,
+`settings set cache-dir DIR`). Global `--workspace` / `--data-dir` /
+`--cache-dir` still mean “use this path for this invocation” and are not
+the destination.
+
+- **Workspace:** copy `workspace.json` (or write an empty registry when
+  the source is missing). Refuse if the target file already exists.
+- **Data:** copy `craftward.db` with SQLite's online backup API (includes
+  committed WAL frames), then `PRAGMA integrity_check` must be `ok`.
+  Refuse if the target database already exists. On failure the incomplete
+  target is removed and the old files stay.
+- **Cache:** create the new directory only; the cache may rebuild.
+
+A path fixed by a command-line option or environment variable cannot be
+changed in settings until that override is cleared.
 
 Do not put this directory on a network drive. The database uses SQLite's
 WAL journal, and WAL needs a small shared-memory file next to the database.

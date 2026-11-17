@@ -7,13 +7,13 @@
 
 ### Navigation
 
-`craftward-app` uses a fixed left sidebar with **Portfolio** and **Issues**.
-The project detail page belongs to Portfolio; the top breadcrumb is
-`Portfolio › <name>` with **Portfolio** clickable (Esc returns there). A
+`craftward-app` uses a fixed left sidebar with **Portfolio**, **Issues**,
+and **Settings** (Radar can still be added later). The project detail page
+belongs to Portfolio; the top breadcrumb is `Portfolio › <name>` with
+ordinary word spacing and **Portfolio** clickable (Esc returns there). A
 separate Back button is not shown when that breadcrumb is available.
 Workspace and database paths sit at the bottom of the sidebar, not in the
-footer. The sidebar is structured so **Radar** and **Settings** can be added
-later as entries only.
+footer.
 
 ### Colour palette
 
