@@ -6,6 +6,7 @@
 
 mod cache;
 mod category;
+mod cvss;
 mod date;
 mod deadlines;
 mod edit;
@@ -20,6 +21,7 @@ mod lifecycle;
 mod load;
 mod location;
 mod lockfile;
+mod merge;
 mod model;
 mod osv;
 mod paths;
@@ -32,12 +34,14 @@ mod settings;
 mod store;
 mod target_sdk;
 mod undo;
+mod urgency;
 mod workspace;
 
 pub use category::{
     CATEGORY_MAX_LEN, display_platform_name, normalize_category, normalize_category_against,
     project_platforms,
 };
+pub use cvss::{score_v3, severity_from_qualitative, severity_from_score};
 pub use date::{
     days_between, format_iso8601, format_unix_timestamp, is_calendar_date, unix_now, utc_date,
     utc_day,
@@ -76,6 +80,7 @@ pub use location::{
     locate_data_with, locate_workspace, locate_workspace_with, origin_label, resolve_storage,
 };
 pub use lockfile::{LockFailure, LockKind, PackageQuery, ParsedLock, lock_kind, parse_lock_text};
+pub use merge::{merge_aliased_findings, prefer_primary_id};
 pub use model::{
     AndroidConfig, AndroidStore, Component, ComponentKind, FormFactor, Issue, IssueSeverity,
     IssueStatus, Link, Phase, Plan, Project, ProjectStatus, Stack, Task, TaskStatus, WatchItem,
@@ -102,10 +107,12 @@ pub use settings::{
 };
 pub use store::{
     DATABASE_FILE, EventKind, FindingKind, FindingState, NewFinding, NewRun, SCHEMA_VERSION,
-    Severity, StateFilter, StateStore, StoreError, StoreSession, StoredEvent, StoredFinding,
+    Severity, SeveritySource, StateFilter, StateStore, StoreError, StoreSession, StoredEvent,
+    StoredFinding,
 };
 pub use target_sdk::{Detection, detect as detect_target_sdk};
 pub use undo::{UNDO_VISIBLE_SECS, UndoOffer, UndoSnapshot, UndoState};
+pub use urgency::{ProjectOrderKey, compare_project_order};
 pub use workspace::{
     ProjectRow, ProjectSnapshot, Workspace, WorkspaceEntry, WorkspaceError, add_project,
     add_project_if_unchanged, delete_project_file, init_project, list_projects, load_or_empty,

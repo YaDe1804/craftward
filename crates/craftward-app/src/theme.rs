@@ -138,6 +138,47 @@ pub const CARD_GAP: f32 = 12.0;
 /// Inner padding of a card in points.
 pub const CARD_PADDING: i8 = 14;
 
+/// Width reserved for the portfolio card `···` menu control (points).
+pub const CARD_MENU_BUTTON_WIDTH: f32 = 32.0;
+
+/// Gap between the centered card title and the `···` menu (points).
+pub const CARD_TITLE_MENU_GAP: f32 = 8.0;
+
+/// Left and right inset for a centered project title on a card that shares the
+/// row with the menu (`CARD_MENU_BUTTON_WIDTH` + `CARD_TITLE_MENU_GAP`).
+pub const CARD_TITLE_SIDE_RESERVE: f32 = CARD_MENU_BUTTON_WIDTH + CARD_TITLE_MENU_GAP;
+
+/// Horizontal inset when centering a project title without a trailing control
+/// (detail overview), matching the card side rhythm.
+pub const PROJECT_TITLE_SIDE_PAD: f32 = CARD_TITLE_MENU_GAP;
+
+/// Equal column width for a portfolio grid row of `slots` columns.
+///
+/// Depends only on the row width, slot count, and inter-column `gap` — never on
+/// card titles or other content.
+#[must_use]
+pub fn portfolio_column_width(grid_width: f32, slots: usize, gap: f32) -> f32 {
+    let slots = u8::try_from(slots.max(1)).unwrap_or(u8::MAX);
+    let gaps = f32::from(slots.saturating_sub(1));
+    ((grid_width - gap * gaps) / f32::from(slots)).max(0.0)
+}
+
+/// Width available for a centered title inside card content of `content_width`.
+///
+/// Depends only on the column/content width and [`CARD_TITLE_SIDE_RESERVE`],
+/// never on the title string. Call sites must wrap the title to this width and
+/// must not request a wider layout.
+#[must_use]
+pub fn card_centered_title_width(content_width: f32) -> f32 {
+    (content_width - 2.0 * CARD_TITLE_SIDE_RESERVE).max(0.0)
+}
+
+/// Width available for a centered title with a custom side pad (detail page).
+#[must_use]
+pub fn project_centered_title_width(content_width: f32, side_pad: f32) -> f32 {
+    (content_width - 2.0 * side_pad).max(0.0)
+}
+
 /// Corner radius for cards and buttons.
 pub const CARD_ROUNDING: u8 = 10;
 
@@ -463,13 +504,15 @@ mod tests {
     use eframe::egui::Color32;
 
     use super::{
-        ACCENT, BACKGROUND, CARD, CARD_CONTENT_MIN_HEIGHT, CARD_GLOW_HEIGHT_FRACTION,
+        ACCENT, BACKGROUND, CARD, CARD_CONTENT_MIN_HEIGHT, CARD_GAP, CARD_GLOW_HEIGHT_FRACTION,
         CARD_GLOW_OPACITY_ACTIVE, CARD_GLOW_OPACITY_HOVER, CARD_GLOW_OPACITY_IDLE,
-        CARD_ITEM_SPACING_Y, CARD_PADDING, CARD2, DONE, MIN_FONT_SIZE, MUTED, OPEN_TEXT, RUNNING,
-        SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, STATUS_DISCONTINUED,
-        STATUS_IDEA, STATUS_IN_DEVELOPMENT, STATUS_MAINTENANCE, STATUS_PAUSED, STATUS_RELEASED,
-        TEXT, TYPE, blend_over, build_card_glow_image, card_glow_weight_at_height_fraction,
-        contrast_ratio, project_status_colour, project_status_style,
+        CARD_ITEM_SPACING_Y, CARD_PADDING, CARD_TITLE_SIDE_RESERVE, CARD2, DONE, MIN_FONT_SIZE,
+        MUTED, OPEN_TEXT, PROJECT_TITLE_SIDE_PAD, RUNNING, SEVERITY_CRITICAL, SEVERITY_HIGH,
+        SEVERITY_LOW, SEVERITY_MEDIUM, STATUS_DISCONTINUED, STATUS_IDEA, STATUS_IN_DEVELOPMENT,
+        STATUS_MAINTENANCE, STATUS_PAUSED, STATUS_RELEASED, TEXT, TYPE, blend_over,
+        build_card_glow_image, card_centered_title_width, card_glow_weight_at_height_fraction,
+        contrast_ratio, portfolio_column_width, project_centered_title_width,
+        project_status_colour, project_status_style,
     };
 
     fn all_text_colours() -> [Color32; 10] {
@@ -596,6 +639,37 @@ mod tests {
                 "{foreground:?}: severity/status badge contrast {ratio:.2}:1 on CARD2"
             );
         }
+    }
+
+    #[test]
+    fn card_title_wrap_width_depends_only_on_column_width() {
+        // Layout width is a pure function of the column — title length never
+        // enters the calculation (call sites wrap inside this width).
+        let narrow = card_centered_title_width(280.0);
+        let wide = card_centered_title_width(420.0);
+        assert_eq!(narrow, 280.0 - 2.0 * CARD_TITLE_SIDE_RESERVE);
+        assert_eq!(wide, 420.0 - 2.0 * CARD_TITLE_SIDE_RESERVE);
+        assert!(narrow < wide);
+        assert_eq!(
+            card_centered_title_width(280.0),
+            card_centered_title_width(280.0)
+        );
+        assert_eq!(
+            project_centered_title_width(500.0, PROJECT_TITLE_SIDE_PAD),
+            500.0 - 2.0 * PROJECT_TITLE_SIDE_PAD
+        );
+        assert_eq!(card_centered_title_width(10.0), 0.0);
+        // Equal columns: same for every slot, independent of any title string.
+        let col = portfolio_column_width(900.0, 2, CARD_GAP);
+        assert_eq!(col, (900.0 - CARD_GAP) / 2.0);
+        assert_eq!(
+            portfolio_column_width(900.0, 2, CARD_GAP),
+            portfolio_column_width(900.0, 2, CARD_GAP)
+        );
+        assert_eq!(
+            card_centered_title_width(col),
+            card_centered_title_width(portfolio_column_width(900.0, 2, CARD_GAP))
+        );
     }
 
     #[test]

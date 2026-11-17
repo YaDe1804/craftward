@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use crate::cvss::{score_v3, severity_from_qualitative};
 use crate::http::{
     HttpClient, HttpError, HttpRequest, MAX_RESPONSE_BYTES, Method, accepted_body_or,
 };
@@ -15,7 +16,7 @@ use crate::json_loose::{
 };
 use crate::lockfile::PackageQuery;
 use crate::percent::encode;
-use crate::store::{FindingKind, Severity};
+use crate::store::{FindingKind, Severity, SeveritySource};
 use serde_json::Value;
 
 /// Queries in one `querybatch` request.
@@ -41,6 +42,8 @@ pub struct Advisory {
     pub summary: String,
     /// How severe the record is.
     pub severity: Severity,
+    /// Where [`Self::severity`] came from.
+    pub severity_source: SeveritySource,
     /// Packages named by the record, with the versions that fix the issue.
     pub affected: Vec<AffectedPackage>,
     /// The record has a non-empty `withdrawn` timestamp.
@@ -120,11 +123,7 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
         .clone()
         .ok_or_else(|| "OSV vulnerability has no id".to_owned())?;
     let kind = classify_kind(&id, &record);
-    let severity = record
-        .database_specific
-        .as_ref()
-        .and_then(|specific| specific.severity.as_deref())
-        .map_or(Severity::Unknown, map_severity);
+    let (mut severity, mut severity_source) = resolve_severity(&record);
     let affected = record
         .affected
         .iter()
@@ -134,20 +133,78 @@ pub fn parse_advisory(body: &[u8]) -> Result<Advisory, String> {
         .withdrawn
         .as_deref()
         .is_some_and(|text| !text.is_empty());
-    let severity = if kind == FindingKind::Malicious {
-        Severity::Critical
-    } else {
-        severity
-    };
+    if kind == FindingKind::Malicious {
+        severity = Severity::Critical;
+        severity_source = SeveritySource::Advisory;
+    }
     Ok(Advisory {
         id,
         aliases: record.aliases,
         summary: record.summary,
         severity,
+        severity_source,
         affected,
         withdrawn,
         kind,
     })
+}
+
+fn resolve_severity(record: &OsvVuln) -> (Severity, SeveritySource) {
+    if let Some(label) = record
+        .database_specific
+        .as_ref()
+        .and_then(|specific| specific.severity.as_deref())
+    {
+        let mapped = map_severity(label);
+        if mapped != Severity::Unknown {
+            return (mapped, SeveritySource::Advisory);
+        }
+    }
+    let mut best: Option<(Severity, SeveritySource)> = None;
+    for entry in &record.severity {
+        let candidate = match entry.kind.as_deref() {
+            Some("CVSS_V3" | "CVSS_V3_1" | "CVSS_V3.1" | "CVSS_V3.0") => entry
+                .score
+                .as_deref()
+                .and_then(score_v3)
+                .map(|(_, severity)| (severity, SeveritySource::Cvss)),
+            Some("CVSS_V4" | "CVSS_V4_0") => entry
+                .score
+                .as_deref()
+                .and_then(severity_from_qualitative)
+                .or_else(|| {
+                    entry
+                        .score
+                        .as_deref()
+                        .and_then(|text| text.split('/').next())
+                        .and_then(severity_from_qualitative)
+                })
+                .map(|severity| (severity, SeveritySource::Advisory)),
+            _ => entry
+                .score
+                .as_deref()
+                .and_then(severity_from_qualitative)
+                .map(|severity| (severity, SeveritySource::Advisory)),
+        };
+        if let Some((severity, source)) = candidate {
+            let replace =
+                best.is_none_or(|(current, _)| severity_rank(severity) < severity_rank(current));
+            if replace {
+                best = Some((severity, source));
+            }
+        }
+    }
+    best.unwrap_or((Severity::Unknown, SeveritySource::Unknown))
+}
+
+fn severity_rank(severity: Severity) -> u8 {
+    match severity {
+        Severity::Critical => 0,
+        Severity::High => 1,
+        Severity::Medium => 2,
+        Severity::Low => 3,
+        Severity::Unknown => 4,
+    }
 }
 
 fn classify_kind(id: &str, record: &OsvVuln) -> FindingKind {
@@ -387,8 +444,18 @@ struct OsvVuln {
     withdrawn: Option<String>,
     #[serde(default)]
     database_specific: Option<DatabaseSpecific>,
+    #[serde(default, deserialize_with = "lenient_vec")]
+    severity: Vec<OsvSeverity>,
     #[serde(default, deserialize_with = "strict_vec")]
     affected: Vec<OsvAffected>,
+}
+
+#[derive(Deserialize)]
+struct OsvSeverity {
+    #[serde(rename = "type", default, deserialize_with = "optional_string")]
+    kind: Option<String>,
+    #[serde(default, deserialize_with = "optional_string")]
+    score: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -599,6 +666,59 @@ mod tests {
             informational.contains("expected string") || informational.contains("invalid type"),
             "{informational}"
         );
+    }
+
+    #[test]
+    fn severity_prefers_ghsa_label_then_cvss_v3() {
+        use crate::store::SeveritySource;
+
+        let advisory = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-1",
+            "database_specific": {"severity": "HIGH"},
+            "severity": [{
+                "type": "CVSS_V3",
+                "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+            }],
+            "affected": []
+        })))
+        .unwrap();
+        assert_eq!(advisory.severity, Severity::High);
+        assert_eq!(advisory.severity_source, SeveritySource::Advisory);
+
+        let from_cvss = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-2",
+            "severity": [{
+                "type": "CVSS_V3",
+                "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+            }],
+            "affected": []
+        })))
+        .unwrap();
+        assert_eq!(from_cvss.severity, Severity::Critical);
+        assert_eq!(from_cvss.severity_source, SeveritySource::Cvss);
+
+        let v4_label = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-3",
+            "severity": [{
+                "type": "CVSS_V4",
+                "score": "CRITICAL"
+            }],
+            "affected": []
+        })))
+        .unwrap();
+        assert_eq!(v4_label.severity, Severity::Critical);
+
+        let v4_vector_only = parse_advisory(&body(&serde_json::json!({
+            "id": "GHSA-4",
+            "severity": [{
+                "type": "CVSS_V4",
+                "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+            }],
+            "affected": []
+        })))
+        .unwrap();
+        assert_eq!(v4_vector_only.severity, Severity::Unknown);
+        assert_eq!(v4_vector_only.severity_source, SeveritySource::Unknown);
     }
 
     #[test]

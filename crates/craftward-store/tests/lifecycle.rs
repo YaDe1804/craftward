@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use craftward_core::{
     EventKind, Finding, FindingKind, FindingState, LockKind, LockfileReport, NewFinding,
-    ProjectReport, SCHEMA_VERSION, Severity, StateFilter, StateStore, apply_reports,
-    ignore_finding, list_findings, render_ledger_text, reopen_finding, show_finding,
+    ProjectReport, SCHEMA_VERSION, Severity, SeveritySource, StateFilter, StateStore,
+    apply_reports, ignore_finding, list_findings, render_ledger_text, reopen_finding, show_finding,
 };
 use craftward_store::{
     SqliteStore, check_database_integrity, copy_database, remove_database_files,
@@ -35,7 +35,9 @@ fn finding(version: &str) -> Finding {
         version: version.to_owned(),
         id: "RUSTSEC-2024-0384".to_owned(),
         aliases: vec!["CVE-1".to_owned()],
+        related_ids: vec!["RUSTSEC-2024-0384".to_owned(), "CVE-1".to_owned()],
         severity: Severity::High,
+        severity_source: SeveritySource::Advisory,
         summary: "unmaintained".to_owned(),
         fixed_versions: vec!["0.1.13".to_owned()],
         url: "https://osv.dev/vulnerability/RUSTSEC-2024-0384".to_owned(),
@@ -44,13 +46,16 @@ fn finding(version: &str) -> Finding {
 }
 
 fn eol_hit(version: &str, cycle: &str) -> Finding {
+    let id = format!("EOL:postgresql:{cycle}");
     Finding {
         ecosystem: "endoflife".to_owned(),
         package: "postgresql".to_owned(),
         version: version.to_owned(),
-        id: format!("EOL:postgresql:{cycle}"),
+        id: id.clone(),
         aliases: Vec::new(),
+        related_ids: vec![id],
         severity: Severity::High,
+        severity_source: SeveritySource::Advisory,
         summary: "support ended".to_owned(),
         fixed_versions: Vec::new(),
         url: "https://endoflife.date/postgresql".to_owned(),
@@ -600,11 +605,13 @@ fn play(kind: FindingKind, summary: &str, version: &str) -> Finding {
         version: version.to_owned(),
         id: "PLAY:phone:new_apps_and_updates".to_owned(),
         aliases: Vec::new(),
+        related_ids: vec!["PLAY:phone:new_apps_and_updates".to_owned()],
         severity: if kind == FindingKind::PlatformDeadline {
             Severity::High
         } else {
             Severity::Medium
         },
+        severity_source: SeveritySource::Advisory,
         summary: summary.to_owned(),
         fixed_versions: Vec::new(),
         url: "https://example.com/play".to_owned(),
@@ -855,8 +862,10 @@ fn two_writers_on_one_file_both_finish() {
                     severity: Severity::Low,
                     summary: "held".to_owned(),
                     aliases: Vec::new(),
+                    related_ids: vec!["RUSTSEC-HELD".to_owned()],
                     fixed_versions: Vec::new(),
                     kind: FindingKind::Notice,
+                    severity_source: SeveritySource::Advisory,
                     seen_at: "1970-01-01T00:00:00Z".to_owned(),
                 })?;
                 Ok(())
@@ -1138,8 +1147,10 @@ fn list_findings_filters_state_and_projects_like_the_old_scan() {
                     severity,
                     summary: id.to_owned(),
                     aliases: Vec::new(),
+                    related_ids: vec![id.to_owned()],
                     fixed_versions: Vec::new(),
                     kind,
+                    severity_source: SeveritySource::Advisory,
                     seen_at: "1970-01-01T00:00:00Z".to_owned(),
                 })?;
             }
@@ -1209,8 +1220,10 @@ fn copy_database_succeeds_and_passes_integrity() {
                     severity: Severity::Low,
                     summary: "copied".to_owned(),
                     aliases: Vec::new(),
+                    related_ids: vec!["RUSTSEC-COPY".to_owned()],
                     fixed_versions: Vec::new(),
                     kind: FindingKind::Notice,
+                    severity_source: SeveritySource::Advisory,
                     seen_at: "1970-01-01T00:00:00Z".to_owned(),
                 })
             })
@@ -1226,6 +1239,130 @@ fn copy_database_succeeds_and_passes_integrity() {
     remove_database_files(&from).unwrap();
     assert!(!from.exists());
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn version_6_merges_aliased_duplicates_and_keeps_ignore() {
+    let root = scratch("v7-merge");
+    let path = root.join("craftward.db");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE findings (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                ecosystem TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                vulnerability_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                aliases TEXT NOT NULL,
+                fixed_versions TEXT NOT NULL,
+                state TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                resolved_at TEXT,
+                ignore_reason TEXT,
+                ignore_until TEXT,
+                UNIQUE (project_id, ecosystem, package_name, vulnerability_id)
+            );
+            CREATE TABLE finding_events (
+                id INTEGER PRIMARY KEY,
+                finding_id INTEGER NOT NULL REFERENCES findings(id),
+                kind TEXT NOT NULL,
+                at TEXT NOT NULL,
+                reason TEXT NOT NULL
+            );
+            CREATE INDEX finding_events_finding ON finding_events(finding_id);
+            INSERT INTO findings (
+                id, project_id, ecosystem, package_name, vulnerability_id, version, severity,
+                summary, aliases, fixed_versions, state, kind, first_seen, last_seen,
+                resolved_at, ignore_reason, ignore_until
+            ) VALUES
+                (1, 'demo', 'crates.io', 'openssl', 'RUSTSEC-2026-0463', '0.10.76', 'high',
+                 'openssl hole', '[\"CVE-2026-1\"]', '[\"0.10.77\"]', 'open', 'vulnerability',
+                 '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', NULL, NULL, NULL),
+                (2, 'demo', 'crates.io', 'openssl', 'GHSA-8c75-8mhr-p7r9', '0.10.76', 'critical',
+                 'openssl hole ghsa', '[\"CVE-2026-1\"]', '[\"0.10.78\"]', 'ignored', 'vulnerability',
+                 '1970-01-02T00:00:00Z', '1970-01-03T00:00:00Z', NULL, 'accepted risk', '1970-06-01');
+            INSERT INTO finding_events (finding_id, kind, at, reason) VALUES
+                (1, 'discovered', '1970-01-01T00:00:00Z', ''),
+                (2, 'discovered', '1970-01-02T00:00:00Z', ''),
+                (2, 'ignored', '1970-01-03T00:00:00Z', 'accepted risk');",
+        )
+        .unwrap();
+    connection
+        .pragma_update(None, "user_version", 6_i64)
+        .unwrap();
+    connection.close().unwrap();
+
+    let mut store = SqliteStore::open(&path).unwrap();
+    assert!(root.join("craftward.db.bak-v6").exists());
+    let rows = list_findings(&mut store, &[], StateFilter::All, None).unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let survivor = &rows[0];
+    assert_eq!(survivor.id, 1);
+    assert_eq!(survivor.vulnerability_id, "GHSA-8c75-8mhr-p7r9");
+    assert!(
+        survivor
+            .related_ids
+            .contains(&"RUSTSEC-2026-0463".to_owned())
+    );
+    assert!(survivor.related_ids.contains(&"CVE-2026-1".to_owned()));
+    assert_eq!(survivor.severity, Severity::Critical);
+    assert_eq!(survivor.state, FindingState::Ignored);
+    assert_eq!(survivor.ignore_reason.as_deref(), Some("accepted risk"));
+    assert_eq!(survivor.ignore_until.as_deref(), Some("1970-06-01"));
+    assert!(
+        survivor
+            .fixed_versions
+            .iter()
+            .any(|version| version == "0.10.77")
+    );
+    assert!(
+        survivor
+            .fixed_versions
+            .iter()
+            .any(|version| version == "0.10.78")
+    );
+    let (_, events) = show_finding(&mut store, 1).unwrap();
+    assert!(events.iter().any(|event| event.kind == EventKind::Merged));
+    let error = show_finding(&mut store, 2).expect_err("merged away");
+    assert!(
+        error.to_string().contains("merged into finding 1"),
+        "{error}"
+    );
+    drop(store);
+    let version: i64 = Connection::open(&path)
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn all_ignored_findings_still_print_no_open_findings() {
+    let mut store = SqliteStore::open_in_memory().unwrap();
+    apply(&mut store, vec![finding("0.1.12")], NOW);
+    ignore_finding(&mut store, 1, "not for us", Some("2099-01-01"), LATER).unwrap();
+    let ledger = apply_reports(
+        &mut store,
+        &[report(vec![finding("0.1.12")], None)],
+        LATER,
+        LATER,
+        false,
+    )
+    .unwrap()
+    .remove(0);
+    assert!(ledger.open.is_empty(), "{:?}", ledger.open);
+    assert_eq!(ledger.ignored.len(), 1);
+    let text = render_ledger_text(std::slice::from_ref(&ledger), false);
+    assert!(text.contains("no open findings"), "{text}");
+    assert!(text.contains("ignored: 1"), "{text}");
+    assert!(!text.contains("RUSTSEC-2024-0384"), "{text}");
 }
 
 #[test]

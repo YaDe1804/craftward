@@ -4,7 +4,7 @@ use eframe::egui::{
     self, Align, Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Context, CornerRadius,
     Frame, Id, Key, Label, Layout, Margin, Panel, Pos2, ProgressBar, Rect, RichText, ScrollArea,
     Sense, Shape, Stroke, TextEdit, TextureHandle, Theme, ThemePreference, Ui, UiBuilder, Vec2,
-    epaint::RectShape, layers::ShapeIdx,
+    containers::scroll_area::ScrollBarVisibility, epaint::RectShape, layers::ShapeIdx,
 };
 
 use craftward_core::UndoState;
@@ -26,10 +26,11 @@ use crate::storage::{self, StorageSnapshot};
 use crate::theme::{
     self, ACCENT, BACKGROUND, CARD, CARD_CONTENT_MIN_HEIGHT, CARD_GAP, CARD_GLOW_ANIMATION_SECS,
     CARD_GLOW_HEIGHT_FRACTION, CARD_GLOW_OPACITY_ACTIVE, CARD_GLOW_OPACITY_HOVER,
-    CARD_GLOW_OPACITY_IDLE, CARD_INNER, CARD_PADDING, CARD_ROUNDING, DETAIL_TWO_COLUMNS_FROM, DONE,
-    HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK, RUNNING, SEVERITY_CRITICAL,
-    SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, SIDEBAR_WIDTH, TEXT, TYPE,
-    project_status_style_for_key,
+    CARD_GLOW_OPACITY_IDLE, CARD_INNER, CARD_PADDING, CARD_ROUNDING, CARD_TITLE_SIDE_RESERVE,
+    DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK,
+    PROJECT_TITLE_SIDE_PAD, RUNNING, SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW,
+    SEVERITY_MEDIUM, SIDEBAR_WIDTH, TEXT, TYPE, card_centered_title_width, portfolio_column_width,
+    project_centered_title_width, project_status_style_for_key,
 };
 use crate::view::{
     AddProjectForm, AndroidForm, ComponentEditForm, ComponentForm, FindingRow, HeaderForm,
@@ -1923,64 +1924,76 @@ fn draw_overview(
 ) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut remove = None;
-    ScrollArea::vertical().show(ui, |ui| {
-        draw_summary(ui, &portfolio.summary, sidebar);
-        ui.add_space(CARD_GAP);
+    // Fill the remaining central height under the header/filters. Never shrink
+    // away when content is short; always reserve the scrollbar so every row
+    // sees the same content width.
+    let scroll_height = ui.available_height();
+    ScrollArea::vertical()
+        .id_salt("portfolio_overview_scroll")
+        .auto_shrink([false, false])
+        .max_height(scroll_height)
+        .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
+        .show(ui, |ui| {
+            draw_summary(ui, &portfolio.summary, sidebar);
+            ui.add_space(CARD_GAP);
 
-        if portfolio.cards.is_empty()
-            && overview.new_project.is_none()
-            && overview.add_project.is_none()
-        {
-            ui.label(
-                RichText::new("No projects in the workspace yet. Use New project or Add existing.")
+            if portfolio.cards.is_empty()
+                && overview.new_project.is_none()
+                && overview.add_project.is_none()
+            {
+                ui.label(
+                    RichText::new(
+                        "No projects in the workspace yet. Use New project or Add existing.",
+                    )
                     .font(TYPE.body_id())
                     .color(MUTED),
-            );
-            return;
-        }
-        if portfolio.cards.is_empty() {
-            return;
-        }
+                );
+                return;
+            }
+            if portfolio.cards.is_empty() {
+                return;
+            }
 
-        let visible: Vec<&ProjectCard> = portfolio
-            .cards
-            .iter()
-            .filter(|card| card_matches_filters(card, sidebar, filters))
-            .collect();
-        if visible.is_empty() {
-            ui.label(
-                RichText::new("No projects match these filters.")
-                    .font(TYPE.body_id())
-                    .color(MUTED),
-            );
-            return;
-        }
+            let visible: Vec<&ProjectCard> = portfolio
+                .cards
+                .iter()
+                .filter(|card| card_matches_filters(card, sidebar, filters))
+                .collect();
+            if visible.is_empty() {
+                ui.label(
+                    RichText::new("No projects match these filters.")
+                        .font(TYPE.body_id())
+                        .color(MUTED),
+                );
+                return;
+            }
 
-        let columns = grid_columns(ui.available_width());
-        let mut row: Vec<&ProjectCard> = Vec::with_capacity(columns);
-        for card in visible {
-            row.push(card);
-            if row.len() == columns {
-                let (opened, action) = draw_card_row(ui, &row, columns, card_glow);
+            let grid_width = ui.available_width();
+            let columns = grid_columns(grid_width);
+            let mut row: Vec<&ProjectCard> = Vec::with_capacity(columns);
+            for card in visible {
+                row.push(card);
+                if row.len() == columns {
+                    let (opened, action) = draw_card_row(ui, &row, columns, grid_width, card_glow);
+                    if opened.is_some() {
+                        open = opened;
+                    }
+                    if action.is_some() {
+                        remove = action;
+                    }
+                    row.clear();
+                }
+            }
+            if !row.is_empty() {
+                let (opened, action) = draw_card_row(ui, &row, columns, grid_width, card_glow);
                 if opened.is_some() {
                     open = opened;
                 }
                 if action.is_some() {
                     remove = action;
                 }
-                row.clear();
             }
-        }
-        if !row.is_empty() {
-            let (opened, action) = draw_card_row(ui, &row, columns, card_glow);
-            if opened.is_some() {
-                open = opened;
-            }
-            if action.is_some() {
-                remove = action;
-            }
-        }
-    });
+        });
     (open, remove)
 }
 
@@ -1988,23 +2001,45 @@ fn draw_card_row(
     ui: &mut Ui,
     cards: &[&ProjectCard],
     columns: usize,
+    grid_width: f32,
     card_glow: &TextureHandle,
 ) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut action = None;
     let slots = grid_row_column_slots(columns, cards.len());
-    ui.columns(slots, |cols| {
-        for (column, card) in cols.iter_mut().zip(cards.iter()) {
-            match draw_card(column, card, card_glow) {
-                CardAction::Open => open = Some(card.index),
-                next
-                @ (CardAction::RemoveFromList { .. } | CardAction::PromptDeleteFile { .. }) => {
-                    action = Some(next);
-                }
-                CardAction::None => {}
+    let gap = ui.spacing().item_spacing.x;
+    let column_width = portfolio_column_width(grid_width, slots, gap);
+    // Per-column child rects from this frame's cursor. Do not use `ui.columns`:
+    // it stretches each child to `max_rect.bottom` and advances the cursor on
+    // its own. Never `set_clip_rect(max_rect)` alone — that drops the
+    // ScrollArea clip (cards paint over the header) and truncates later rows.
+    let top_left = ui.cursor().left_top();
+    let mut row_height = 1.0_f32;
+    for (i, card) in cards.iter().enumerate() {
+        let index = f32::from(u8::try_from(i).unwrap_or(u8::MAX));
+        let pos = Pos2::new(top_left.x + (column_width + gap) * index, top_left.y);
+        let max_rect = Rect::from_min_size(pos, Vec2::new(column_width, 100_000.0));
+        let mut col = ui.new_child(
+            UiBuilder::new()
+                .id_salt(("portfolio_col", card.id.as_str()))
+                .max_rect(max_rect)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        col.set_width(column_width);
+        col.set_max_width(column_width);
+        // Parent ScrollArea clip ∩ this column's layout rect.
+        col.shrink_clip_rect(max_rect);
+        match draw_card(&mut col, card, card_glow) {
+            CardAction::Open => open = Some(card.index),
+            next @ (CardAction::RemoveFromList { .. } | CardAction::PromptDeleteFile { .. }) => {
+                action = Some(next);
             }
+            CardAction::None => {}
         }
-    });
+        row_height = row_height.max(col.min_rect().height());
+    }
+    // Claim exact grid width so content cannot widen the scroll area.
+    ui.allocate_exact_size(Vec2::new(grid_width, row_height), Sense::hover());
     ui.add_space(CARD_GAP);
     (open, action)
 }
@@ -2088,65 +2123,63 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard, card_glow: &TextureHandle) -> Card
                 .id_salt(("project_card", card.id.as_str()))
                 .sense(Sense::click()),
             |ui| {
+                let column_width = ui.available_width();
+                ui.set_width(column_width);
+                ui.set_max_width(column_width);
                 card_frame()
                     .stroke(Stroke::new(1.0, LINE))
                     .show(ui, |ui| {
                         let glow_idx = ui.painter().add(Shape::Noop);
+                        let content_width = ui.available_width();
+                        ui.set_width(content_width);
+                        ui.set_max_width(content_width);
                         ui.set_min_height(CARD_CONTENT_MIN_HEIGHT);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(&card.name)
-                                    .font(TYPE.title_id())
-                                    .color(TEXT)
-                                    .strong(),
+                        draw_card_title_row(ui, &card.name, content_width, |ui| {
+                            ui.menu_button(
+                                RichText::new("···")
+                                    .font(TYPE.secondary_id())
+                                    .color(MUTED),
+                                |ui| {
+                                    if ui
+                                        .button(
+                                            RichText::new("Remove from list")
+                                                .font(TYPE.body_id())
+                                                .color(TEXT),
+                                        )
+                                        .on_hover_text(
+                                            "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
+                                        )
+                                        .clicked()
+                                    {
+                                        menu_action = CardAction::RemoveFromList {
+                                            id: card.id.clone(),
+                                            name: card.name.clone(),
+                                        };
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(
+                                            RichText::new("Remove and delete craftward.json…")
+                                                .font(TYPE.body_id())
+                                                .color(TEXT),
+                                        )
+                                        .on_hover_text(
+                                            "Asks for confirmation. Deleting craftward.json cannot be undone.",
+                                        )
+                                        .clicked()
+                                    {
+                                        menu_action = CardAction::PromptDeleteFile {
+                                            id: card.id.clone(),
+                                            name: card.name.clone(),
+                                            index: card.index,
+                                        };
+                                        ui.close();
+                                    }
+                                },
                             );
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.menu_button(
-                                    RichText::new("···")
-                                        .font(TYPE.secondary_id())
-                                        .color(MUTED),
-                                    |ui| {
-                                        if ui
-                                            .button(
-                                                RichText::new("Remove from list")
-                                                    .font(TYPE.body_id())
-                                                    .color(TEXT),
-                                            )
-                                            .on_hover_text(
-                                                "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
-                                            )
-                                            .clicked()
-                                        {
-                                            menu_action = CardAction::RemoveFromList {
-                                                id: card.id.clone(),
-                                                name: card.name.clone(),
-                                            };
-                                            ui.close();
-                                        }
-                                        if ui
-                                            .button(
-                                                RichText::new("Remove and delete craftward.json…")
-                                                    .font(TYPE.body_id())
-                                                    .color(TEXT),
-                                            )
-                                            .on_hover_text(
-                                                "Asks for confirmation. Deleting craftward.json cannot be undone.",
-                                            )
-                                            .clicked()
-                                        {
-                                            menu_action = CardAction::PromptDeleteFile {
-                                                id: card.id.clone(),
-                                                name: card.name.clone(),
-                                                index: card.index,
-                                            };
-                                            ui.close();
-                                        }
-                                    },
-                                );
-                            });
                         });
                         if let Some(status) = &card.status {
-                            draw_badge(ui, status, None);
+                            draw_centered_status_badge(ui, status);
                         }
                         if let Some(version) = &card.version {
                             ui.label(
@@ -2175,10 +2208,13 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard, card_glow: &TextureHandle) -> Card
                         ui.add_space(4.0);
 
                         if let Some(phase) = &card.current_phase {
-                            ui.label(
-                                RichText::new(format!("Current phase: {phase}"))
-                                    .font(TYPE.body_id())
-                                    .color(TEXT),
+                            ui.add(
+                                Label::new(
+                                    RichText::new(format!("Current phase: {phase}"))
+                                        .font(TYPE.body_id())
+                                        .color(TEXT),
+                                )
+                                .wrap(),
                             );
                         }
                         if let Some(due) = &card.next_due {
@@ -2186,13 +2222,16 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard, card_glow: &TextureHandle) -> Card
                                 .next_due_remaining
                                 .as_deref()
                                 .map_or(String::new(), |text| format!(" ({text})"));
-                            ui.label(
-                                RichText::new(format!(
-                                    "Next due: {}{remaining}",
-                                    format_date_for_display(due)
-                                ))
+                            ui.add(
+                                Label::new(
+                                    RichText::new(format!(
+                                        "Next due: {}{remaining}",
+                                        format_date_for_display(due)
+                                    ))
                                     .font(TYPE.body_id())
                                     .color(TEXT),
+                                )
+                                .wrap(),
                             );
                         }
                         if let Some(sdk) = card.target_sdk {
@@ -2274,43 +2313,9 @@ fn draw_detail(
 ) -> Option<DetailAction> {
     let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(&detail.name)
-                    .font(TYPE.title_id())
-                    .color(TEXT)
-                    .strong(),
-            );
-            if detail.load_error.is_none() && !detail.id.is_empty() {
-                if compact_button(ui, "Remove from list", MUTED)
-                    .on_hover_text(
-                        "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
-                    )
-                    .clicked()
-                {
-                    action = Some(DetailAction::RemoveFromList {
-                        id: detail.id.clone(),
-                        name: detail.name.clone(),
-                    });
-                }
-                if compact_button(ui, "Delete craftward.json…", MUTED)
-                    .on_hover_text("Asks for confirmation. Deleting the file cannot be undone.")
-                    .clicked()
-                {
-                    action = Some(DetailAction::PromptDeleteFile {
-                        id: detail.id.clone(),
-                        name: detail.name.clone(),
-                        path: detail.path.clone(),
-                    });
-                }
-            }
-        });
-        ui.label(
-            RichText::new(&detail.path)
-                .font(TYPE.secondary_id())
-                .color(MUTED),
-        )
-        .on_hover_text(&detail.path);
+        if let Some(next) = draw_detail_path_actions(ui, detail) {
+            action = Some(next);
+        }
 
         if let Some(error) = &detail.load_error {
             ui.add_space(8.0);
@@ -2359,14 +2364,9 @@ fn draw_detail(
                 }
             });
         } else {
-            if let Some(next) = draw_detail_left(
-                ui,
-                detail,
-                edit,
-                editable,
-                category_suggestions,
-                card_glow,
-            ) {
+            if let Some(next) =
+                draw_detail_left(ui, detail, edit, editable, category_suggestions, card_glow)
+            {
                 action = Some(next);
             }
             ui.add_space(CARD_GAP);
@@ -2375,6 +2375,56 @@ fn draw_detail(
             }
         }
     });
+    action
+}
+
+/// Path left and remove/delete actions right on one button-tall row.
+///
+/// Must not call `with_layout` on the scroll area's remaining height — that
+/// allocates a tall strip and vertically centers the buttons in empty space.
+fn draw_detail_path_actions(ui: &mut Ui, detail: &ProjectDetail) -> Option<DetailAction> {
+    let mut action = None;
+    let row_height = ui.spacing().interact_size.y;
+    let row_width = ui.available_width();
+    ui.allocate_ui_with_layout(
+        Vec2::new(row_width, row_height),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.set_max_height(row_height);
+            if detail.load_error.is_none() && !detail.id.is_empty() {
+                if compact_button(ui, "Delete craftward.json…", MUTED)
+                    .on_hover_text("Asks for confirmation. Deleting the file cannot be undone.")
+                    .clicked()
+                {
+                    action = Some(DetailAction::PromptDeleteFile {
+                        id: detail.id.clone(),
+                        name: detail.name.clone(),
+                        path: detail.path.clone(),
+                    });
+                }
+                if compact_button(ui, "Remove from list", MUTED)
+                    .on_hover_text(
+                        "Removes the project from the list. Undo restores it. craftward.json stays on disk.",
+                    )
+                    .clicked()
+                {
+                    action = Some(DetailAction::RemoveFromList {
+                        id: detail.id.clone(),
+                        name: detail.name.clone(),
+                    });
+                }
+            }
+            ui.add(
+                Label::new(
+                    RichText::new(&detail.path)
+                        .font(TYPE.secondary_id())
+                        .color(MUTED),
+                )
+                .truncate(),
+            )
+            .on_hover_text(&detail.path);
+        },
+    );
     action
 }
 
@@ -2402,6 +2452,15 @@ fn draw_detail_left(
     );
     let overview_response = card_frame().show(ui, |ui| {
         let glow_idx = ui.painter().add(Shape::Noop);
+        let heading_width = ui.available_width();
+        ui.set_width(heading_width);
+        draw_centered_project_title(ui, &detail.name, heading_width, PROJECT_TITLE_SIDE_PAD);
+        if let Some(status) = &detail.status {
+            draw_centered_status_badge(ui, status);
+        }
+        ui.add_space(6.0);
+        draw_progress(ui, detail.progress);
+        ui.add_space(6.0);
         ui.label(
             RichText::new("Overview")
                 .font(TYPE.section_id())
@@ -2415,8 +2474,6 @@ fn draw_detail_left(
         } else {
             draw_overview_readonly(ui, detail, edit, editable);
         }
-        ui.add_space(6.0);
-        draw_progress(ui, detail.progress);
         if let Some(status) = &detail.status {
             finish_status_glow(ui, glow_idx, card_glow, status.key, glow_opacity);
         }
@@ -2701,12 +2758,6 @@ fn draw_overview_readonly(
     edit: &mut DetailEdit,
     editable: bool,
 ) {
-    if let Some(status) = &detail.status {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Status:").font(TYPE.body_id()).color(MUTED));
-            draw_badge(ui, status, None);
-        });
-    }
     for field in &detail.overview_fields {
         if field.label == "Status" {
             continue;
@@ -4313,6 +4364,115 @@ fn draw_finding(ui: &mut Ui, finding: &FindingRow) {
     ui.add_space(6.0);
 }
 
+/// Centered project title with equal side insets (wraps inside `content_width`).
+fn draw_centered_project_title(ui: &mut Ui, name: &str, content_width: f32, side_reserve: f32) {
+    let content_width = content_width.min(ui.available_width());
+    ui.set_width(content_width);
+    let title_w = project_centered_title_width(content_width, side_reserve);
+    ui.allocate_ui_with_layout(
+        Vec2::new(content_width, 0.0),
+        Layout::top_down(Align::Center),
+        |ui| {
+            ui.set_width(title_w);
+            ui.set_max_width(title_w);
+            ui.add(
+                Label::new(
+                    RichText::new(name)
+                        .font(TYPE.title_id())
+                        .color(TEXT)
+                        .strong(),
+                )
+                .wrap()
+                .halign(Align::Center),
+            );
+        },
+    );
+}
+
+/// Card title row: centered title; menu overlaid on the right reserve.
+///
+/// `content_width` is the card content width from the grid column. The row never
+/// requests more than that width (long titles wrap instead).
+fn draw_card_title_row(ui: &mut Ui, name: &str, content_width: f32, menu: impl FnOnce(&mut Ui)) {
+    let content_width = content_width.min(ui.available_width());
+    ui.set_width(content_width);
+    let reserve = CARD_TITLE_SIDE_RESERVE.min(content_width * 0.5);
+    let title_w =
+        card_centered_title_width(content_width).min((content_width - 2.0 * reserve).max(0.0));
+    let top = ui.cursor().top();
+    let left = ui.cursor().left();
+    // Fixed-width title band: never request more than `content_width`.
+    ui.allocate_ui_with_layout(
+        Vec2::new(content_width, 0.0),
+        Layout::left_to_right(Align::Min),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.set_width(content_width);
+            ui.set_max_width(content_width);
+            ui.add_space(reserve);
+            ui.allocate_ui_with_layout(
+                Vec2::new(title_w, 0.0),
+                Layout::top_down(Align::Center),
+                |ui| {
+                    ui.set_width(title_w);
+                    ui.set_max_width(title_w);
+                    ui.add(
+                        Label::new(
+                            RichText::new(name)
+                                .font(TYPE.title_id())
+                                .color(TEXT)
+                                .strong(),
+                        )
+                        .wrap()
+                        .halign(Align::Center),
+                    );
+                },
+            );
+        },
+    );
+    let bottom = ui.cursor().top();
+    let menu_rect = Rect::from_min_max(
+        Pos2::new(left + content_width - reserve, top),
+        Pos2::new(
+            left + content_width,
+            bottom.max(top + ui.spacing().interact_size.y),
+        ),
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(menu_rect)
+            .layout(Layout::right_to_left(Align::Min)),
+        |ui| {
+            ui.set_max_width(reserve);
+            menu(ui);
+        },
+    );
+}
+
+fn draw_centered_status_badge(ui: &mut Ui, status: &StatusBadge) {
+    // Frame expands to its Ui max width, so the chip is drawn into a centered
+    // child rect sized from the previous frame's measured width.
+    let full = ui.available_width();
+    let id = Id::unique(("centered_badge_w", status.key));
+    let chip_w = ui
+        .ctx()
+        .data(|data| data.get_temp::<f32>(id))
+        .unwrap_or(160.0)
+        .clamp(1.0, full.max(1.0));
+    let row_h = ui.spacing().interact_size.y + 8.0;
+    let (row, _) = ui.allocate_exact_size(Vec2::new(full, row_h), Sense::hover());
+    let chip_rect = Rect::from_center_size(row.center(), Vec2::new(chip_w, row_h));
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .id_salt(("centered_badge", status.key))
+            .max_rect(chip_rect)
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    let response = draw_badge_chip(&mut child, status, None);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id, response.rect.width().max(1.0)));
+}
+
 fn draw_progress(ui: &mut Ui, progress: ProgressView) {
     ui.label(
         RichText::new(progress.caption())
@@ -4341,6 +4501,13 @@ fn draw_progress(ui: &mut Ui, progress: ProgressView) {
 
 fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
     debug_assert!(!badge_stretches_to_parent());
+    // Horizontal layout shrinks the frame to the label instead of the card width.
+    ui.horizontal(|ui| {
+        draw_badge_chip(ui, badge, count);
+    });
+}
+
+fn draw_badge_chip(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) -> egui::Response {
     let text = match count {
         Some(value) if badge.symbol.is_empty() => format!("{} · {value}", badge.label),
         Some(value) => format!("{} {} · {value}", badge.symbol, badge.label),
@@ -4351,23 +4518,21 @@ fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
     } else {
         (CARD_INNER, LINE, status_colour(badge))
     };
-    // Horizontal layout shrinks the frame to the label instead of the card width.
-    ui.horizontal(|ui| {
-        Frame::NONE
-            .fill(fill)
-            .stroke(Stroke::new(1.0, stroke))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::symmetric(8, 3))
-            .show(ui, |ui| {
-                ui.set_max_width(ui.spacing().interact_size.x.max(1.0) * 20.0);
-                ui.label(
-                    RichText::new(text)
-                        .font(TYPE.secondary_id())
-                        .color(colour)
-                        .strong(),
-                );
-            });
-    });
+    Frame::NONE
+        .fill(fill)
+        .stroke(Stroke::new(1.0, stroke))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.set_max_width(ui.spacing().interact_size.x.max(1.0) * 20.0);
+            ui.label(
+                RichText::new(text)
+                    .font(TYPE.secondary_id())
+                    .color(colour)
+                    .strong(),
+            );
+        })
+        .response
 }
 
 fn status_colour(badge: &StatusBadge) -> Color32 {
@@ -4423,6 +4588,7 @@ fn finish_status_glow(
         sw: 0,
         se: 0,
     };
+    // Same Ui painter (ScrollArea clip) — never a foreground/context layer.
     ui.painter().set(
         glow_idx,
         Shape::Rect(RectShape::filled(glow_rect, rounding, tint).with_texture(

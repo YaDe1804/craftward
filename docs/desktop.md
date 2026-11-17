@@ -76,7 +76,9 @@ file watcher in this release.
 
 ## Views
 
-- **Portfolio overview:** one card per project, sorted by urgency, filtered
+- **Portfolio overview:** one card per project, sorted by status
+  (released, maintenance, in_development, paused, idea, discontinued),
+  then open-finding severity, then next due, then name, filtered
   by the sidebar category plus optional Platform and Tag combos (AND).
   Platforms are derived from the stack (`android` block and `platform`
   components), merged without regard to letter case, and shown with

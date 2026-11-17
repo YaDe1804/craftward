@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub const DATABASE_FILE: &str = "craftward.db";
 
 /// Schema version this build knows how to write.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Lifecycle state of one finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +115,50 @@ impl FromStr for Severity {
 }
 
 impl fmt::Display for Severity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Where a finding's severity word came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeveritySource {
+    /// `database_specific.severity` (or equivalent advisory text).
+    Advisory,
+    /// Computed from a CVSS v3.x vector.
+    Cvss,
+    /// No recognized severity source.
+    #[default]
+    Unknown,
+}
+
+impl SeveritySource {
+    /// Stable stored word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Advisory => "advisory",
+            Self::Cvss => "cvss",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl FromStr for SeveritySource {
+    type Err = UnknownDomainValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "advisory" => Ok(Self::Advisory),
+            "cvss" => Ok(Self::Cvss),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(UnknownDomainValue::new(text)),
+        }
+    }
+}
+
+impl fmt::Display for SeveritySource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -248,6 +292,8 @@ pub enum EventKind {
     Withdrawn,
     /// A Play warning became a missed deadline.
     DeadlinePassed,
+    /// Another finding was merged into this one.
+    Merged,
 }
 
 impl EventKind {
@@ -262,6 +308,7 @@ impl EventKind {
             Self::Reappeared => "reappeared",
             Self::Withdrawn => "withdrawn",
             Self::DeadlinePassed => "deadline_passed",
+            Self::Merged => "merged",
         }
     }
 
@@ -276,6 +323,7 @@ impl EventKind {
             Self::Reappeared,
             Self::Withdrawn,
             Self::DeadlinePassed,
+            Self::Merged,
         ]
     }
 }
@@ -292,6 +340,7 @@ impl FromStr for EventKind {
             "reappeared" => Ok(Self::Reappeared),
             "withdrawn" => Ok(Self::Withdrawn),
             "deadline_passed" => Ok(Self::DeadlinePassed),
+            "merged" => Ok(Self::Merged),
             _ => Err(UnknownDomainValue::new(text)),
         }
     }
@@ -363,14 +412,18 @@ pub struct StoredFinding {
     pub severity: Severity,
     /// Short description.
     pub summary: String,
-    /// Other ids, such as CVE ids.
+    /// Other ids shown after the primary (also: …).
     pub aliases: Vec<String>,
+    /// Every identifier in the merged cluster, primary first.
+    pub related_ids: Vec<String>,
     /// Versions in which this package is fixed.
     pub fixed_versions: Vec<String>,
     /// Current state.
     pub state: FindingState,
     /// Advisory kind.
     pub kind: FindingKind,
+    /// How [`Self::severity`] was chosen.
+    pub severity_source: SeveritySource,
     /// When the finding was first stored, `YYYY-MM-DDTHH:MM:SSZ`.
     pub first_seen: String,
     /// When a scan last observed it.
@@ -402,10 +455,14 @@ pub struct NewFinding {
     pub summary: String,
     /// Aliases.
     pub aliases: Vec<String>,
+    /// Every identifier in the merged cluster, primary first.
+    pub related_ids: Vec<String>,
     /// Fixed versions.
     pub fixed_versions: Vec<String>,
     /// Advisory kind.
     pub kind: FindingKind,
+    /// How [`Self::severity`] was chosen.
+    pub severity_source: SeveritySource,
     /// `first_seen` and `last_seen`.
     pub seen_at: String,
 }
@@ -453,6 +510,13 @@ pub struct NewRun {
 pub enum StoreError {
     /// No finding has this id.
     NotFound(i64),
+    /// The finding id was merged into another row during schema migration.
+    MergedInto {
+        /// Former finding id.
+        from: i64,
+        /// Surviving finding id.
+        into: i64,
+    },
     /// The file was written by a newer Craftward.
     NewerDatabase {
         /// Version stored in the file.
@@ -472,6 +536,9 @@ impl std::fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound(id) => write!(formatter, "unknown finding: {id}"),
+            Self::MergedInto { from, into } => {
+                write!(formatter, "finding {from} was merged into finding {into}")
+            }
             Self::NewerDatabase { .. } => {
                 formatter.write_str("database was written by a newer Craftward version")
             }
@@ -552,6 +619,34 @@ pub trait StoreSession {
     ///
     /// Returns [`StoreError`] when the rows cannot be read.
     fn events(&mut self, finding_id: i64) -> Result<Vec<StoredEvent>, StoreError>;
+
+    /// Surviving finding id when `old_id` was merged away, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the row cannot be read.
+    fn merged_into(&mut self, old_id: i64) -> Result<Option<i64>, StoreError>;
+
+    /// Deletes a finding row (used during alias migration).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the row cannot be removed.
+    fn delete_finding(&mut self, id: i64) -> Result<(), StoreError>;
+
+    /// Moves every event from `from_id` onto `into_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the rows cannot be updated.
+    fn reassign_events(&mut self, from_id: i64, into_id: i64) -> Result<(), StoreError>;
+
+    /// Records that `old_id` was merged into `into_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the row cannot be written.
+    fn record_merge(&mut self, old_id: i64, into_id: i64) -> Result<(), StoreError>;
 }
 
 /// A database that can run a transaction.

@@ -2151,17 +2151,32 @@ pub fn finding_count_badges(counts: [usize; 5]) -> Vec<(StatusBadge, usize)> {
 }
 
 fn compare_urgency(left: &ProjectCard, right: &ProjectCard) -> std::cmp::Ordering {
-    right
-        .findings_by_severity
-        .cmp(&left.findings_by_severity)
-        .then_with(|| match (&left.next_due, &right.next_due) {
-            (Some(a), Some(b)) => a.cmp(b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        })
-        .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-        .then_with(|| left.id.cmp(&right.id))
+    let left_status = left
+        .status
+        .as_ref()
+        .and_then(|badge| ProjectStatus::parse(badge.key))
+        .unwrap_or(ProjectStatus::Idea);
+    let right_status = right
+        .status
+        .as_ref()
+        .and_then(|badge| ProjectStatus::parse(badge.key))
+        .unwrap_or(ProjectStatus::Idea);
+    craftward_core::compare_project_order(
+        &craftward_core::ProjectOrderKey {
+            status: left_status,
+            findings: &left.findings_by_severity,
+            due: left.next_due.as_deref(),
+            name: &left.name,
+            id: &left.id,
+        },
+        &craftward_core::ProjectOrderKey {
+            status: right_status,
+            findings: &right.findings_by_severity,
+            due: right.next_due.as_deref(),
+            name: &right.name,
+            id: &right.id,
+        },
+    )
 }
 
 fn database_message(status: &DatabaseStatus) -> Option<String> {
@@ -3004,9 +3019,11 @@ mod tests {
             severity,
             summary: "demo".to_owned(),
             aliases: Vec::new(),
+            related_ids: vec!["OSV-1".to_owned()],
             fixed_versions: Vec::new(),
             state: FindingState::Open,
             kind: FindingKind::Vulnerability,
+            severity_source: craftward_core::SeveritySource::Unknown,
             first_seen: "2026-01-01T00:00:00Z".to_owned(),
             last_seen: "2026-01-01T00:00:00Z".to_owned(),
             resolved_at: None,
@@ -3040,15 +3057,23 @@ mod tests {
     }
 
     #[test]
-    fn sorts_by_finding_severity_then_due_then_name() {
+    fn sorts_by_status_then_finding_severity_then_due_then_name() {
+        let mut released = empty_card("r", "Released", [0, 0, 0, 0, 0], Some("2027-01-01"));
+        released.status = Some(project_status_badge(ProjectStatus::Released));
         let critical = empty_card("c", "Zebra", [1, 0, 0, 0, 0], Some("2027-01-01"));
         let due_soon = empty_card("a", "Alpha", [0, 0, 0, 0, 0], Some("2026-01-01"));
         let due_later = empty_card("b", "Beta", [0, 0, 0, 0, 0], Some("2026-06-01"));
-        let mut cards = [due_later.clone(), critical.clone(), due_soon.clone()];
+        let mut cards = [
+            due_later.clone(),
+            critical.clone(),
+            released.clone(),
+            due_soon.clone(),
+        ];
         cards.sort_by(compare_urgency);
-        assert_eq!(cards[0].id, "c");
-        assert_eq!(cards[1].id, "a");
-        assert_eq!(cards[2].id, "b");
+        assert_eq!(cards[0].id, "r");
+        assert_eq!(cards[1].id, "c");
+        assert_eq!(cards[2].id, "a");
+        assert_eq!(cards[3].id, "b");
     }
 
     #[test]

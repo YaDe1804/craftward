@@ -84,12 +84,16 @@ pub struct Finding {
     pub package: String,
     /// Package version.
     pub version: String,
-    /// OSV id.
+    /// Primary OSV id (GHSA preferred, then RUSTSEC).
     pub id: String,
-    /// Other ids, such as CVE ids.
+    /// Other ids shown after the primary.
     pub aliases: Vec<String>,
+    /// Every identifier in the merged cluster, primary first.
+    pub related_ids: Vec<String>,
     /// How severe the finding is.
     pub severity: crate::store::Severity,
+    /// Where [`Self::severity`] came from.
+    pub severity_source: crate::store::SeveritySource,
     /// Short description.
     pub summary: String,
     /// Versions in which this package is fixed.
@@ -209,12 +213,12 @@ pub fn render_text(projects: &[ProjectReport]) -> String {
         }
         for finding in &project.findings {
             let _ = writeln!(out, "  {} {}", finding.package, finding.version);
-            let aliases = if finding.aliases.is_empty() {
+            let also = if finding.aliases.is_empty() {
                 String::new()
             } else {
-                format!(" ({})", finding.aliases.join(", "))
+                format!(" also: {}", finding.aliases.join(", "))
             };
-            let _ = writeln!(out, "    {}{aliases} {}", finding.id, finding.severity);
+            let _ = writeln!(out, "    {}{also} {}", finding.id, finding.severity);
             if !finding.summary.is_empty() {
                 let _ = writeln!(out, "    {}", finding.summary);
             }
@@ -426,13 +430,16 @@ fn check_android(projects: &mut [Prepared], data_dir: &Path, today: &str, warnin
             today,
             warning_days,
         ) {
+            let id = hit.id.clone();
             project.findings.push(Finding {
                 ecosystem: "platform".to_owned(),
                 package: "google-play".to_owned(),
                 version: level.to_string(),
                 id: hit.id,
                 aliases: Vec::new(),
+                related_ids: vec![id],
                 severity: hit.severity,
+                severity_source: crate::store::SeveritySource::Advisory,
                 summary: hit.summary,
                 fixed_versions: Vec::new(),
                 url: hit.url,
@@ -753,17 +760,7 @@ fn fill_project(
             }
         }
     }
-    findings.sort_by(|left, right| {
-        left.severity
-            .cmp(&right.severity)
-            .then(left.package.cmp(&right.package))
-            .then(left.version.cmp(&right.version))
-            .then(left.id.cmp(&right.id))
-    });
-    findings.dedup_by(|left, right| {
-        left.package == right.package && left.version == right.version && left.id == right.id
-    });
-    project.findings = findings;
+    project.findings = crate::merge::merge_aliased_findings(findings);
     if !errors.is_empty() {
         let mut combined = errors;
         if let Some(existing) = project.error.take() {
@@ -799,13 +796,22 @@ fn note_stale(
 }
 
 fn finding(package: &PackageQuery, advisory: &Advisory) -> Finding {
+    let mut related_ids = Vec::with_capacity(1 + advisory.aliases.len());
+    related_ids.push(advisory.id.clone());
+    for alias in &advisory.aliases {
+        if !related_ids.iter().any(|existing| existing == alias) {
+            related_ids.push(alias.clone());
+        }
+    }
     Finding {
         ecosystem: package.ecosystem.clone(),
         package: package.name.clone(),
         version: package.version.clone(),
         id: advisory.id.clone(),
         aliases: advisory.aliases.clone(),
+        related_ids,
         severity: advisory.severity,
+        severity_source: advisory.severity_source,
         summary: advisory.summary.clone(),
         fixed_versions: osv::fixed_versions(advisory, package),
         url: format!("https://osv.dev/vulnerability/{}", advisory.id),
@@ -820,7 +826,9 @@ fn eol_finding(hit: &EolHit) -> Finding {
         version: hit.version.clone(),
         id: hit.id.clone(),
         aliases: Vec::new(),
+        related_ids: vec![hit.id.clone()],
         severity: hit.severity,
+        severity_source: crate::store::SeveritySource::Advisory,
         summary: hit.summary.clone(),
         fixed_versions: Vec::new(),
         url: hit.url.clone(),

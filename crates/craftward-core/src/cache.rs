@@ -11,7 +11,7 @@ use crate::fs_atomic::write_atomic;
 use crate::lockfile::PackageQuery;
 use crate::osv::Advisory;
 use crate::percent::encode;
-use crate::store::{FindingKind, Severity};
+use crate::store::{FindingKind, Severity, SeveritySource};
 
 /// A stored package query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,9 @@ pub struct StoredAdvisory {
     pub summary: String,
     /// Radar severity word.
     pub severity: Severity,
+    /// Where severity came from. Absent caches are read as `unknown`.
+    #[serde(default)]
+    pub severity_source: SeveritySource,
     /// Affected packages and fixed versions.
     pub affected: Vec<StoredAffected>,
     /// Whether the record was withdrawn. Absent in caches written before this field.
@@ -70,6 +73,7 @@ impl From<&Advisory> for StoredAdvisory {
             aliases: advisory.aliases.clone(),
             summary: advisory.summary.clone(),
             severity: advisory.severity,
+            severity_source: advisory.severity_source,
             withdrawn: advisory.withdrawn,
             kind: advisory.kind,
             affected: advisory
@@ -92,6 +96,7 @@ impl From<StoredAdvisory> for Advisory {
             aliases: stored.aliases,
             summary: stored.summary,
             severity: stored.severity,
+            severity_source: stored.severity_source,
             withdrawn: stored.withdrawn,
             kind: stored.kind,
             affected: stored

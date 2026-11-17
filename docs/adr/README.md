@@ -33,3 +33,4 @@ record and use the next unused number.
 | [0026](0026-navigation-and-visual-design.md) | Navigation and visual design | Accepted |
 | [0027](0027-settings-file-and-data-relocation.md) | Settings file and data relocation | Accepted |
 | [0028](0028-project-categories.md) | Project categories | Accepted |
+| [0029](0029-merging-aliased-advisories-and-severity.md) | Merging aliased advisories and severity | Accepted |
