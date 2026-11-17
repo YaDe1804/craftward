@@ -30,3 +30,4 @@ record and use the next unused number.
 | [0023](0023-desktop-app-with-eframe.md) | Desktop app with eframe | Accepted |
 | [0024](0024-editing-from-the-desktop-app.md) | Editing from the desktop app | Accepted |
 | [0025](0025-native-dialogs-and-clipboard.md) | Native dialogs (rfd) and clipboard | Accepted |
+| [0026](0026-navigation-and-visual-design.md) | Navigation and visual design | Accepted |

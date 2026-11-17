@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use craftward_core::{
     ComponentKind, Issue, IssueSeverity, IssueStatus, LockKind, Phase, PhaseState, Project,
     ProjectStatus, Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind,
-    days_between, is_calendar_date, lock_kind, phase_state, resolve_project_paths, snapshot,
-    task_progress, unix_now, utc_day,
+    days_between, lock_kind, phase_state, resolve_project_paths, snapshot, task_progress, unix_now,
+    utc_day,
 };
 
+use crate::date::{format_date_for_display, invalid_date_message, parse_date_input};
 use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject, count_by_severity};
 use crate::symbols;
 use crate::theme::{GRID_THREE_COLUMNS_FROM, GRID_TWO_COLUMNS_FROM};
@@ -562,17 +563,16 @@ impl TaskForm {
             return Some("Title is required");
         }
         let due = self.due.trim();
-        if !due.is_empty() && !is_calendar_date(due) {
-            return Some("Due date must be YYYY-MM-DD");
+        if !due.is_empty() && parse_date_input(due).is_none() {
+            return Some(invalid_date_message());
         }
         None
     }
 
-    /// Due date for the core API (`None` when blank).
+    /// Due date for the core API as ISO (`None` when blank).
     #[must_use]
-    pub fn due_for_edit(&self) -> Option<&str> {
-        let due = self.due.trim();
-        if due.is_empty() { None } else { Some(due) }
+    pub fn due_iso(&self) -> Option<String> {
+        parse_date_input(self.due.trim())
     }
 
     /// Trimmed title for the core API.
@@ -896,7 +896,10 @@ impl TaskEditForm {
     pub fn from_task(task: &TaskRow) -> Self {
         Self {
             title: task.title.clone(),
-            due: task.due.clone().unwrap_or_default(),
+            due: task
+                .due
+                .as_deref()
+                .map_or_else(String::new, format_date_for_display),
             note: task.note.clone().unwrap_or_default(),
         }
     }
@@ -921,8 +924,8 @@ impl TaskEditForm {
     #[must_use]
     pub fn due_error(&self) -> Option<&'static str> {
         let due = self.due.trim();
-        if !due.is_empty() && !is_calendar_date(due) {
-            Some("Due date must be YYYY-MM-DD")
+        if !due.is_empty() && parse_date_input(due).is_none() {
+            Some(invalid_date_message())
         } else {
             None
         }
@@ -940,10 +943,10 @@ impl TaskEditForm {
         self.title.trim()
     }
 
-    /// Due update.
+    /// Parsed ISO due, or [`None`] when the field is blank.
     #[must_use]
-    pub fn due_update(&self) -> craftward_core::ProjectUpdate<'_> {
-        optional_clearable(&self.due)
+    pub fn due_iso(&self) -> Option<String> {
+        parse_date_input(self.due.trim())
     }
 
     /// Note update.
@@ -1349,8 +1352,8 @@ impl WatchForm {
         if due.is_empty() {
             return Some("Due date is required");
         }
-        if !is_calendar_date(due) {
-            return Some("Due date must be YYYY-MM-DD");
+        if parse_date_input(due).is_none() {
+            return Some(invalid_date_message());
         }
         None
     }
@@ -1361,10 +1364,10 @@ impl WatchForm {
         self.title.trim()
     }
 
-    /// Trimmed due.
+    /// Parsed ISO due date.
     #[must_use]
-    pub fn due_for_edit(&self) -> &str {
-        self.due.trim()
+    pub fn due_iso(&self) -> String {
+        parse_date_input(self.due.trim()).unwrap_or_default()
     }
 
     /// Optional note.
@@ -1397,7 +1400,7 @@ impl WatchEditForm {
                 .clone()
                 .unwrap_or_else(|| "deadline".to_owned()),
             title: row.title.clone(),
-            due: row.due.clone(),
+            due: format_date_for_display(&row.due),
             note: row.note.clone().unwrap_or_default(),
         }
     }
@@ -1421,8 +1424,8 @@ impl WatchEditForm {
             return Some("Choose a valid watch kind");
         }
         let due = self.due.trim();
-        if due.is_empty() || !is_calendar_date(due) {
-            return Some("Due date must be YYYY-MM-DD");
+        if due.is_empty() || parse_date_input(due).is_none() {
+            return Some(invalid_date_message());
         }
         None
     }
@@ -1433,10 +1436,10 @@ impl WatchEditForm {
         self.title.trim()
     }
 
-    /// Trimmed due.
+    /// Parsed ISO due date.
     #[must_use]
-    pub fn due_for_edit(&self) -> &str {
-        self.due.trim()
+    pub fn due_iso(&self) -> String {
+        parse_date_input(self.due.trim()).unwrap_or_default()
     }
 
     /// Note update.
@@ -1515,8 +1518,10 @@ fn sdk_field_error(text: &str) -> Option<&'static str> {
 /// Draft for creating a new project and adding it to the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectForm {
-    /// Absolute or relative folder path.
+    /// Absolute or relative folder path for `craftward.json`.
     pub directory: String,
+    /// Optional source folder when code lives elsewhere.
+    pub source_dir: String,
     /// Project id.
     pub id: String,
     /// Display name.
@@ -1531,6 +1536,7 @@ impl Default for NewProjectForm {
     fn default() -> Self {
         Self {
             directory: String::new(),
+            source_dir: String::new(),
             id: String::new(),
             name: String::new(),
             status: "idea".to_owned(),
@@ -1567,6 +1573,26 @@ impl NewProjectForm {
         } else {
             None
         }
+    }
+
+    /// Optional source-folder field error.
+    #[must_use]
+    pub fn source_dir_error(&self) -> Option<&'static str> {
+        let source = self.source_dir.trim();
+        if source.is_empty() {
+            return None;
+        }
+        if Path::new(source).is_dir() {
+            None
+        } else {
+            Some("Source folder must exist")
+        }
+    }
+
+    /// Trimmed optional source directory.
+    #[must_use]
+    pub fn source_dir_for_edit(&self) -> Option<&str> {
+        optional_text(&self.source_dir)
     }
 
     /// Name field error.
@@ -1614,6 +1640,7 @@ impl NewProjectForm {
     #[must_use]
     pub fn validation_message(&self, taken_ids: &[String]) -> Option<&'static str> {
         self.directory_error()
+            .or_else(|| self.source_dir_error())
             .or_else(|| self.name_error())
             .or_else(|| self.id_error(taken_ids))
             .or_else(|| self.status_error())
@@ -1758,6 +1785,15 @@ pub fn form_factor_choices() -> &'static [(&'static str, &'static str)] {
 #[must_use]
 pub fn android_store_choices() -> &'static [(&'static str, &'static str)] {
     &[("google_play", "Google Play"), ("none", "None")]
+}
+
+/// Readable label for a schema value from a `(key, label)` table.
+#[must_use]
+pub fn display_label(choices: &[(&'static str, &'static str)], key: &str) -> String {
+    choices
+        .iter()
+        .find(|(candidate, _)| *candidate == key)
+        .map_or_else(|| key.to_owned(), |(_, label)| (*label).to_owned())
 }
 
 /// Human label for open issues (singular / plural / none).
@@ -2360,6 +2396,112 @@ fn watch_kind_badge(kind: WatchKind) -> StatusBadge {
     }
 }
 
+/// One issue row in the cross-project Issues view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioIssueRow {
+    /// Index into [`LoadedPortfolio::projects`].
+    pub project_index: usize,
+    /// Project id.
+    pub project_id: String,
+    /// Project display name.
+    pub project_name: String,
+    /// Issue id.
+    pub issue_id: String,
+    /// Issue title.
+    pub title: String,
+    /// Severity badge.
+    pub severity: StatusBadge,
+    /// Status badge.
+    pub status: StatusBadge,
+}
+
+/// Filters for the cross-project Issues view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuesFilter {
+    /// When true, only open and in-progress issues.
+    pub open_only: bool,
+    /// Severity schema word, or empty for all.
+    pub severity: String,
+    /// Project id, or empty for all.
+    pub project_id: String,
+}
+
+impl Default for IssuesFilter {
+    fn default() -> Self {
+        Self {
+            open_only: true,
+            severity: String::new(),
+            project_id: String::new(),
+        }
+    }
+}
+
+/// Collects every issue from loaded projects, filtered and sorted.
+#[must_use]
+pub fn collect_portfolio_issues(
+    loaded: &LoadedPortfolio,
+    filter: &IssuesFilter,
+) -> Vec<PortfolioIssueRow> {
+    let mut rows = Vec::new();
+    for (project_index, loaded_project) in loaded.projects.iter().enumerate() {
+        let Ok(project) = &loaded_project.project else {
+            continue;
+        };
+        let Some(issues) = &project.issues else {
+            continue;
+        };
+        for issue in issues {
+            if filter.open_only && !is_open_issue(issue.status) {
+                continue;
+            }
+            if !filter.severity.is_empty()
+                && issue_severity_key(issue.severity) != filter.severity.as_str()
+            {
+                continue;
+            }
+            if !filter.project_id.is_empty() && project.id != filter.project_id {
+                continue;
+            }
+            rows.push(PortfolioIssueRow {
+                project_index,
+                project_id: project.id.clone(),
+                project_name: project.name.clone(),
+                issue_id: issue.id.clone(),
+                title: issue.title.clone(),
+                severity: issue_severity_badge(issue.severity),
+                status: issue_status_badge(issue.status),
+            });
+        }
+    }
+    rows.sort_by(|left, right| {
+        severity_rank(right.severity.key)
+            .cmp(&severity_rank(left.severity.key))
+            .then_with(|| left.project_name.cmp(&right.project_name))
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.issue_id.cmp(&right.issue_id))
+    });
+    rows
+}
+
+fn issue_severity_key(severity: IssueSeverity) -> &'static str {
+    match severity {
+        IssueSeverity::Low => "low",
+        IssueSeverity::Medium => "medium",
+        IssueSeverity::High => "high",
+        IssueSeverity::Critical => "critical",
+    }
+}
+
+fn severity_rank(key: &str) -> u8 {
+    match key {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -2370,14 +2512,17 @@ mod tests {
     };
 
     use super::{
-        HeaderForm, IssueEditForm, IssueForm, NewProjectForm, PhaseForm, ProgressView, StatusBadge,
-        TaskEditForm, TaskForm, badge_stretches_to_parent, build_detail_at, build_portfolio_at,
-        compare_urgency, current_phase_title, grid_columns, grid_row_column_slots,
-        issue_status_badge, issue_status_choices, longest_status_choice_label, open_findings_label,
-        open_issues_label, project_progress, project_status_badge, remaining_label,
-        task_status_badge, task_status_choices, task_title_is_muted,
+        HeaderForm, IssueEditForm, IssueForm, IssuesFilter, NewProjectForm, PhaseForm,
+        ProgressView, StatusBadge, TaskEditForm, TaskForm, android_store_choices,
+        badge_stretches_to_parent, build_detail_at, build_portfolio_at, collect_portfolio_issues,
+        compare_urgency, current_phase_title, display_label, form_factor_choices, grid_columns,
+        grid_row_column_slots, issue_status_badge, issue_status_choices,
+        longest_status_choice_label, open_findings_label, open_issues_label, project_progress,
+        project_status_badge, relative_to_dir, remaining_label, task_status_badge,
+        task_status_choices, task_title_is_muted,
     };
     use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
+    use crate::symbols;
     use crate::view::ProjectCard;
 
     fn sample_project(id: &str, name: &str, due: Option<&str>) -> Project {
@@ -2602,10 +2747,16 @@ mod tests {
         let badge = project_status_badge(ProjectStatus::InDevelopment);
         assert_eq!(badge.key, "in_development");
         assert_eq!(badge.label, "In development");
-        assert_eq!(badge.display(), "In development");
+        assert_eq!(
+            badge.display(),
+            format!("{} In development", symbols::RUNNING)
+        );
         let done = task_status_badge(TaskStatus::Done);
-        assert_eq!(done.display(), "Done");
-        assert_eq!(done.symbol, "");
+        assert_eq!(done.display(), format!("{} Done", symbols::DONE));
+        assert_eq!(done.symbol, symbols::DONE);
+        let released = project_status_badge(ProjectStatus::Released);
+        assert_eq!(released.display(), "Released");
+        assert_eq!(released.symbol, "");
     }
 
     #[test]
@@ -2676,7 +2827,9 @@ mod tests {
         form.due = "2026-11-15".to_owned();
         assert!(form.can_save());
         assert_eq!(form.title_for_edit(), "Ship it");
-        assert_eq!(form.due_for_edit(), Some("2026-11-15"));
+        assert_eq!(form.due_iso().as_deref(), Some("2026-11-15"));
+        form.due = "15.11.2026".to_owned();
+        assert_eq!(form.due_iso().as_deref(), Some("2026-11-15"));
     }
 
     #[test]
@@ -2828,9 +2981,12 @@ mod tests {
         };
         assert_eq!(task.title_error(), Some("Title is required"));
         task.title = "Ship".to_owned();
-        assert_eq!(task.due_error(), Some("Due date must be YYYY-MM-DD"));
+        assert!(task.due_error().is_some());
         task.due = "2026-12-01".to_owned();
         assert!(task.can_save());
+        task.due = "01.12.2026".to_owned();
+        assert!(task.can_save());
+        assert_eq!(task.due_iso().as_deref(), Some("2026-12-01"));
         assert_eq!(task.note, "keep");
 
         let mut issue = IssueEditForm::default();
@@ -2941,5 +3097,107 @@ mod tests {
                 .any(|field| field.label == "Android targetSdk" && field.value == "34")
         );
         let _badge: StatusBadge = detail.phases[1].status.clone();
+    }
+
+    #[test]
+    fn portfolio_issues_filter_and_sort() {
+        use craftward_core::{Issue, IssueSeverity, IssueStatus};
+
+        let mut alpha = sample_project("alpha", "Alpha", None);
+        alpha.issues = Some(vec![
+            Issue {
+                id: "a-low".to_owned(),
+                title: "Zed".to_owned(),
+                severity: IssueSeverity::Low,
+                status: IssueStatus::Open,
+                url: None,
+                note: None,
+            },
+            Issue {
+                id: "a-crit".to_owned(),
+                title: "First".to_owned(),
+                severity: IssueSeverity::Critical,
+                status: IssueStatus::Resolved,
+                url: None,
+                note: None,
+            },
+        ]);
+        let mut beta = sample_project("beta", "Beta", None);
+        beta.issues = Some(vec![Issue {
+            id: "b-high".to_owned(),
+            title: "Middle".to_owned(),
+            severity: IssueSeverity::High,
+            status: IssueStatus::InProgress,
+            url: None,
+            note: None,
+        }]);
+        let loaded = LoadedPortfolio {
+            workspace_path: None,
+            workspace_error: None,
+            workspace_fingerprint: None,
+            database_path: None,
+            database: DatabaseStatus::Missing,
+            projects: vec![
+                LoadedProject {
+                    path: PathBuf::from("/tmp/alpha.json"),
+                    project: Ok(alpha),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+                LoadedProject {
+                    path: PathBuf::from("/tmp/beta.json"),
+                    project: Ok(beta),
+                    fingerprint: None,
+                    findings: Vec::new(),
+                },
+            ],
+        };
+        let open = collect_portfolio_issues(&loaded, &IssuesFilter::default());
+        assert_eq!(
+            open.iter()
+                .map(|row| row.issue_id.as_str())
+                .collect::<Vec<_>>(),
+            ["b-high", "a-low"]
+        );
+        let all = collect_portfolio_issues(
+            &loaded,
+            &IssuesFilter {
+                open_only: false,
+                severity: String::new(),
+                project_id: String::new(),
+            },
+        );
+        assert_eq!(
+            all.iter()
+                .map(|row| row.issue_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a-crit", "b-high", "a-low"]
+        );
+        let high = collect_portfolio_issues(
+            &loaded,
+            &IssuesFilter {
+                open_only: false,
+                severity: "high".to_owned(),
+                project_id: String::new(),
+            },
+        );
+        assert_eq!(high.len(), 1);
+        assert_eq!(high[0].issue_id, "b-high");
+    }
+
+    #[test]
+    fn display_label_maps_android_schema_values() {
+        assert_eq!(
+            display_label(android_store_choices(), "google_play"),
+            "Google Play"
+        );
+        assert_eq!(display_label(form_factor_choices(), "phone"), "Phone");
+    }
+
+    #[test]
+    fn relative_path_rejects_outside_base() {
+        let base = PathBuf::from("/tmp/project/src");
+        let outside = PathBuf::from("/tmp/elsewhere/Cargo.lock");
+        assert_eq!(relative_to_dir(&outside, &base), None);
     }
 }

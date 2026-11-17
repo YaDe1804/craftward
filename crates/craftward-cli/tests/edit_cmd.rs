@@ -65,6 +65,7 @@ fn show_and_project_set_edit_a_temporary_file() {
     let shown = succeed(&root, &["show", file]);
     assert!(shown.contains("id: demo"), "{shown}");
     assert!(shown.contains("issues\n  none"), "{shown}");
+    assert!(shown.contains("stack\n  none"), "{shown}");
     let header = succeed(
         &root,
         &[

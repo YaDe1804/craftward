@@ -23,13 +23,15 @@ Pre-alpha, no usable release yet.
 
 ### Desktop application (`craftward-app`)
 
-- Portfolio overview and per-project detail over the same workspace file and
+- Left sidebar (Portfolio, Issues) with portfolio overview, per-project
+  detail, and a cross-project Issues list over the same workspace file and
   `craftward.db` as the CLI
 - Create, add, and remove projects; edit header, phases, tasks, issues,
   stack (components, lockfiles, Android), and watch items through the same
   writers as the CLI, with undo toasts and conflict banners
-- Native folder/file/lockfile dialogs and OS clipboard (see
-  [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md))
+- Native folder/file/lockfile dialogs, OS clipboard, roadmap palette, and
+  status glyphs (see [ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md)
+  and [ADR 0026](docs/adr/0026-navigation-and-visual-design.md))
 
 Target platforms are Windows, Linux, and macOS. Accepted design decisions are
 recorded in [`docs/adr/`](docs/adr/README.md).
@@ -64,7 +66,8 @@ available in the detail view. `--version` prints the name and version. See
 [docs/desktop.md](docs/desktop.md),
 [ADR 0023](docs/adr/0023-desktop-app-with-eframe.md),
 [ADR 0024](docs/adr/0024-editing-from-the-desktop-app.md), and
-[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md).
+[ADR 0025](docs/adr/0025-native-dialogs-and-clipboard.md), and
+[ADR 0026](docs/adr/0026-navigation-and-visual-design.md).
 
 `craftward validate` checks project files. With no paths, it checks every
 project in the [workspace](docs/workspace-format.md). The process exits 0 when

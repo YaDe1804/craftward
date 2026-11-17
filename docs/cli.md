@@ -131,8 +131,10 @@ header lists id, name, status, and the optional version, description,
 source directory, update day, and tags. Each phase lists every task with
 its id and status, including tasks that are done or dropped. Open issues
 are those with status `open` or `in_progress`. Resolved and `wont_fix`
-issues are omitted. `issues` and `watch_items` are always printed; an empty
-list says `none`.
+issues are omitted. `issues`, `watch_items`, and `stack` are always
+printed; an empty list says `none`. The stack section lists components
+(kind, name, optional version/note/eol_product), lockfile paths, and
+Android fields when present.
 
 `PROJECT` is a workspace project id, a `craftward.json` file, or a directory
 that contains one. A value is a path when it exists, ends with `.json`,

@@ -12,14 +12,18 @@ use eframe::egui::Context;
 /// What the form asked the picker to choose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickKind {
-    /// Existing directory for a new project.
+    /// Existing directory for a new project's `craftward.json`.
     Folder,
+    /// Optional source directory when code lives outside the project folder.
+    SourceFolder,
     /// Existing `craftward.json` file.
     ProjectFile,
     /// Existing directory that contains `craftward.json`.
     ProjectFolder,
     /// Existing lockfile (`Cargo.lock` or `package-lock.json`).
     Lockfile,
+    /// Source directory while editing project header fields.
+    HeaderSourceFolder,
 }
 
 /// One completed picker result.
@@ -35,6 +39,12 @@ pub struct PickResult {
 pub trait PathPicker: Send {
     /// Opens a folder dialog and eventually sends the result on `tx`.
     fn pick_folder(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a folder dialog for an optional source tree.
+    fn pick_source_folder(&self, ctx: Context, tx: Sender<PickResult>);
+
+    /// Opens a folder dialog for the header form's source directory.
+    fn pick_header_source_folder(&self, ctx: Context, tx: Sender<PickResult>);
 
     /// Opens a file dialog filtered to JSON and eventually sends the result.
     fn pick_project_file(&self, ctx: Context, tx: Sender<PickResult>);
@@ -54,7 +64,23 @@ impl PathPicker for RfdPicker {
     fn pick_folder(&self, ctx: Context, tx: Sender<PickResult>) {
         spawn_pick(ctx, tx, PickKind::Folder, || {
             rfd::FileDialog::new()
-                .set_title("Choose project folder")
+                .set_title("Folder for craftward.json")
+                .pick_folder()
+        });
+    }
+
+    fn pick_source_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::SourceFolder, || {
+            rfd::FileDialog::new()
+                .set_title("Source folder (if the code lives elsewhere)")
+                .pick_folder()
+        });
+    }
+
+    fn pick_header_source_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        spawn_pick(ctx, tx, PickKind::HeaderSourceFolder, || {
+            rfd::FileDialog::new()
+                .set_title("Source folder (if the code lives elsewhere)")
                 .pick_folder()
         });
     }
@@ -147,6 +173,22 @@ impl PathPicker for FakePicker {
     fn pick_folder(&self, ctx: Context, tx: Sender<PickResult>) {
         let _ = tx.send(PickResult {
             kind: PickKind::Folder,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_source_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::SourceFolder,
+            path: self.take_next(),
+        });
+        ctx.request_repaint();
+    }
+
+    fn pick_header_source_folder(&self, ctx: Context, tx: Sender<PickResult>) {
+        let _ = tx.send(PickResult {
+            kind: PickKind::HeaderSourceFolder,
             path: self.take_next(),
         });
         ctx.request_repaint();

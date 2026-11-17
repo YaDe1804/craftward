@@ -1,8 +1,9 @@
 # Desktop application
 
 Craftward's desktop app (`craftward-app`) shows a portfolio of every project
-in the workspace and a detail page for one project. It uses the same files
-as the command-line tool. Edits go through the same core writers as the CLI.
+in the workspace, a detail page for one project, and a cross-project Issues
+list. It uses the same files as the command-line tool. Edits go through the
+same core writers as the CLI.
 
 ## Start
 
@@ -30,44 +31,68 @@ just to open the window; a missing database is shown as a status message.
 
 See [storage.md](storage.md) and [workspace-format.md](workspace-format.md).
 
-## Views
+## Navigation
 
-- **Overview:** one card per project, sorted by urgency. **New project** and
-  **Add existing** manage the workspace list (text fields plus optional
-  native Browse dialogs). **Remove from list** runs immediately with an
-  undo toast (ADR 0024); **Remove and delete craftward.json…** asks for
-  confirmation because file deletion cannot be undone. Clicking the ···
-  menu button opens the card menu (Enter does the same when that button is
-  focused); clicking the rest of the card opens the project.
-- **Detail:** header (including **Remove from list** and **Delete
-  craftward.json…**), stack, phases with tasks, open issues, findings, and
-  deadlines. Two columns from 900 px width; one column below that.
+A fixed left sidebar lists **Portfolio** and **Issues** (structure ready for
+later Radar and Settings entries). The active entry is highlighted and is
+reachable by keyboard focus. Workspace and database paths appear at the
+bottom of the sidebar.
+
+The project detail page belongs to Portfolio. The top breadcrumb is
+**Portfolio › _name_** with Portfolio clickable; Esc returns there. There is
+no separate Back button when that breadcrumb is available.
 
 **Reload** reloads the workspace, project files, and findings. There is no
 file watcher in this release.
+
+## Views
+
+- **Portfolio overview:** one card per project, sorted by urgency. **New
+  project** and **Add existing** manage the workspace list (text fields plus
+  optional native Browse dialogs). New project asks for a **Folder for
+  craftward.json** and an optional **Source folder (if the code lives
+  elsewhere)**. **Remove from list** runs immediately with an undo toast
+  (ADR 0024); **Remove and delete craftward.json…** asks for confirmation
+  because file deletion cannot be undone. Clicking the ··· menu button opens
+  the card menu (Enter does the same when that button is focused); clicking
+  the rest of the card opens the project.
+- **Detail:** header (including **Remove from list** and **Delete
+  craftward.json…**), stack, phases with tasks, open issues, findings, and
+  **Watch items & deadlines**. Two columns from 900 px width; one column
+  below that.
+- **Issues:** every issue from every loaded project (project, severity,
+  status, title). Filters: status (default open only), severity, project.
+  Sort: severity descending, then project name, then title. Click a row to
+  open that project with the issue marked. Status can be changed in the
+  list; undo uses the same path as on the project page.
 
 ## Editing
 
 Supported in this release:
 
-- Change task and issue status from the status chip menu.
+- Change task and issue status from the status chip menu (including from
+  the Issues list).
 - Edit overview header fields (name, status, version, description, tags,
-  source directory, links).
+  source folder with Browse and explanation, links).
 - Add, edit, and remove phases (removing a phase with tasks is allowed;
   Undo restores the phase and its tasks).
 - Add, edit, and remove tasks and issues (task: title, due, note; issue:
-  title, severity, URL, note).
+  title, severity, URL, note). Due dates follow the OS locale via
+  `sys-locale`, with `LANG` / `LC_*` as fallback (`DD.MM.YYYY` for German,
+  otherwise `YYYY-MM-DD`); both forms are accepted on input and storage
+  stays ISO.
 - Stack: add, edit, and remove components (kind, name, version,
   eol_product); add and remove lockfiles (path relative to `source_dir`,
-  native Browse dialog, must exist as `Cargo.lock` or `package-lock.json`);
-  edit Android (`target_sdk`, `min_sdk`, `form_factor`, `store`,
-  `detect_from`).
-- Watch items in the Deadlines section: add, edit, and remove (kind,
-  title, due, note). Task due dates in that list stay display-only.
-- Create a project (folder + id + name + status; id is suggested from the
-  name until edited by hand), add an existing `craftward.json`, remove a
-  project from the workspace list (optionally delete only that
-  `craftward.json`).
+  native Browse dialog, must exist as `Cargo.lock` or `package-lock.json`
+  under that folder; picks outside the folder are rejected); edit Android
+  with readable labels (Google Play, Phone, and so on).
+- Watch items under **Watch items & deadlines**: add (**Add watch item**),
+  edit, and remove (kind, title, due, note). Task due dates in that list
+  stay display-only.
+- Create a project (folder + optional source folder + id + name + status;
+  id is suggested from the name until edited by hand), add an existing
+  `craftward.json`, remove a project from the workspace list (optionally
+  delete only that `craftward.json`).
 
 **Save** stays disabled until the form is valid. Field errors stay next to
 the input; drafts keep their text after a failed save. **Escape** closes an
@@ -93,15 +118,16 @@ external change. See [ADR 0024](adr/0024-editing-from-the-desktop-app.md).
 ## Keyboard
 
 Tab moves focus, buttons and menus activate with Enter/Space, Escape closes
-an open form or leaves the detail view, Reload and Back are ordinary
-buttons in the top bar. Ctrl/Cmd+C, V, X, and A work in text fields; selected
+an open form or leaves the detail view for Portfolio, Reload is an ordinary
+button in the top bar. Ctrl/Cmd+C, V, X, and A work in text fields; selected
 labels can be copied when the OS clipboard feature is enabled.
 
 ## Theme
 
-Colours match the dark HTML roadmaps. Status chips are the menu button
-itself (no double frame). Done and dropped task titles use muted text with
-WCAG AA contrast. Text contrast against surfaces is checked in unit tests.
+Colours and status glyphs match the dark HTML roadmaps (ADR 0026). Status
+chips are the menu button itself (no double frame). Done and dropped task
+titles use muted text with WCAG AA contrast. Text contrast against surfaces
+and glyph coverage are checked in unit tests.
 
 ## Known limitations
 
@@ -110,7 +136,9 @@ WCAG AA contrast. Text contrast against surfaces is checked in unit tests.
 - No file watching; use Reload after CLI changes.
 - No window-position persistence (eframe `persistence` is off).
 - Findings appear only after a CLI `radar` run has created `craftward.db`.
+- No calendar date picker; dates are typed.
 
 Architecture: [ADR 0023](adr/0023-desktop-app-with-eframe.md),
 [ADR 0024](adr/0024-editing-from-the-desktop-app.md),
-[ADR 0025](adr/0025-native-dialogs-and-clipboard.md).
+[ADR 0025](adr/0025-native-dialogs-and-clipboard.md),
+[ADR 0026](adr/0026-navigation-and-visual-design.md).

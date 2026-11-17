@@ -1101,7 +1101,59 @@ pub fn render_project(project: &Project) -> String {
     if !any_watch {
         let _ = writeln!(out, "  none");
     }
+    out.push('\n');
+    write_stack_section(&mut out, project.stack.as_ref());
     out
+}
+
+fn write_stack_section(out: &mut String, stack: Option<&crate::model::Stack>) {
+    let _ = writeln!(out, "stack");
+    let Some(stack) = stack else {
+        let _ = writeln!(out, "  none");
+        return;
+    };
+    let mut any = false;
+    for component in &stack.components {
+        any = true;
+        let version = component
+            .version
+            .as_ref()
+            .map_or(String::new(), |value| format!(" {value}"));
+        let _ = writeln!(
+            out,
+            "  component [{}] {}{version}",
+            component_kind_word(component.kind),
+            component.name
+        );
+        if let Some(note) = &component.note {
+            let _ = writeln!(out, "    note: {note}");
+        }
+        if let Some(eol) = &component.eol_product {
+            let _ = writeln!(out, "    eol_product: {eol}");
+        }
+    }
+    for path in &stack.lockfiles {
+        any = true;
+        let _ = writeln!(out, "  lockfile {path}");
+    }
+    if let Some(android) = &stack.android {
+        any = true;
+        let _ = writeln!(out, "  android");
+        if let Some(sdk) = android.target_sdk {
+            let _ = writeln!(out, "    target_sdk: {sdk}");
+        }
+        if let Some(sdk) = android.min_sdk {
+            let _ = writeln!(out, "    min_sdk: {sdk}");
+        }
+        let _ = writeln!(out, "    form_factor: {}", android.form_factor.as_str());
+        let _ = writeln!(out, "    store: {}", android.store.as_str());
+        if !android.detect_from.is_empty() {
+            let _ = writeln!(out, "    detect_from: {}", android.detect_from.join(", "));
+        }
+    }
+    if !any {
+        let _ = writeln!(out, "  none");
+    }
 }
 
 /// Forms a short id from a title.
@@ -1705,6 +1757,19 @@ fn watch_kind_word(kind: WatchKind) -> &'static str {
         WatchKind::Expiry => "expiry",
         WatchKind::Review => "review",
         WatchKind::Other => "other",
+    }
+}
+
+fn component_kind_word(kind: ComponentKind) -> &'static str {
+    match kind {
+        ComponentKind::Platform => "platform",
+        ComponentKind::Language => "language",
+        ComponentKind::Framework => "framework",
+        ComponentKind::Runtime => "runtime",
+        ComponentKind::Sdk => "sdk",
+        ComponentKind::Service => "service",
+        ComponentKind::Tool => "tool",
+        ComponentKind::Other => "other",
     }
 }
 

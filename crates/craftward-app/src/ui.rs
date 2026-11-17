@@ -16,23 +16,25 @@ use crate::actions::{
     save_remove_phase, save_remove_task, save_remove_watch, save_task_edit, save_task_status,
     save_watch_edit,
 };
+use crate::date::{date_hint, format_date_for_display};
 use crate::load::{LoadedPortfolio, LoadedProject, load_portfolio};
 use crate::picker::{PathPicker, PickKind, PickerInbox, RfdPicker};
 use crate::theme::{
     self, ACCENT, BACKGROUND, CARD, CARD_GAP, CARD_INNER, CARD_PADDING, CARD_ROUNDING,
-    DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, PAGE_MARGIN, PROGRESS_TRACK, RUNNING,
-    SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, TEXT, TYPE,
+    DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK,
+    RUNNING, SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, SIDEBAR_WIDTH, TEXT,
+    TYPE,
 };
 use crate::view::{
     AddProjectForm, AndroidForm, ComponentEditForm, ComponentForm, FindingRow, HeaderForm,
-    IssueEditForm, IssueForm, LockfileForm, NewProjectForm, PhaseForm, PortfolioView, ProgressView,
-    ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm, WatchEditForm, WatchForm,
-    android_store_choices, badge_stretches_to_parent, build_detail, build_portfolio,
-    component_kind_choices, finding_count_badges, form_factor_choices, grid_columns,
-    grid_row_column_slots, issue_severity_choices, issue_status_choices,
-    longest_status_choice_label, open_findings_label, project_source_dir, project_status_choices,
-    project_status_hint, relative_to_dir, task_status_choices, task_title_is_muted,
-    watch_kind_choices,
+    IssueEditForm, IssueForm, IssuesFilter, LockfileForm, NewProjectForm, PhaseForm, PortfolioView,
+    ProgressView, ProjectCard, ProjectDetail, StatusBadge, TaskEditForm, TaskForm, WatchEditForm,
+    WatchForm, android_store_choices, badge_stretches_to_parent, build_detail, build_portfolio,
+    collect_portfolio_issues, component_kind_choices, display_label, finding_count_badges,
+    form_factor_choices, grid_columns, grid_row_column_slots, issue_severity_choices,
+    issue_status_choices, longest_status_choice_label, open_findings_label, project_source_dir,
+    project_status_choices, project_status_hint, relative_to_dir, task_status_choices,
+    task_title_is_muted, watch_kind_choices,
 };
 
 /// Which screen is visible.
@@ -40,11 +42,22 @@ use crate::view::{
 enum Screen {
     /// Portfolio overview.
     Overview,
-    /// Detail for `LoadedPortfolio::projects[index]`.
+    /// Detail for `LoadedPortfolio::projects[index]` (still under Portfolio).
     Detail {
         /// Project index.
         index: usize,
     },
+    /// Cross-project issues list.
+    Issues,
+}
+
+/// Primary sidebar destinations (Radar / Settings can be appended later).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NavItem {
+    /// Portfolio overview and project detail.
+    Portfolio,
+    /// Cross-project issues.
+    Issues,
 }
 
 /// Where a save error should appear.
@@ -212,10 +225,14 @@ enum DetailAction {
     },
     /// Set an issue status.
     SetIssueStatus {
+        /// Project index when set from the Issues list; detail screen uses [`None`].
+        project_index: Option<usize>,
         issue_id: String,
         status: String,
         title: String,
     },
+    /// Open the header source-folder picker.
+    BrowseHeaderSource,
     /// Persist the open task form.
     SaveTask,
     /// Persist the open issue form.
@@ -290,6 +307,10 @@ pub struct CraftwardApp {
     edit: DetailEdit,
     /// Overview editing widgets.
     overview: OverviewEdit,
+    /// Filters for the Issues view.
+    issues_filter: IssuesFilter,
+    /// Issue id to highlight after navigating from Issues.
+    focus_issue_id: Option<String>,
     /// Last undoable change.
     undo: UndoState,
     /// Native path picker.
@@ -311,6 +332,8 @@ impl CraftwardApp {
             screen: Screen::Overview,
             edit: DetailEdit::default(),
             overview: OverviewEdit::default(),
+            issues_filter: IssuesFilter::default(),
+            focus_issue_id: None,
             undo: UndoState::new(),
             picker: Box::new(RfdPicker),
             picker_inbox: PickerInbox::default(),
@@ -326,7 +349,29 @@ impl CraftwardApp {
             && index >= self.loaded.projects.len()
         {
             self.screen = Screen::Overview;
+            self.focus_issue_id = None;
         }
+    }
+
+    fn nav_item(&self) -> NavItem {
+        match self.screen {
+            Screen::Overview | Screen::Detail { .. } => NavItem::Portfolio,
+            Screen::Issues => NavItem::Issues,
+        }
+    }
+
+    fn go_portfolio_overview(&mut self) {
+        self.screen = Screen::Overview;
+        self.edit.clear_all();
+        self.focus_issue_id = None;
+    }
+
+    fn open_project_issue(&mut self, project_index: usize, issue_id: &str) {
+        self.edit.clear_all();
+        self.focus_issue_id = Some(issue_id.to_owned());
+        self.screen = Screen::Detail {
+            index: project_index,
+        };
     }
 
     #[allow(clippy::too_many_lines)]
@@ -337,6 +382,7 @@ impl CraftwardApp {
                 self.edit.banner = None;
                 self.edit.clear_message();
             }
+            DetailAction::BrowseHeaderSource | DetailAction::BrowseLockfile => {}
             DetailAction::SetTaskStatus {
                 phase_id,
                 task_id,
@@ -352,14 +398,16 @@ impl CraftwardApp {
                 });
             }
             DetailAction::SetIssueStatus {
+                project_index,
                 issue_id,
                 status,
                 title,
             } => {
+                let target = project_index.unwrap_or(index);
                 let site = ErrorSite::Issue {
                     issue_id: issue_id.clone(),
                 };
-                self.run_save(index, site, |path, fingerprint| {
+                self.run_save(target, site, |path, fingerprint| {
                     save_issue_status(path, fingerprint, &issue_id, &status, &title)
                 });
             }
@@ -485,7 +533,6 @@ impl CraftwardApp {
                     save_add_lockfile(path, fingerprint, &form)
                 });
             }
-            DetailAction::BrowseLockfile => {}
             DetailAction::RemoveLockfile { path } => {
                 self.run_save(index, ErrorSite::LockfileForm, |file, fingerprint| {
                     save_remove_lockfile(file, fingerprint, &path)
@@ -607,6 +654,7 @@ impl eframe::App for CraftwardApp {
         self.undo.tick(now_secs());
         self.drain_picker();
         self.handle_escape(ui);
+        self.draw_sidebar(ui);
         self.draw_top_bar(ui);
         Panel::bottom("craftward_footer")
             .frame(
@@ -617,16 +665,30 @@ impl eframe::App for CraftwardApp {
             )
             .show(ui, |ui| {
                 self.draw_undo_toast(ui);
-                draw_footer(ui, &self.portfolio);
             });
         let action = self.draw_central(ui);
-        if let (Screen::Detail { index }, Some(action)) = (self.screen, action) {
-            if matches!(action, DetailAction::BrowseLockfile) {
+        match (self.screen, action) {
+            (_, Some(DetailAction::BrowseLockfile)) => {
                 self.picker
                     .pick_lockfile(ui.ctx().clone(), self.picker_inbox.sender());
-            } else {
+            }
+            (_, Some(DetailAction::BrowseHeaderSource)) => {
+                self.picker
+                    .pick_header_source_folder(ui.ctx().clone(), self.picker_inbox.sender());
+            }
+            (Screen::Detail { index }, Some(action)) => {
                 self.apply_detail_action(index, action);
             }
+            (Screen::Issues, Some(action)) => {
+                if let DetailAction::SetIssueStatus {
+                    project_index: Some(index),
+                    ..
+                } = &action
+                {
+                    self.apply_detail_action(*index, action);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -693,15 +755,34 @@ impl CraftwardApp {
                         form.directory = text;
                     }
                 }
+                PickKind::SourceFolder => {
+                    if let Some(form) = &mut self.overview.new_project {
+                        form.source_dir = text;
+                    }
+                }
+                PickKind::HeaderSourceFolder => {
+                    if let Some(form) = &mut self.edit.header_form {
+                        form.source_dir = text;
+                    }
+                }
                 PickKind::ProjectFile | PickKind::ProjectFolder => {
                     if let Some(form) = &mut self.overview.add_project {
                         form.path = text;
                     }
                 }
                 PickKind::Lockfile => {
-                    let relative = self.relative_lockfile_pick(&path).unwrap_or(text);
-                    if let Some(form) = &mut self.edit.lockfile_form {
-                        form.path = relative;
+                    if let Some(relative) = self.relative_lockfile_pick(&path) {
+                        if let Some(form) = &mut self.edit.lockfile_form {
+                            form.path = relative;
+                        }
+                        self.edit.clear_message();
+                    } else if let Some(form) = &mut self.edit.lockfile_form {
+                        form.path.clear();
+                        self.edit.set_error(
+                            ErrorSite::LockfileForm,
+                            "Lockfile must be inside the source folder".to_owned(),
+                            false,
+                        );
                     }
                 }
             }
@@ -732,8 +813,7 @@ impl CraftwardApp {
             save_remove_from_workspace(path, fingerprint, id, name, delete_file)
         });
         if return_overview {
-            self.screen = Screen::Overview;
-            self.edit.clear_all();
+            self.go_portfolio_overview();
         }
     }
 
@@ -766,9 +846,58 @@ impl CraftwardApp {
         {
             self.edit.close_forms();
         } else if matches!(self.screen, Screen::Detail { .. }) {
-            self.screen = Screen::Overview;
-            self.edit.clear_all();
+            self.go_portfolio_overview();
         }
+    }
+
+    fn draw_sidebar(&mut self, ui: &mut Ui) {
+        Panel::left("craftward_sidebar")
+            .exact_size(SIDEBAR_WIDTH)
+            .resizable(false)
+            .frame(
+                Frame::NONE
+                    .fill(CARD)
+                    .inner_margin(Margin::symmetric(10, 12))
+                    .stroke(Stroke::new(1.0, LINE)),
+            )
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Craftward")
+                        .font(TYPE.section_id())
+                        .color(HEADING)
+                        .strong(),
+                );
+                ui.add_space(10.0);
+                let active = self.nav_item();
+                if Self::draw_nav_entry(ui, "Portfolio", active == NavItem::Portfolio) {
+                    self.go_portfolio_overview();
+                }
+                if Self::draw_nav_entry(ui, "Issues", active == NavItem::Issues) {
+                    self.screen = Screen::Issues;
+                    self.edit.clear_all();
+                    self.focus_issue_id = None;
+                }
+                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                    draw_sidebar_paths(ui, &self.portfolio);
+                });
+            });
+    }
+
+    fn draw_nav_entry(ui: &mut Ui, label: &str, active: bool) -> bool {
+        let colour = if active { ACCENT } else { TEXT };
+        let fill = if active { CARD_INNER } else { CARD };
+        ui.add(
+            Button::new(
+                RichText::new(label)
+                    .font(TYPE.body_id())
+                    .color(colour)
+                    .strong(),
+            )
+            .fill(fill)
+            .stroke(Stroke::new(1.0, if active { ACCENT } else { LINE }))
+            .min_size(Vec2::new(SIDEBAR_WIDTH - 24.0, 28.0)),
+        )
+        .clicked()
     }
 
     fn draw_top_bar(&mut self, ui: &mut Ui) {
@@ -781,19 +910,52 @@ impl CraftwardApp {
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let title = match self.screen {
-                        Screen::Overview => "Craftward".to_owned(),
-                        Screen::Detail { index } => self.loaded.projects.get(index).map_or_else(
-                            || "Portfolio".to_owned(),
-                            |project| build_detail(index, project).breadcrumb,
-                        ),
-                    };
-                    ui.label(
-                        RichText::new(title)
-                            .font(TYPE.title_id())
-                            .color(TEXT)
-                            .strong(),
-                    );
+                    match self.screen {
+                        Screen::Overview => {
+                            ui.label(
+                                RichText::new("Portfolio")
+                                    .font(TYPE.title_id())
+                                    .color(TEXT)
+                                    .strong(),
+                            );
+                        }
+                        Screen::Issues => {
+                            ui.label(
+                                RichText::new("Issues")
+                                    .font(TYPE.title_id())
+                                    .color(TEXT)
+                                    .strong(),
+                            );
+                        }
+                        Screen::Detail { index } => {
+                            let name = self.loaded.projects.get(index).map_or_else(
+                                || "Unavailable project".to_owned(),
+                                |project| build_detail(index, project).name,
+                            );
+                            if ui
+                                .add(
+                                    Button::new(
+                                        RichText::new("Portfolio")
+                                            .font(TYPE.title_id())
+                                            .color(ACCENT)
+                                            .strong(),
+                                    )
+                                    .fill(BACKGROUND)
+                                    .stroke(Stroke::NONE),
+                                )
+                                .on_hover_text("Return to the portfolio (Esc)")
+                                .clicked()
+                            {
+                                self.go_portfolio_overview();
+                            }
+                            ui.label(
+                                RichText::new(format!("› {name}"))
+                                    .font(TYPE.title_id())
+                                    .color(TEXT)
+                                    .strong(),
+                            );
+                        }
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
                             .add(Button::new(
@@ -803,17 +965,6 @@ impl CraftwardApp {
                             .clicked()
                         {
                             self.reload();
-                        }
-                        if matches!(self.screen, Screen::Detail { .. })
-                            && ui
-                                .add(Button::new(
-                                    RichText::new("Back").font(TYPE.body_id()).color(ACCENT),
-                                ))
-                                .on_hover_text("Return to the portfolio (Esc)")
-                                .clicked()
-                        {
-                            self.screen = Screen::Overview;
-                            self.edit.clear_all();
                         }
                     });
                 });
@@ -836,8 +987,12 @@ impl CraftwardApp {
                     Screen::Overview => {
                         if let Some(index) = self.draw_overview_screen(ui) {
                             self.edit.clear_all();
+                            self.focus_issue_id = None;
                             self.screen = Screen::Detail { index };
                         }
+                    }
+                    Screen::Issues => {
+                        action = self.draw_issues_screen(ui);
                     }
                     Screen::Detail { index } => {
                         if let Some(banner) = self.edit.banner.clone() {
@@ -869,7 +1024,13 @@ impl CraftwardApp {
                         if let Some(project) = self.loaded.projects.get(index) {
                             let detail = build_detail(index, project);
                             if action.is_none() {
-                                action = draw_detail(ui, &detail, project, &mut self.edit);
+                                action = draw_detail(
+                                    ui,
+                                    &detail,
+                                    project,
+                                    &mut self.edit,
+                                    self.focus_issue_id.as_deref(),
+                                );
                             }
                         } else {
                             ui.label(
@@ -879,17 +1040,152 @@ impl CraftwardApp {
                             );
                             if ui
                                 .add(Button::new(
-                                    RichText::new("Back").font(TYPE.body_id()).color(ACCENT),
+                                    RichText::new("Portfolio")
+                                        .font(TYPE.body_id())
+                                        .color(ACCENT),
                                 ))
                                 .clicked()
                             {
-                                self.screen = Screen::Overview;
-                                self.edit.clear_all();
+                                self.go_portfolio_overview();
                             }
                         }
                     }
                 }
             });
+        action
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn draw_issues_screen(&mut self, ui: &mut Ui) -> Option<DetailAction> {
+        let mut action = None;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Status")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let status_label = if self.issues_filter.open_only {
+                "Open"
+            } else {
+                "All"
+            };
+            ComboBox::from_id_salt("issues-status-filter")
+                .selected_text(RichText::new(status_label).font(TYPE.body_id()).color(TEXT))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.issues_filter.open_only, true, "Open");
+                    ui.selectable_value(&mut self.issues_filter.open_only, false, "All");
+                });
+            ui.label(
+                RichText::new("Severity")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let severity_label = if self.issues_filter.severity.is_empty() {
+                "All".to_owned()
+            } else {
+                display_label(issue_severity_choices(), &self.issues_filter.severity)
+            };
+            ComboBox::from_id_salt("issues-severity-filter")
+                .selected_text(
+                    RichText::new(severity_label)
+                        .font(TYPE.body_id())
+                        .color(TEXT),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.issues_filter.severity, String::new(), "All");
+                    for (key, label) in issue_severity_choices() {
+                        ui.selectable_value(
+                            &mut self.issues_filter.severity,
+                            (*key).to_owned(),
+                            *label,
+                        );
+                    }
+                });
+            ui.label(
+                RichText::new("Project")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            let project_label = if self.issues_filter.project_id.is_empty() {
+                "All".to_owned()
+            } else {
+                self.loaded
+                    .projects
+                    .iter()
+                    .find_map(|project| {
+                        project.project.as_ref().ok().and_then(|parsed| {
+                            (parsed.id == self.issues_filter.project_id)
+                                .then(|| parsed.name.clone())
+                        })
+                    })
+                    .unwrap_or_else(|| self.issues_filter.project_id.clone())
+            };
+            ComboBox::from_id_salt("issues-project-filter")
+                .selected_text(
+                    RichText::new(project_label)
+                        .font(TYPE.body_id())
+                        .color(TEXT),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.issues_filter.project_id, String::new(), "All");
+                    for project in &self.loaded.projects {
+                        if let Ok(parsed) = &project.project {
+                            ui.selectable_value(
+                                &mut self.issues_filter.project_id,
+                                parsed.id.clone(),
+                                parsed.name.as_str(),
+                            );
+                        }
+                    }
+                });
+        });
+        ui.add_space(8.0);
+        let rows = collect_portfolio_issues(&self.loaded, &self.issues_filter);
+        if rows.is_empty() {
+            ui.label(
+                RichText::new("No issues match these filters.")
+                    .font(TYPE.body_id())
+                    .color(MUTED),
+            );
+            return None;
+        }
+        let status_width = status_chip_column_width(ui, issue_status_choices());
+        ScrollArea::vertical().show(ui, |ui| {
+            for row in &rows {
+                ui.horizontal(|ui| {
+                    let open = ui
+                        .add(
+                            Button::new(
+                                RichText::new(format!("{} · {}", row.project_name, row.title))
+                                    .font(TYPE.body_id())
+                                    .color(TEXT),
+                            )
+                            .fill(BACKGROUND)
+                            .stroke(Stroke::NONE),
+                        )
+                        .clicked();
+                    draw_badge(ui, &row.severity, None);
+                    if let Some(status) = status_menu(
+                        ui,
+                        &format!("portfolio-issue-{}", row.issue_id),
+                        row.status.label,
+                        status_colour(&row.status),
+                        issue_status_choices(),
+                        status_width,
+                    ) {
+                        action = Some(DetailAction::SetIssueStatus {
+                            project_index: Some(row.project_index),
+                            issue_id: row.issue_id.clone(),
+                            status: status.to_owned(),
+                            title: row.title.clone(),
+                        });
+                    }
+                    if open {
+                        self.open_project_issue(row.project_index, &row.issue_id);
+                    }
+                });
+            }
+        });
         action
     }
 }
@@ -899,31 +1195,33 @@ fn apply_theme(ctx: &Context) {
     ctx.set_style_of(Theme::Dark, theme::style());
 }
 
-fn draw_footer(ui: &mut Ui, portfolio: &PortfolioView) {
+fn draw_sidebar_paths(ui: &mut Ui, portfolio: &PortfolioView) {
     if let Some(error) = &portfolio.workspace_error {
         ui.colored_label(SEVERITY_CRITICAL, error);
         return;
     }
-    let mut parts = Vec::new();
     if let Some(path) = &portfolio.workspace_path {
-        parts.push(format!("Workspace: {path}"));
+        ui.label(
+            RichText::new(format!("Workspace\n{path}"))
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        )
+        .on_hover_text(path);
     }
     if let Some(path) = &portfolio.database_path {
-        parts.push(format!("Database: {path}"));
+        ui.label(
+            RichText::new(format!("Database\n{path}"))
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        )
+        .on_hover_text(path);
     }
-    if parts.is_empty() {
+    if portfolio.workspace_path.is_none() && portfolio.database_path.is_none() {
         ui.label(
             RichText::new("No workspace or database path resolved.")
                 .font(TYPE.secondary_id())
                 .color(MUTED),
         );
-    } else {
-        ui.label(
-            RichText::new(parts.join("  ·  "))
-                .font(TYPE.secondary_id())
-                .color(MUTED),
-        )
-        .on_hover_text(parts.join("\n"));
     }
     if let Some(message) = &portfolio.database_message {
         ui.label(
@@ -1048,9 +1346,16 @@ impl CraftwardApp {
                     .strong(),
             );
             ui.label(
-                RichText::new("Folder (must exist and must not already contain craftward.json)")
+                RichText::new("Folder for craftward.json")
                     .font(TYPE.secondary_id())
                     .color(MUTED),
+            );
+            ui.label(
+                RichText::new(
+                    "Must exist and must not already contain craftward.json. This is where the project file is written.",
+                )
+                .font(TYPE.secondary_id())
+                .color(MUTED),
             );
             ui.horizontal(|ui| {
                 ui.add(
@@ -1064,6 +1369,31 @@ impl CraftwardApp {
                 }
             });
             field_error(ui, form.directory_error());
+
+            ui.label(
+                RichText::new("Source folder (if the code lives elsewhere)")
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
+            ui.label(
+                RichText::new(
+                    "Optional. When set, lockfiles and Android detect_from resolve from this folder instead of the craftward.json folder.",
+                )
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut form.source_dir)
+                        .font(TYPE.body_id())
+                        .desired_width(320.0),
+                );
+                if compact_button(ui, "Browse…", ACCENT).clicked() {
+                    self.picker
+                        .pick_source_folder(ui.ctx().clone(), self.picker_inbox.sender());
+                }
+            });
+            field_error(ui, form.source_dir_error());
 
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Name").font(TYPE.secondary_id()).color(MUTED));
@@ -1421,7 +1751,10 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard) -> CardAction {
                                 .as_deref()
                                 .map_or(String::new(), |text| format!(" ({text})"));
                             ui.label(
-                                RichText::new(format!("Next due: {due}{remaining}"))
+                                RichText::new(format!(
+                                    "Next due: {}{remaining}",
+                                    format_date_for_display(due)
+                                ))
                                     .font(TYPE.body_id())
                                     .color(TEXT),
                             );
@@ -1480,6 +1813,7 @@ fn draw_detail(
     detail: &ProjectDetail,
     loaded: &LoadedProject,
     edit: &mut DetailEdit,
+    focus_issue_id: Option<&str>,
 ) -> Option<DetailAction> {
     let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
@@ -1554,7 +1888,9 @@ fn draw_detail(
                 if let Some(next) = draw_detail_left(&mut cols[0], detail, edit, editable) {
                     action = Some(next);
                 }
-                if let Some(next) = draw_detail_right(&mut cols[1], detail, edit, editable) {
+                if let Some(next) =
+                    draw_detail_right(&mut cols[1], detail, edit, editable, focus_issue_id)
+                {
                     action = Some(next);
                 }
             });
@@ -1563,7 +1899,7 @@ fn draw_detail(
                 action = Some(next);
             }
             ui.add_space(CARD_GAP);
-            if let Some(next) = draw_detail_right(ui, detail, edit, editable) {
+            if let Some(next) = draw_detail_right(ui, detail, edit, editable, focus_issue_id) {
                 action = Some(next);
             }
         }
@@ -1607,11 +1943,16 @@ fn draw_detail_left(
     ui.add_space(CARD_GAP);
     let deadlines_empty =
         detail.deadlines.is_empty() && edit.watch_form.is_none() && edit.watch_edit.is_none();
-    section(ui, "Deadlines", deadlines_empty && !editable, |ui| {
-        if let Some(next) = draw_deadlines_section(ui, detail, edit, editable) {
-            action = Some(next);
-        }
-    });
+    section(
+        ui,
+        "Watch items & deadlines",
+        deadlines_empty && !editable,
+        |ui| {
+            if let Some(next) = draw_deadlines_section(ui, detail, edit, editable) {
+                action = Some(next);
+            }
+        },
+    );
 
     ui.add_space(CARD_GAP);
     section(ui, "Open findings", detail.findings.is_empty(), |ui| {
@@ -1746,8 +2087,8 @@ fn draw_stack_section(
                 android
                     .min_sdk
                     .map_or_else(|| "—".to_owned(), |value| value.to_string()),
-                android.form_factor,
-                android.store
+                display_label(form_factor_choices(), &android.form_factor),
+                display_label(android_store_choices(), &android.store)
             ))
             .font(TYPE.body_id())
             .color(TEXT),
@@ -1812,9 +2153,14 @@ fn draw_deadlines_section(
             draw_badge(ui, &row.kind, None);
             ui.add(
                 Label::new(
-                    RichText::new(format!("{} — {} ({})", row.title, row.due, row.remaining))
-                        .font(TYPE.body_id())
-                        .color(TEXT),
+                    RichText::new(format!(
+                        "{} — {} ({})",
+                        row.title,
+                        format_date_for_display(&row.due),
+                        row.remaining
+                    ))
+                    .font(TYPE.body_id())
+                    .color(TEXT),
                 )
                 .wrap(),
             );
@@ -1845,7 +2191,7 @@ fn draw_deadlines_section(
 
     if editable {
         ui.add_space(6.0);
-        if compact_button(ui, "Add", ACCENT).clicked() {
+        if compact_button(ui, "Add watch item", ACCENT).clicked() {
             edit.close_forms();
             edit.watch_form = Some(WatchForm::default());
         }
@@ -1904,10 +2250,11 @@ fn draw_detail_right(
     detail: &ProjectDetail,
     edit: &mut DetailEdit,
     editable: bool,
+    focus_issue_id: Option<&str>,
 ) -> Option<DetailAction> {
     let mut action = draw_phases_panel(ui, detail, edit, editable);
     ui.add_space(CARD_GAP);
-    if let Some(next) = draw_issues_panel(ui, detail, edit, editable) {
+    if let Some(next) = draw_issues_panel(ui, detail, edit, editable, focus_issue_id) {
         action = Some(next);
     }
     action
@@ -2090,7 +2437,7 @@ fn draw_task_row(
         .on_hover_text(format!("{} ({})", task.status.label, task.id));
         if let Some(due) = &task.due {
             ui.label(
-                RichText::new(format!("due {due}"))
+                RichText::new(format!("due {}", format_date_for_display(due)))
                     .font(TYPE.secondary_id())
                     .color(MUTED),
             );
@@ -2147,6 +2494,7 @@ fn draw_issues_panel(
     detail: &ProjectDetail,
     edit: &mut DetailEdit,
     editable: bool,
+    focus_issue_id: Option<&str>,
 ) -> Option<DetailAction> {
     let mut action = None;
     card_frame().show(ui, |ui| {
@@ -2161,11 +2509,20 @@ fn draw_issues_panel(
         }
         let status_width = status_chip_column_width(ui, issue_status_choices());
         for issue in &detail.issues {
+            let focused = focus_issue_id == Some(issue.id.as_str());
             let editing = edit
                 .issue_edit
                 .as_ref()
                 .is_some_and(|(id, _)| id == &issue.id);
             ui.horizontal(|ui| {
+                if focused {
+                    ui.label(
+                        RichText::new("›")
+                            .font(TYPE.body_id())
+                            .color(ACCENT)
+                            .strong(),
+                    );
+                }
                 draw_badge(ui, &issue.severity, None);
                 if editable {
                     if let Some(status) = status_menu(
@@ -2177,6 +2534,7 @@ fn draw_issues_panel(
                         status_width,
                     ) {
                         action = Some(DetailAction::SetIssueStatus {
+                            project_index: None,
                             issue_id: issue.id.clone(),
                             status: status.to_owned(),
                             title: issue.title.clone(),
@@ -2190,8 +2548,14 @@ fn draw_issues_panel(
                         status_width,
                     );
                 }
+                let title_colour = if focused { ACCENT } else { TEXT };
                 ui.add(
-                    Label::new(RichText::new(&issue.title).font(TYPE.body_id()).color(TEXT)).wrap(),
+                    Label::new(
+                        RichText::new(&issue.title)
+                            .font(TYPE.body_id())
+                            .color(title_colour),
+                    )
+                    .wrap(),
                 )
                 .on_hover_text(format!("Issue id: {}", issue.id));
                 if editable {
@@ -2313,12 +2677,27 @@ fn draw_header_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> 
                     .desired_width(220.0),
             );
         });
-        form_labelled_line(ui, "Source dir", |ui| {
+        ui.label(
+            RichText::new("Source folder (if the code lives elsewhere)")
+                .font(TYPE.secondary_id())
+                .color(MUTED),
+        );
+        ui.label(
+            RichText::new(
+                "Optional. Lockfiles and Android detect_from resolve from this folder when set.",
+            )
+            .font(TYPE.secondary_id())
+            .color(MUTED),
+        );
+        ui.horizontal(|ui| {
             ui.add(
                 TextEdit::singleline(&mut form.source_dir)
                     .font(TYPE.body_id())
                     .desired_width(220.0),
             );
+            if compact_button(ui, "Browse…", ACCENT).clicked() {
+                action = Some(DetailAction::BrowseHeaderSource);
+            }
         });
         ui.label(
             RichText::new("Links (Label|URL per line)")
@@ -2500,7 +2879,7 @@ fn draw_task_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
             ui.add(
                 TextEdit::singleline(&mut form.due)
                     .font(TYPE.body_id())
-                    .hint_text("YYYY-MM-DD")
+                    .hint_text(date_hint())
                     .desired_width(120.0),
             );
         });
@@ -2557,7 +2936,7 @@ fn draw_task_edit_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailActio
             ui.add(
                 TextEdit::singleline(&mut form.due)
                     .font(TYPE.body_id())
-                    .hint_text("YYYY-MM-DD")
+                    .hint_text(date_hint())
                     .desired_width(120.0),
             );
         });
@@ -3004,7 +3383,7 @@ fn draw_android_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction>
         });
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("form_factor")
+                RichText::new("Form factor")
                     .font(TYPE.secondary_id())
                     .color(MUTED),
             );
@@ -3023,7 +3402,7 @@ fn draw_android_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction>
         });
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("store")
+                RichText::new("Store")
                     .font(TYPE.secondary_id())
                     .color(MUTED),
             );
@@ -3115,7 +3494,7 @@ fn draw_watch_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailAction> {
                 TextEdit::singleline(&mut form.due)
                     .font(TYPE.body_id())
                     .desired_width(120.0)
-                    .hint_text("YYYY-MM-DD"),
+                    .hint_text(date_hint()),
             );
         });
         form_labelled_line(ui, "Note", |ui| {
@@ -3189,7 +3568,7 @@ fn draw_watch_edit_form(ui: &mut Ui, edit: &mut DetailEdit) -> Option<DetailActi
                 TextEdit::singleline(&mut form.due)
                     .font(TYPE.body_id())
                     .desired_width(120.0)
-                    .hint_text("YYYY-MM-DD"),
+                    .hint_text(date_hint()),
             );
         });
         form_labelled_line(ui, "Note", |ui| {
@@ -3462,7 +3841,7 @@ fn status_colour(badge: &StatusBadge) -> Color32 {
         "critical" | "malicious" | "eol" | "platform_deadline" => SEVERITY_CRITICAL,
         "high" => SEVERITY_HIGH,
         "low" => SEVERITY_LOW,
-        "open" | "idea" | "unknown" | "notice" => MUTED,
+        "open" | "idea" | "unknown" | "notice" => OPEN_TEXT,
         _ => TEXT,
     }
 }

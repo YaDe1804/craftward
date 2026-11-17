@@ -23,6 +23,8 @@ craftward-core = { path = "crates/craftward-core" }
 craftward-net = { path = "crates/craftward-net" }
 craftward-store = { path = "crates/craftward-store" }
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
+# eframe 0.37 does not forward this; enabling it on egui unifies with eframe's egui.
+egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
 rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal", "wayland"] }
 schemars = { version = "1.2.3", default-features = false, features = ["derive", "std"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }

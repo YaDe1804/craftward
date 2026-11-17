@@ -134,6 +134,44 @@ fn stack_commands_add_change_clear_and_reject() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn show_prints_stack_components_and_lockfiles() {
+    let root = scratch("show-stack");
+    let file = project(&root);
+    let path = file.to_str().unwrap();
+    assert!(
+        run(
+            &root,
+            &[
+                "stack",
+                "add",
+                path,
+                "--kind",
+                "runtime",
+                "--name",
+                "PostgreSQL",
+            ],
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(&root, &["stack", "lockfile", "add", path, "Cargo.lock"])
+            .status
+            .success()
+    );
+    let shown = run(&root, &["show", path]);
+    assert!(
+        shown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    let view = String::from_utf8_lossy(&shown.stdout);
+    assert!(view.contains("component [runtime] PostgreSQL"), "{view}");
+    assert!(view.contains("lockfile Cargo.lock"), "{view}");
+    let _ = fs::remove_dir_all(root);
+}
+
 fn set_eol_product_none(root: &Path, path: &str, file: &Path) {
     let disabled = run(
         root,

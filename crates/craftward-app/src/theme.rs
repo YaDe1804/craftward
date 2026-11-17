@@ -11,8 +11,11 @@ pub const BACKGROUND: Color32 = Color32::from_rgb(0x0e, 0x11, 0x16);
 /// Card surface (`#161b22`).
 pub const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x22);
 
-/// Nested card / secondary surface (`#1c232c`).
-pub const CARD_INNER: Color32 = Color32::from_rgb(0x1c, 0x23, 0x2c);
+/// Nested card / secondary surface (`#1c232c`). Also known as `card2` in the roadmaps.
+pub const CARD2: Color32 = Color32::from_rgb(0x1c, 0x23, 0x2c);
+
+/// Alias for [`CARD2`] (nested surfaces).
+pub const CARD_INNER: Color32 = CARD2;
 
 /// Borders and dividers (`#2a323d`).
 pub const LINE: Color32 = Color32::from_rgb(0x2a, 0x32, 0x3d);
@@ -35,6 +38,16 @@ pub const DONE: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x50);
 /// Work in progress (`#d29922`).
 pub const RUNNING: Color32 = Color32::from_rgb(0xd2, 0x99, 0x22);
 
+/// Open / not started roadmap swatch (`#6e7b8b`).
+///
+/// Below 4.5:1 on card surfaces; use [`OPEN_TEXT`] for status labels.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const OPEN: Color32 = Color32::from_rgb(0x6e, 0x7b, 0x8b);
+
+/// Open-status text colour derived from [`OPEN`] so it meets WCAG AA 4.5:1
+/// on [`BACKGROUND`], [`CARD`], and [`CARD2`] (`#8595a3`).
+pub const OPEN_TEXT: Color32 = Color32::from_rgb(0x85, 0x95, 0xa3);
+
 /// Critical severity marker (`#f85149`).
 pub const SEVERITY_CRITICAL: Color32 = Color32::from_rgb(0xf8, 0x51, 0x49);
 
@@ -52,6 +65,9 @@ pub const PROGRESS_TRACK: Color32 = Color32::from_rgb(0x23, 0x2b, 0x35);
 
 /// Outer page margin in points.
 pub const PAGE_MARGIN: i8 = 16;
+
+/// Sidebar width in points.
+pub const SIDEBAR_WIDTH: f32 = 168.0;
 
 /// Gap between portfolio cards in points.
 pub const CARD_GAP: f32 = 12.0;
@@ -158,23 +174,23 @@ fn visuals() -> Visuals {
     visuals.override_text_color = Some(TEXT);
     visuals.panel_fill = BACKGROUND;
     visuals.window_fill = BACKGROUND;
-    visuals.extreme_bg_color = CARD_INNER;
+    visuals.extreme_bg_color = CARD2;
     visuals.faint_bg_color = CARD;
     visuals.widgets.noninteractive.bg_fill = CARD;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(CARD_ROUNDING);
     visuals.widgets.inactive.bg_fill = CARD;
-    visuals.widgets.inactive.weak_bg_fill = CARD_INNER;
+    visuals.widgets.inactive.weak_bg_fill = CARD2;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, LINE);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(CARD_ROUNDING);
-    visuals.widgets.hovered.bg_fill = CARD_INNER;
-    visuals.widgets.hovered.weak_bg_fill = CARD_INNER;
+    visuals.widgets.hovered.bg_fill = CARD2;
+    visuals.widgets.hovered.weak_bg_fill = CARD2;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(CARD_ROUNDING);
-    visuals.widgets.active.bg_fill = CARD_INNER;
+    visuals.widgets.active.bg_fill = CARD2;
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.active.corner_radius = CornerRadius::same(CARD_ROUNDING);
@@ -216,33 +232,41 @@ pub fn contrast_ratio(foreground: Color32, background: Color32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui::Color32;
+
     use super::{
-        ACCENT, BACKGROUND, CARD, CARD_INNER, DONE, MIN_FONT_SIZE, MUTED, RUNNING, TEXT, TYPE,
+        ACCENT, BACKGROUND, CARD, CARD2, DONE, MIN_FONT_SIZE, MUTED, OPEN_TEXT, RUNNING,
+        SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, TEXT, TYPE,
         contrast_ratio,
     };
 
     #[test]
     fn text_colours_meet_wcag_aa_against_surfaces() {
-        let pairs = [
-            (TEXT, BACKGROUND),
-            (TEXT, CARD),
-            (TEXT, CARD_INNER),
-            (MUTED, BACKGROUND),
-            (MUTED, CARD),
-            (ACCENT, BACKGROUND),
-            (ACCENT, CARD),
-            (DONE, BACKGROUND),
-            (DONE, CARD),
-            (RUNNING, BACKGROUND),
-            (RUNNING, CARD),
+        let foregrounds = [
+            TEXT,
+            MUTED,
+            ACCENT,
+            DONE,
+            RUNNING,
+            OPEN_TEXT,
+            SEVERITY_CRITICAL,
+            SEVERITY_HIGH,
+            SEVERITY_MEDIUM,
+            SEVERITY_LOW,
         ];
-        for (foreground, background) in pairs {
-            let ratio = contrast_ratio(foreground, background);
-            assert!(
-                ratio >= 4.5,
-                "contrast {ratio:.2}:1 is below 4.5:1 for {foreground:?} on {background:?}"
-            );
+        let backgrounds = [BACKGROUND, CARD, CARD2];
+        for foreground in foregrounds {
+            for background in backgrounds {
+                let ratio = contrast_ratio(foreground, background);
+                assert!(
+                    ratio >= 4.5,
+                    "contrast {ratio:.2}:1 is below 4.5:1 for {foreground:?} on {background:?}"
+                );
+            }
         }
+        // Roadmap open swatch kept as OPEN; too dark for body text on card2.
+        assert!(contrast_ratio(super::OPEN, CARD2) < 4.5);
+        assert_eq!(super::OPEN, Color32::from_rgb(0x6e, 0x7b, 0x8b));
     }
 
     #[test]

@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop date display uses `sys-locale` for the OS language first (then
+  `LANG` / `LC_*`), so German Windows and Finder-launched macOS builds show
+  `DD.MM.YYYY` without relying on environment variables. See
+  [ADR 0026](docs/adr/0026-navigation-and-visual-design.md).
+
 ### Added
 
+- Desktop UI overhaul (AP14): left sidebar (Portfolio, Issues), roadmap
+  colour palette and status glyphs via egui `monochrome_emoji_fonts`,
+  cross-project Issues view with filter/sort/status/undo, locale-aware
+  dates (DD.MM.YYYY / YYYY-MM-DD), readable Android labels, relative
+  lockfile picks, clearer source-folder fields, and `craftward show`
+  stack output. See [ADR 0026](docs/adr/0026-navigation-and-visual-design.md),
+  [docs/desktop.md](docs/desktop.md), and [docs/cli.md](docs/cli.md).
 - Desktop stack and watch editing: components, lockfiles (with native
-  Browse and existence/type checks), Android settings, and watch items in
-  the Deadlines section. Core and CLI gain `watch set`. See
+  Browse and existence/type checks), Android settings, and watch items
+  under Watch items & deadlines. Core and CLI gain `watch set`. See
   [docs/desktop.md](docs/desktop.md) and [docs/cli.md](docs/cli.md).
 - Desktop editing with undo toasts (about eight seconds), sticky conflict
   banners, workspace project create/add/remove, overview header edit, phase

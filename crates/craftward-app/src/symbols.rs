@@ -1,41 +1,43 @@
-//! UI symbols that must render with egui's bundled fonts.
+//! UI symbols rendered with egui's bundled fonts.
 //!
-//! With eframe's `default_fonts` feature (and without `monochrome_emoji_fonts`),
-//! egui loads only **Ubuntu-Light**, **Hack**, and **egui-icons**. Noto Emoji and
-//! emoji-icon-font are not installed. The status glyphs we would prefer
-//! (U+2714 check, U+25D0 half circle, U+25CB empty circle, U+2716 cross,
-//! U+26A0 warning) are missing from that set, so every badge uses **label text
-//! only** (plus colour). An empty symbol is better than a character that means
-//! something else (for example √ or ×).
+//! With `monochrome_emoji_fonts` enabled on egui, proportional text includes
+//! Noto Emoji and emoji-icon-font (both OFL-1.1, covered by the
+//! `epaint_default_fonts` licence exception in `deny.toml`). Status glyphs
+//! therefore render; every badge still shows a readable English label beside
+//! the symbol.
 //!
-//! Each constant is one meaning. No character is reused across meanings.
-//! [`Fonts::has_glyph`] walks the full proportional fallback chain.
+//! Each constant is one meaning. Non-empty characters are unique across
+//! meanings except U+26A0, which is shared by high and critical severity.
 
 use eframe::egui::FontDefinitions;
 
-/// Open / idea / not started — text only (U+25CB not in bundled fonts).
-pub const OPEN: &str = "";
+/// Open / idea / not started (U+25CB).
+pub const OPEN: &str = "\u{25CB}";
 
-/// In progress / in development — text only (U+25D0 not in bundled fonts).
-pub const RUNNING: &str = "";
+/// In progress / in development.
+///
+/// Spec asked for U+25D0 (`◐`), which is absent from Ubuntu-Light and the
+/// monochrome emoji fonts. U+25D1 (`◑`) is the closest half-circle that
+/// `Fonts::has_glyph` finds in the proportional fallback chain.
+pub const RUNNING: &str = "\u{25D1}";
 
-/// Done / resolved — text only (U+2714 not in bundled fonts).
-pub const DONE: &str = "";
+/// Done / resolved (U+2714).
+pub const DONE: &str = "\u{2714}";
 
-/// Released project — text only (no clear glyph in bundled fonts).
+/// Released project — no clear glyph; label only.
 pub const RELEASED: &str = "";
 
-/// Maintenance project — text only.
+/// Maintenance project — no clear glyph; label only.
 pub const MAINTENANCE: &str = "";
 
-/// Paused project — text only.
+/// Paused project — no clear glyph; label only.
 pub const PAUSED: &str = "";
 
-/// Discontinued project — text only.
+/// Discontinued project — no clear glyph; label only.
 pub const CLOSED: &str = "";
 
-/// Dropped task / won't-fix issue — text only (U+2716 not in bundled fonts).
-pub const DROPPED: &str = "";
+/// Dropped task / won't-fix issue (U+2716).
+pub const DROPPED: &str = "\u{2716}";
 
 /// Low severity — text and colour only.
 pub const SEVERITY_LOW: &str = "";
@@ -43,11 +45,11 @@ pub const SEVERITY_LOW: &str = "";
 /// Medium severity — text and colour only.
 pub const SEVERITY_MEDIUM: &str = "";
 
-/// High severity — text and colour only (U+26A0 not in bundled fonts).
-pub const SEVERITY_HIGH: &str = "";
+/// High severity warning (U+26A0).
+pub const SEVERITY_HIGH: &str = "\u{26A0}";
 
-/// Critical severity — text and colour only (U+26A0 not in bundled fonts).
-pub const SEVERITY_CRITICAL: &str = "";
+/// Critical severity warning (U+26A0; same glyph as high by design).
+pub const SEVERITY_CRITICAL: &str = "\u{26A0}";
 
 /// Unknown severity — text and colour only.
 pub const UNKNOWN: &str = "";
@@ -160,9 +162,16 @@ pub const MEANINGS: &[(&str, &str)] = &[
 
 /// Every non-empty symbol string drawn by the desktop UI.
 #[cfg_attr(not(test), allow(dead_code))]
-pub const ALL: &[&str] = &[];
+pub const ALL: &[&str] = &[
+    OPEN,
+    RUNNING,
+    DONE,
+    DROPPED,
+    SEVERITY_HIGH,
+    SEVERITY_CRITICAL,
+];
 
-/// Font names installed for the proportional family under our eframe features.
+/// Font names installed for the proportional family under our egui features.
 #[must_use]
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn proportional_font_names() -> Vec<String> {
@@ -182,62 +191,53 @@ mod tests {
 
     use super::{ALL, MEANINGS, proportional_font_names};
 
+    fn warning_pair(left: &str, right: &str) -> bool {
+        matches!(
+            (left, right),
+            ("severity_high", "severity_critical") | ("severity_critical", "severity_high")
+        )
+    }
+
     #[test]
-    fn default_fonts_load_ubuntu_hack_and_egui_icons_only() {
+    fn default_fonts_include_monochrome_emoji() {
         let definitions = FontDefinitions::default();
         let mut names: Vec<&str> = definitions.font_data.keys().map(String::as_str).collect();
         names.sort_unstable();
-        assert_eq!(names, ["Hack", "Ubuntu-Light", "egui-icons"]);
         assert_eq!(
-            FontDefinitions::builtin_font_names(),
-            &["Ubuntu-Light", "egui-icons", "Hack"]
-        );
-        assert_eq!(
-            proportional_font_names(),
-            ["Ubuntu-Light".to_owned(), "egui-icons".to_owned()]
+            names,
+            [
+                "Hack",
+                "NotoEmoji-Regular",
+                "Ubuntu-Light",
+                "egui-icons",
+                "emoji-icon-font"
+            ]
         );
         assert!(
-            !definitions.font_data.contains_key("NotoEmoji-Regular"),
-            "NotoEmoji is only present with egui's monochrome_emoji_fonts feature"
+            definitions.font_data.contains_key("NotoEmoji-Regular"),
+            "NotoEmoji comes with egui's monochrome_emoji_fonts feature"
         );
         assert!(
-            !definitions.font_data.contains_key("emoji-icon-font"),
-            "emoji-icon-font is only present with egui's monochrome_emoji_fonts feature"
+            definitions.font_data.contains_key("emoji-icon-font"),
+            "emoji-icon-font comes with egui's monochrome_emoji_fonts feature"
+        );
+        let proportional = proportional_font_names();
+        assert!(
+            proportional.contains(&"NotoEmoji-Regular".to_owned())
+                || proportional.contains(&"emoji-icon-font".to_owned()),
+            "proportional fallback should include an emoji font: {proportional:?}"
         );
         let mono = definitions
             .families
             .get(&FontFamily::Monospace)
             .expect("monospace family");
-        assert_eq!(mono, &["Hack", "Ubuntu-Light", "egui-icons"]);
-    }
-
-    #[test]
-    fn preferred_status_glyphs_are_absent_without_emoji_fonts() {
-        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
-        let font_id = FontId::proportional(14.0);
-        for (label, character) in [
-            ("check U+2714", '✔'),
-            ("half circle U+25D0", '◐'),
-            ("empty circle U+25CB", '○'),
-            ("cross U+2716", '✖'),
-            ("warning U+26A0", '⚠'),
-        ] {
-            assert!(
-                !fonts.has_glyph(&font_id, character),
-                "{label} unexpectedly present in the proportional fallback chain"
-            );
-        }
+        assert!(mono.contains(&"Hack".to_owned()));
     }
 
     #[test]
     fn every_ui_symbol_has_a_glyph_in_bundled_fonts() {
         let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
         let font_id = FontId::proportional(14.0);
-        // has_glyph consults every font in FontFamily::Proportional.
-        assert_eq!(
-            proportional_font_names(),
-            ["Ubuntu-Light".to_owned(), "egui-icons".to_owned()]
-        );
         for symbol in ALL {
             for character in symbol.chars() {
                 assert!(
@@ -250,13 +250,25 @@ mod tests {
     }
 
     #[test]
-    fn no_character_is_used_for_two_meanings() {
+    fn preferred_half_circle_u25d0_is_absent_so_u25d1_is_used() {
+        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let font_id = FontId::proportional(14.0);
+        assert!(
+            !fonts.has_glyph(&font_id, '\u{25D0}'),
+            "U+25D0 unexpectedly present; prefer it over U+25D1 for RUNNING"
+        );
+        assert!(fonts.has_glyph(&font_id, '\u{25D1}'));
+        assert_eq!(super::RUNNING, "\u{25D1}");
+    }
+
+    #[test]
+    fn no_character_is_used_for_two_unrelated_meanings() {
         let mut owner: HashMap<char, &'static str> = HashMap::new();
         for (meaning, symbol) in MEANINGS {
             for character in symbol.chars() {
                 if let Some(previous) = owner.insert(character, meaning) {
-                    assert_eq!(
-                        previous, *meaning,
+                    assert!(
+                        previous == *meaning || warning_pair(previous, meaning),
                         "character {character:?} (U+{:04X}) is used for both '{previous}' and '{meaning}'",
                         character as u32
                     );
