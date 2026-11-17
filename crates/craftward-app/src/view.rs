@@ -3,14 +3,15 @@
 use std::path::{Path, PathBuf};
 
 use craftward_core::{
-    ComponentKind, Issue, IssueSeverity, IssueStatus, LockKind, Phase, PhaseState, Project,
-    ProjectStatus, Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem, WatchKind,
-    days_between, lock_kind, normalize_category, normalize_category_against, phase_state,
-    project_platforms, resolve_project_paths, snapshot, task_progress, unix_now, utc_day,
+    ComponentKind, FindingState, Issue, IssueSeverity, IssueStatus, LockKind, Phase, PhaseState,
+    Project, ProjectStatus, Severity, StoredFinding, Task, TaskProgress, TaskStatus, WatchItem,
+    WatchKind, days_between, lock_kind, normalize_category, normalize_category_against,
+    phase_state, project_platforms, resolve_project_paths, snapshot, task_progress, unix_now,
+    utc_day,
 };
 
 use crate::date::{format_date_for_display, invalid_date_message, parse_date_input};
-use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject, count_by_severity};
+use crate::load::{DatabaseStatus, LoadedPortfolio, LoadedProject};
 use crate::symbols;
 use crate::theme::{GRID_THREE_COLUMNS_FROM, GRID_TWO_COLUMNS_FROM};
 
@@ -27,6 +28,8 @@ pub struct PortfolioSummary {
     pub open_issues: usize,
     /// Open findings across loaded projects.
     pub open_findings: usize,
+    /// Actively ignored findings (not expired) across loaded projects.
+    pub ignored_findings: usize,
     /// Open findings by severity: critical, high, medium, low, unknown.
     pub findings_by_severity: [usize; 5],
     /// Human summary line.
@@ -117,6 +120,8 @@ pub struct ProjectCard {
     pub findings_by_severity: [usize; 5],
     /// Finding severity badges with counts (non-zero only).
     pub finding_badges: Vec<(StatusBadge, usize)>,
+    /// Actively ignored findings (not counted in severity badges).
+    pub ignored_findings: usize,
     /// Next due date `YYYY-MM-DD`.
     pub next_due: Option<String>,
     /// Human remaining-time text for [`Self::next_due`].
@@ -377,6 +382,7 @@ pub fn build_portfolio_at(loaded: &LoadedPortfolio, today: &str) -> PortfolioVie
 
     let mut findings_by_severity = [0_usize; 5];
     let mut open_issues = 0;
+    let mut ignored_findings = 0;
     let mut loaded_count = 0;
     let mut error_count = 0;
     for card in &cards {
@@ -386,6 +392,7 @@ pub fn build_portfolio_at(loaded: &LoadedPortfolio, today: &str) -> PortfolioVie
             loaded_count += 1;
         }
         open_issues += card.open_issues;
+        ignored_findings += card.ignored_findings;
         for (slot, count) in findings_by_severity
             .iter_mut()
             .zip(card.findings_by_severity)
@@ -418,6 +425,7 @@ pub fn build_portfolio_at(loaded: &LoadedPortfolio, today: &str) -> PortfolioVie
             error_count,
             open_issues,
             open_findings,
+            ignored_findings,
             findings_by_severity,
             summary_line,
         },
@@ -497,7 +505,7 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
                 android: android_detail(project),
                 phases: phase_blocks(project),
                 issues: open_issue_rows(project),
-                findings: finding_rows(&loaded.findings),
+                findings: finding_rows(&loaded.findings, today),
                 deadlines: deadline_rows(project, today),
             }
         }
@@ -523,7 +531,7 @@ pub fn build_detail_at(index: usize, loaded: &LoadedProject, today: &str) -> Pro
             android: None,
             phases: Vec::new(),
             issues: Vec::new(),
-            findings: finding_rows(&loaded.findings),
+            findings: finding_rows(&loaded.findings, today),
             deadlines: Vec::new(),
         },
     }
@@ -1958,6 +1966,75 @@ pub fn open_findings_label(count: usize) -> String {
     }
 }
 
+/// Muted label for actively ignored findings.
+#[must_use]
+pub fn ignored_findings_label(count: usize) -> String {
+    match count {
+        0 => String::new(),
+        1 => "1 ignored".to_owned(),
+        _ => format!("{count} ignored"),
+    }
+}
+
+/// How a stored finding contributes to portfolio counts on `today`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingCountKind {
+    /// Counts toward open severity badges.
+    Open,
+    /// Counts only as a muted ignored total.
+    Ignored,
+}
+
+/// Classifies a finding for display counting.
+///
+/// Resolved findings are omitted. An ignore with `--until` in the past counts
+/// as open again (same effective rule the CLI applies after radar reopens it).
+#[must_use]
+pub fn classify_finding_for_count(
+    finding: &StoredFinding,
+    today: &str,
+) -> Option<FindingCountKind> {
+    match finding.state {
+        FindingState::Resolved => None,
+        FindingState::Open => Some(FindingCountKind::Open),
+        FindingState::Ignored => match finding.ignore_until.as_deref() {
+            Some(until) if until < today => Some(FindingCountKind::Open),
+            _ => Some(FindingCountKind::Ignored),
+        },
+    }
+}
+
+/// Counts open findings by severity (critical…unknown), excluding ignored and resolved.
+#[must_use]
+pub fn count_open_findings_by_severity(findings: &[StoredFinding], today: &str) -> [usize; 5] {
+    let mut counts = [0_usize; 5];
+    for finding in findings {
+        if classify_finding_for_count(finding, today) != Some(FindingCountKind::Open) {
+            continue;
+        }
+        let index = match finding.severity {
+            Severity::Critical => 0,
+            Severity::High => 1,
+            Severity::Medium => 2,
+            Severity::Low => 3,
+            Severity::Unknown => 4,
+        };
+        counts[index] += 1;
+    }
+    counts
+}
+
+/// Counts actively ignored findings (expired ignores are open, not ignored).
+#[must_use]
+pub fn count_ignored_findings(findings: &[StoredFinding], today: &str) -> usize {
+    findings
+        .iter()
+        .filter(|finding| {
+            classify_finding_for_count(finding, today) == Some(FindingCountKind::Ignored)
+        })
+        .count()
+}
+
 /// Remaining-time text for a due date relative to `today` (`YYYY-MM-DD`).
 #[must_use]
 pub fn remaining_label(today: &str, due: &str) -> String {
@@ -2002,8 +2079,9 @@ fn project_count_label(total: usize, loaded: usize, errors: usize) -> String {
 }
 
 fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard {
-    let findings_by_severity = count_by_severity(&loaded.findings);
+    let findings_by_severity = count_open_findings_by_severity(&loaded.findings, today);
     let finding_badges = finding_count_badges(findings_by_severity);
+    let ignored_findings = count_ignored_findings(&loaded.findings, today);
     match &loaded.project {
         Ok(project) => {
             let snap = snapshot(project);
@@ -2023,6 +2101,7 @@ fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard 
                 open_issues_label: open_issues_label(snap.open_issues),
                 findings_by_severity,
                 finding_badges,
+                ignored_findings,
                 next_due,
                 next_due_remaining,
                 current_phase: current_phase_title(project),
@@ -2047,6 +2126,7 @@ fn build_card(index: usize, loaded: &LoadedProject, today: &str) -> ProjectCard 
             open_issues_label: open_issues_label(0),
             findings_by_severity,
             finding_badges,
+            ignored_findings,
             next_due: None,
             next_due_remaining: None,
             current_phase: None,
@@ -2222,8 +2302,14 @@ fn issue_row(issue: &Issue) -> IssueRow {
     }
 }
 
-fn finding_rows(findings: &[StoredFinding]) -> Vec<FindingRow> {
-    findings.iter().map(finding_row).collect()
+fn finding_rows(findings: &[StoredFinding], today: &str) -> Vec<FindingRow> {
+    findings
+        .iter()
+        .filter(|finding| {
+            classify_finding_for_count(finding, today) == Some(FindingCountKind::Open)
+        })
+        .map(finding_row)
+        .collect()
 }
 
 fn finding_row(finding: &StoredFinding) -> FindingRow {
@@ -2830,13 +2916,15 @@ mod tests {
     };
 
     use super::{
-        HeaderForm, IssueEditForm, IssueForm, IssuesFilter, NewProjectForm, OverviewFilters,
-        PhaseForm, PortfolioSidebarFilter, ProgressView, StatusBadge, TaskEditForm, TaskForm,
-        android_store_choices, badge_stretches_to_parent, build_detail_at, build_portfolio_at,
-        card_matches_filters, collect_portfolio_issues, compare_urgency, current_phase_title,
-        display_label, form_factor_choices, grid_columns, grid_row_column_slots,
-        issue_status_badge, issue_status_choices, longest_status_choice_label, open_findings_label,
-        open_issues_label, portfolio_platform_options, portfolio_sidebar_entries, project_progress,
+        FindingCountKind, HeaderForm, IssueEditForm, IssueForm, IssuesFilter, NewProjectForm,
+        OverviewFilters, PhaseForm, PortfolioSidebarFilter, ProgressView, StatusBadge,
+        TaskEditForm, TaskForm, android_store_choices, badge_stretches_to_parent, build_detail_at,
+        build_portfolio_at, card_matches_filters, classify_finding_for_count,
+        collect_portfolio_issues, compare_urgency, count_ignored_findings,
+        count_open_findings_by_severity, current_phase_title, display_label, form_factor_choices,
+        grid_columns, grid_row_column_slots, ignored_findings_label, issue_status_badge,
+        issue_status_choices, longest_status_choice_label, open_findings_label, open_issues_label,
+        portfolio_platform_options, portfolio_sidebar_entries, project_progress,
         project_status_badge, relative_to_dir, remaining_label, task_status_badge,
         task_status_choices, task_title_is_muted,
     };
@@ -2939,6 +3027,7 @@ mod tests {
             open_issues_label: open_issues_label(0),
             findings_by_severity: findings,
             finding_badges: Vec::new(),
+            ignored_findings: 0,
             next_due: due.map(str::to_owned),
             next_due_remaining: None,
             current_phase: None,
@@ -3624,5 +3713,63 @@ mod tests {
         let resolved = form.resolve_category(&existing).unwrap();
         assert_eq!(resolved.as_deref(), Some("Security Tools"));
         assert!(form.category_unify_hint.is_some());
+    }
+
+    #[test]
+    fn findings_count_only_open_and_expired_ignores() {
+        let today = "2026-11-17";
+        let mut open = finding("demo", Severity::High);
+        open.state = FindingState::Open;
+        let mut ignored = finding("demo", Severity::Critical);
+        ignored.state = FindingState::Ignored;
+        ignored.ignore_reason = Some("later".to_owned());
+        ignored.ignore_until = Some("2026-12-01".to_owned());
+        let mut expired = finding("demo", Severity::Medium);
+        expired.state = FindingState::Ignored;
+        expired.ignore_until = Some("2026-11-01".to_owned());
+        let mut resolved = finding("demo", Severity::Low);
+        resolved.state = FindingState::Resolved;
+        resolved.resolved_at = Some("2026-11-01T00:00:00Z".to_owned());
+        let rows = [open, ignored, expired, resolved];
+        assert_eq!(
+            classify_finding_for_count(&rows[0], today),
+            Some(FindingCountKind::Open)
+        );
+        assert_eq!(
+            classify_finding_for_count(&rows[1], today),
+            Some(FindingCountKind::Ignored)
+        );
+        assert_eq!(
+            classify_finding_for_count(&rows[2], today),
+            Some(FindingCountKind::Open)
+        );
+        assert_eq!(classify_finding_for_count(&rows[3], today), None);
+        assert_eq!(
+            count_open_findings_by_severity(&rows, today),
+            [0, 1, 1, 0, 0]
+        );
+        assert_eq!(count_ignored_findings(&rows, today), 1);
+        assert_eq!(ignored_findings_label(1), "1 ignored");
+        assert_eq!(ignored_findings_label(3), "3 ignored");
+        assert_eq!(open_findings_label(0), "No open findings");
+
+        let loaded = LoadedPortfolio {
+            workspace_path: None,
+            workspace_fingerprint: None,
+            workspace_error: None,
+            database_path: None,
+            database: DatabaseStatus::Ready,
+            projects: vec![LoadedProject {
+                path: PathBuf::from("/tmp/demo.json"),
+                project: Ok(sample_project("demo", "Demo", None)),
+                fingerprint: None,
+                findings: rows.to_vec(),
+            }],
+        };
+        let view = build_portfolio_at(&loaded, today);
+        assert_eq!(view.summary.open_findings, 2);
+        assert_eq!(view.summary.ignored_findings, 1);
+        assert_eq!(view.cards[0].finding_badges.len(), 2);
+        assert_eq!(view.cards[0].ignored_findings, 1);
     }
 }

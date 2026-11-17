@@ -2,8 +2,9 @@
 
 use eframe::egui::{
     self, Align, Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Context, CornerRadius,
-    Frame, Key, Label, Layout, Margin, Panel, ProgressBar, RichText, ScrollArea, Sense, Stroke,
-    TextEdit, Theme, ThemePreference, Ui, UiBuilder, Vec2,
+    Frame, Id, Key, Label, Layout, Margin, Panel, Pos2, ProgressBar, Rect, RichText, ScrollArea,
+    Sense, Shape, Stroke, TextEdit, TextureHandle, Theme, ThemePreference, Ui, UiBuilder, Vec2,
+    epaint::RectShape, layers::ShapeIdx,
 };
 
 use craftward_core::UndoState;
@@ -23,10 +24,12 @@ use crate::picker::{PathPicker, PickKind, PickerInbox, RfdPicker};
 use crate::settings_panel::{self, SettingsEdit};
 use crate::storage::{self, StorageSnapshot};
 use crate::theme::{
-    self, ACCENT, BACKGROUND, CARD, CARD_GAP, CARD_INNER, CARD_PADDING, CARD_ROUNDING,
-    DETAIL_TWO_COLUMNS_FROM, DONE, HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK,
-    RUNNING, SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, SIDEBAR_WIDTH, TEXT,
-    TYPE,
+    self, ACCENT, BACKGROUND, CARD, CARD_CONTENT_MIN_HEIGHT, CARD_GAP, CARD_GLOW_ANIMATION_SECS,
+    CARD_GLOW_HEIGHT_FRACTION, CARD_GLOW_OPACITY_ACTIVE, CARD_GLOW_OPACITY_HOVER,
+    CARD_GLOW_OPACITY_IDLE, CARD_INNER, CARD_PADDING, CARD_ROUNDING, DETAIL_TWO_COLUMNS_FROM, DONE,
+    HEADING, LINE, MUTED, OPEN_TEXT, PAGE_MARGIN, PROGRESS_TRACK, RUNNING, SEVERITY_CRITICAL,
+    SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, SIDEBAR_WIDTH, TEXT, TYPE,
+    project_status_style_for_key,
 };
 use crate::view::{
     AddProjectForm, AndroidForm, ComponentEditForm, ComponentForm, FindingRow, HeaderForm,
@@ -35,11 +38,12 @@ use crate::view::{
     StatusBadge, TaskEditForm, TaskForm, WatchEditForm, WatchForm, android_store_choices,
     badge_stretches_to_parent, build_detail, build_portfolio, card_matches_filters,
     collect_portfolio_issues, component_kind_choices, display_label, finding_count_badges,
-    form_factor_choices, grid_columns, grid_row_column_slots, issue_severity_choices,
-    issue_status_choices, longest_status_choice_label, open_findings_label, portfolio_categories,
-    portfolio_filter_title, portfolio_platform_options, portfolio_sidebar_entries,
-    portfolio_tag_options, project_source_dir, project_status_choices, project_status_hint,
-    relative_to_dir, task_status_choices, task_title_is_muted, watch_kind_choices,
+    form_factor_choices, grid_columns, grid_row_column_slots, ignored_findings_label,
+    issue_severity_choices, issue_status_choices, longest_status_choice_label, open_findings_label,
+    portfolio_categories, portfolio_filter_title, portfolio_platform_options,
+    portfolio_sidebar_entries, portfolio_tag_options, project_source_dir, project_status_choices,
+    project_status_hint, relative_to_dir, task_status_choices, task_title_is_muted,
+    watch_kind_choices,
 };
 
 /// Which screen is visible.
@@ -338,6 +342,8 @@ pub struct CraftwardApp {
     storage: StorageSnapshot,
     /// Settings screen widgets.
     settings_edit: SettingsEdit,
+    /// Shared grayscale radial glow texture (tinted per card).
+    card_glow: TextureHandle,
 }
 
 impl CraftwardApp {
@@ -345,6 +351,11 @@ impl CraftwardApp {
     #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         apply_theme(&cc.egui_ctx);
+        let card_glow = cc.egui_ctx.load_texture(
+            "card_glow",
+            theme::build_card_glow_image(),
+            theme::CARD_GLOW_TEXTURE_OPTIONS,
+        );
         let onboarding = if storage::needs_onboarding() {
             match OnboardingState::start() {
                 Ok(state) => Some(state),
@@ -383,6 +394,7 @@ impl CraftwardApp {
             post_setup_tip: false,
             storage: StorageSnapshot::load(),
             settings_edit: SettingsEdit::default(),
+            card_glow,
         }
     }
 
@@ -1183,6 +1195,7 @@ impl CraftwardApp {
                                     &mut self.edit,
                                     self.focus_issue_id.as_deref(),
                                     &categories,
+                                    &self.card_glow,
                                 );
                             }
                         } else {
@@ -1469,6 +1482,7 @@ fn draw_sidebar_paths(ui: &mut Ui, portfolio: &PortfolioView) {
 }
 
 impl CraftwardApp {
+    #[allow(clippy::too_many_lines)]
     fn draw_overview_screen(&mut self, ui: &mut Ui) -> Option<usize> {
         if let Some(banner) = self.overview.banner.clone() {
             ui.horizontal(|ui| {
@@ -1549,6 +1563,7 @@ impl CraftwardApp {
             &self.overview,
             &self.portfolio_filter,
             &self.overview_filters,
+            &self.card_glow,
         );
         match card_action {
             Some(CardAction::RemoveFromList { id, name }) => {
@@ -1904,6 +1919,7 @@ fn draw_overview(
     overview: &OverviewEdit,
     sidebar: &PortfolioSidebarFilter,
     filters: &OverviewFilters,
+    card_glow: &TextureHandle,
 ) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut remove = None;
@@ -1945,7 +1961,7 @@ fn draw_overview(
         for card in visible {
             row.push(card);
             if row.len() == columns {
-                let (opened, action) = draw_card_row(ui, &row, columns);
+                let (opened, action) = draw_card_row(ui, &row, columns, card_glow);
                 if opened.is_some() {
                     open = opened;
                 }
@@ -1956,7 +1972,7 @@ fn draw_overview(
             }
         }
         if !row.is_empty() {
-            let (opened, action) = draw_card_row(ui, &row, columns);
+            let (opened, action) = draw_card_row(ui, &row, columns, card_glow);
             if opened.is_some() {
                 open = opened;
             }
@@ -1972,13 +1988,14 @@ fn draw_card_row(
     ui: &mut Ui,
     cards: &[&ProjectCard],
     columns: usize,
+    card_glow: &TextureHandle,
 ) -> (Option<usize>, Option<CardAction>) {
     let mut open = None;
     let mut action = None;
     let slots = grid_row_column_slots(columns, cards.len());
     ui.columns(slots, |cols| {
         for (column, card) in cols.iter_mut().zip(cards.iter()) {
-            match draw_card(column, card) {
+            match draw_card(column, card, card_glow) {
                 CardAction::Open => open = Some(card.index),
                 next
                 @ (CardAction::RemoveFromList { .. } | CardAction::PromptDeleteFile { .. }) => {
@@ -2030,13 +2047,39 @@ fn draw_summary(
                     draw_badge(ui, &badge, Some(count));
                 }
             });
+        } else {
+            ui.label(
+                RichText::new(open_findings_label(0))
+                    .font(TYPE.body_id())
+                    .color(MUTED),
+            );
+        }
+        if summary.ignored_findings > 0 {
+            ui.label(
+                RichText::new(ignored_findings_label(summary.ignored_findings))
+                    .font(TYPE.secondary_id())
+                    .color(MUTED),
+            );
         }
     });
 }
 
 #[allow(clippy::too_many_lines)]
-fn draw_card(ui: &mut Ui, card: &ProjectCard) -> CardAction {
+fn draw_card(ui: &mut Ui, card: &ProjectCard, card_glow: &TextureHandle) -> CardAction {
     let mut menu_action = CardAction::None;
+    let glow_id = Id::unique(("card_glow_opacity", card.id.as_str()));
+    let rect_id = Id::unique(("card_glow_rect", card.id.as_str()));
+    let hovered = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(rect_id))
+        .zip(ui.input(|input| input.pointer.hover_pos()))
+        .is_some_and(|(rect, pos)| rect.contains(pos));
+    let pressed = hovered && ui.input(|input| input.pointer.primary_down());
+    let glow_opacity = ui.ctx().animate_value_with_time(
+        glow_id,
+        glow_opacity_target(hovered, pressed),
+        CARD_GLOW_ANIMATION_SECS,
+    );
     // Card click sense is registered *under* children (UiBuilder::sense), so the
     // ··· menu_button keeps pointer/keyboard priority and can open its popup.
     let response = ui
@@ -2048,7 +2091,8 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard) -> CardAction {
                 card_frame()
                     .stroke(Stroke::new(1.0, LINE))
                     .show(ui, |ui| {
-                        ui.set_min_height(168.0);
+                        let glow_idx = ui.painter().add(Shape::Noop);
+                        ui.set_min_height(CARD_CONTENT_MIN_HEIGHT);
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(&card.name)
@@ -2178,10 +2222,29 @@ fn draw_card(ui: &mut Ui, card: &ProjectCard) -> CardAction {
                                 }
                             });
                         }
+                        if card.ignored_findings > 0 {
+                            ui.label(
+                                RichText::new(ignored_findings_label(card.ignored_findings))
+                                    .font(TYPE.secondary_id())
+                                    .color(MUTED),
+                            );
+                        }
+                        if let Some(status) = &card.status {
+                            finish_status_glow(
+                                ui,
+                                glow_idx,
+                                card_glow,
+                                status.key,
+                                glow_opacity,
+                            );
+                        }
                     });
             },
         )
         .response;
+
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(rect_id, response.rect));
 
     if !matches!(menu_action, CardAction::None) {
         return menu_action;
@@ -2207,6 +2270,7 @@ fn draw_detail(
     edit: &mut DetailEdit,
     focus_issue_id: Option<&str>,
     category_suggestions: &[String],
+    card_glow: &TextureHandle,
 ) -> Option<DetailAction> {
     let mut action = None;
     ScrollArea::vertical().show(ui, |ui| {
@@ -2284,6 +2348,7 @@ fn draw_detail(
                     edit,
                     editable,
                     category_suggestions,
+                    card_glow,
                 ) {
                     action = Some(next);
                 }
@@ -2294,9 +2359,14 @@ fn draw_detail(
                 }
             });
         } else {
-            if let Some(next) =
-                draw_detail_left(ui, detail, edit, editable, category_suggestions)
-            {
+            if let Some(next) = draw_detail_left(
+                ui,
+                detail,
+                edit,
+                editable,
+                category_suggestions,
+                card_glow,
+            ) {
                 action = Some(next);
             }
             ui.add_space(CARD_GAP);
@@ -2314,9 +2384,30 @@ fn draw_detail_left(
     edit: &mut DetailEdit,
     editable: bool,
     category_suggestions: &[String],
+    card_glow: &TextureHandle,
 ) -> Option<DetailAction> {
     let mut action = None;
-    section(ui, "Overview", false, |ui| {
+    let glow_id = Id::unique(("detail_glow_opacity", detail.id.as_str()));
+    let rect_id = Id::unique(("detail_glow_rect", detail.id.as_str()));
+    let hovered = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(rect_id))
+        .zip(ui.input(|input| input.pointer.hover_pos()))
+        .is_some_and(|(rect, pos)| rect.contains(pos));
+    let pressed = hovered && ui.input(|input| input.pointer.primary_down());
+    let glow_opacity = ui.ctx().animate_value_with_time(
+        glow_id,
+        glow_opacity_target(hovered, pressed),
+        CARD_GLOW_ANIMATION_SECS,
+    );
+    let overview_response = card_frame().show(ui, |ui| {
+        let glow_idx = ui.painter().add(Shape::Noop);
+        ui.label(
+            RichText::new("Overview")
+                .font(TYPE.section_id())
+                .color(HEADING)
+                .strong(),
+        );
         if edit.header_form.is_some() {
             if let Some(next) = draw_header_form(ui, edit, category_suggestions) {
                 action = Some(next);
@@ -2326,7 +2417,12 @@ fn draw_detail_left(
         }
         ui.add_space(6.0);
         draw_progress(ui, detail.progress);
+        if let Some(status) = &detail.status {
+            finish_status_glow(ui, glow_idx, card_glow, status.key, glow_opacity);
+        }
     });
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(rect_id, overview_response.response.rect));
 
     ui.add_space(CARD_GAP);
     let stack_empty = detail.components.is_empty()
@@ -4250,12 +4346,16 @@ fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
         Some(value) => format!("{} {} · {value}", badge.symbol, badge.label),
         None => badge.display(),
     };
-    let colour = status_colour(badge);
+    let (fill, stroke, colour) = if let Some(style) = project_status_style_for_key(badge.key) {
+        (style.fill, style.stroke, style.text)
+    } else {
+        (CARD_INNER, LINE, status_colour(badge))
+    };
     // Horizontal layout shrinks the frame to the label instead of the card width.
     ui.horizontal(|ui| {
         Frame::NONE
-            .fill(CARD_INNER)
-            .stroke(Stroke::new(1.0, LINE))
+            .fill(fill)
+            .stroke(Stroke::new(1.0, stroke))
             .corner_radius(CornerRadius::same(6))
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
@@ -4272,15 +4372,64 @@ fn draw_badge(ui: &mut Ui, badge: &StatusBadge, count: Option<usize>) {
 
 fn status_colour(badge: &StatusBadge) -> Color32 {
     match badge.key {
-        "done" | "resolved" | "released" => DONE,
-        "in_progress" | "in_development" | "eol_soon" | "platform_deadline_soon" => RUNNING,
+        "done" | "resolved" => DONE,
+        "in_progress" | "eol_soon" | "platform_deadline_soon" => RUNNING,
         "medium" => SEVERITY_MEDIUM,
         "critical" | "malicious" | "eol" | "platform_deadline" => SEVERITY_CRITICAL,
         "high" => SEVERITY_HIGH,
         "low" => SEVERITY_LOW,
-        "open" | "idea" | "unknown" | "notice" => OPEN_TEXT,
+        "open" | "unknown" | "notice" => OPEN_TEXT,
         _ => TEXT,
     }
+}
+
+fn glow_opacity_target(hovered: bool, pressed: bool) -> f32 {
+    if pressed {
+        CARD_GLOW_OPACITY_ACTIVE
+    } else if hovered {
+        CARD_GLOW_OPACITY_HOVER
+    } else {
+        CARD_GLOW_OPACITY_IDLE
+    }
+}
+
+fn finish_status_glow(
+    ui: &Ui,
+    glow_idx: ShapeIdx,
+    texture: &TextureHandle,
+    status_key: &str,
+    opacity: f32,
+) {
+    let Some(style) = project_status_style_for_key(status_key) else {
+        return;
+    };
+    let content = ui.min_rect();
+    let pad = f32::from(CARD_PADDING);
+    let fill_rect = Rect::from_min_max(
+        Pos2::new(content.min.x - pad, content.min.y - pad),
+        Pos2::new(content.max.x + pad, content.max.y + pad),
+    );
+    let height = fill_rect.height() * CARD_GLOW_HEIGHT_FRACTION;
+    let glow_rect = Rect::from_min_size(fill_rect.min, Vec2::new(fill_rect.width(), height));
+    let tint = Color32::from_rgba_unmultiplied(
+        style.swatch.r(),
+        style.swatch.g(),
+        style.swatch.b(),
+        theme::unit_to_byte(opacity),
+    );
+    let rounding = CornerRadius {
+        nw: CARD_ROUNDING,
+        ne: CARD_ROUNDING,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().set(
+        glow_idx,
+        Shape::Rect(RectShape::filled(glow_rect, rounding, tint).with_texture(
+            texture.id(),
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        )),
+    );
 }
 
 fn section(ui: &mut Ui, title: &str, empty: bool, add_contents: impl FnOnce(&mut Ui)) {
