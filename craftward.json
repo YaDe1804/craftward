@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "craftward",
   "name": "Craftward",
   "status": "in_development",
   "description": "Local-first project hub with a maintenance radar for updates, vulnerabilities and platform deadlines.",
   "current_version": "0.1.0",
+  "category": "Werkzeuge",
   "tags": [
     "rust",
     "egui",
@@ -617,6 +618,48 @@
       "severity": "low",
       "status": "open",
       "note": "Since AP9 (eframe) cargo deny lists dozens of duplicate crate versions. Keep the check meaningful: skip-tree or targeted skips for the GUI stack in deny.toml, documented, so that new duplicates outside it still show up."
+    },
+    {
+      "id": "radar-alias-dedup",
+      "title": "Radar: same vulnerability reported twice (GHSA and RUSTSEC ids)",
+      "severity": "high",
+      "status": "open",
+      "note": "OSV records list aliases; merge findings that share an alias into one, keep all ids visible. Seen with openssl, rustls, quinn-proto: roughly doubles the count."
+    },
+    {
+      "id": "radar-severity-unknown",
+      "title": "Radar: RUSTSEC findings have severity unknown",
+      "severity": "medium",
+      "status": "open",
+      "note": "Known as SQ-H1. With real portfolios most Rust findings show unknown; use the severity of an aliased GHSA record when present, otherwise compute from CVSS."
+    },
+    {
+      "id": "radar-pubspec-lock",
+      "title": "Radar: support pubspec.lock (Dart/Flutter, OSV ecosystem Pub)",
+      "severity": "medium",
+      "status": "open",
+      "note": "Flutter apps (lotto-orakel, eurojack, antar-bridge mobile) are not checked at all."
+    },
+    {
+      "id": "radar-flutter-target-sdk",
+      "title": "Radar: targetSdk not detected in Flutter projects (flutter.targetSdkVersion)",
+      "severity": "medium",
+      "status": "open",
+      "note": "Flutter's android/app/build.gradle.kts uses flutter.targetSdkVersion. Warn clearly and point to setting stack.android.target_sdk, or resolve from the Flutter SDK version."
+    },
+    {
+      "id": "radar-pnpm-lock",
+      "title": "Radar: support pnpm-lock.yaml",
+      "severity": "low",
+      "status": "open",
+      "note": "Caracal likely uses pnpm; no lockfile can be configured for it yet."
+    },
+    {
+      "id": "radar-all-ignored-summary",
+      "title": "Radar: no 'no open findings' line when every finding of a project is ignored",
+      "severity": "low",
+      "status": "open",
+      "note": "Seen for craftward after ignoring the three accesskit notices: output shows 'ignored: 3' but no summary line, unlike clean projects."
     }
   ],
   "watch_items": [
